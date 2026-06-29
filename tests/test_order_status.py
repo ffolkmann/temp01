@@ -45,6 +45,13 @@ class _Client:
         REQS.append(("GET", url, {"auth": auth, "headers": headers})); return _match(url)
 fh = types.ModuleType("httpx"); fh.AsyncClient = _Client; sys.modules["httpx"] = fh
 
+# --- valódi platform_api (faked httpx-szel), app.services.platform_api néven ---
+_pa_spec = importlib.util.spec_from_file_location(
+    "app.services.platform_api", f"{ROOT}/app/services/platform_api.py")
+_pa = importlib.util.module_from_spec(_pa_spec)
+sys.modules["app.services.platform_api"] = _pa
+_pa_spec.loader.exec_module(_pa)
+
 # --- valódi order_status.py ---
 spec = importlib.util.spec_from_file_location("os_under_test", f"{ROOT}/app/services/order_status.py")
 osm = importlib.util.module_from_spec(spec); spec.loader.exec_module(osm)

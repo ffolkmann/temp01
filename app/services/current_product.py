@@ -5,7 +5,8 @@ A scroll szűr: client_id + type=product + url = page_url_norm. Az első type=='
 && text találat adja a currentProductText-et és a kapcsolódó termék (related_*) nyersanyagot.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 
 from app.core.qdrant import get_qdrant
 
@@ -22,6 +23,9 @@ class CurrentProduct:
     text: str
     related_similar: str = ""
     related_additional: str = ""
+    name: str = ""
+    sku: str = ""
+    payload: dict[str, Any] = field(default_factory=dict)  # nyers Qdrant payload (élő lekéréshez)
 
 
 async def get_current_product(client_id: str, page_url_norm: str) -> CurrentProduct | None:
@@ -39,4 +43,7 @@ async def get_current_product(client_id: str, page_url_norm: str) -> CurrentProd
         text=str(p.get("text") or ""),
         related_similar=str(p.get("related_similar") or ""),
         related_additional=str(p.get("related_additional") or ""),
+        name=str(p.get("name") or ""),
+        sku=str(p.get("sku") or ""),
+        payload=p,
     )

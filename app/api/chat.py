@@ -27,6 +27,7 @@ from app.services.feedback import store_feedback
 from app.services.handoff import HANDOFF_REPLY, send_handoff_email
 from app.services.intent import detect_configurator, detect_handoff, detect_order_intent
 from app.services.leads import store_lead
+from app.services.live_product import fetch_live_price_stock
 from app.services.order_status import handle_order_status
 from app.services.parse_reply import parse_reply
 from app.services.prompt import PromptContext, build_system_prompt
@@ -109,8 +110,13 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
         embed_input, message, req.client_id, ctx.page_url, ctx.page_url_norm
     )
     current = await get_current_product(req.client_id, ctx.page_url_norm)
+    # élő ár/készlet a megnyitott termékre (plan.live_api-gated, csak termékoldalon);
+    # FAIL-SAFE: hiba/None -> a synced adatlap marad
+    live = None
+    if ctx.page_is_product and live_api and current is not None:
+        live = await fetch_live_price_stock(tenant, current)
     coupons = await active_coupons(session, req.client_id)
-    system_prompt = build_system_prompt(tenant, hits, current, coupons, ctx)
+    system_prompt = build_system_prompt(tenant, hits, current, coupons, ctx, live=live)
 
     try:
         raw = await generate_reply(system_prompt, req.history, message)

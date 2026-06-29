@@ -16,6 +16,7 @@ from typing import Any
 
 from app.models.db_models import Coupon, Tenant
 from app.services.current_product import CurrentProduct
+from app.services.live_product import LivePriceStock
 
 _DEFAULT_BASE = (
     "Te egy webshop udvarias, magyar nyelvu asszisztense vagy. "
@@ -181,12 +182,36 @@ def _active_coupon_lines(coupons: list[Coupon]) -> list[str]:
     return lines
 
 
+def _live_block(live: LivePriceStock, name: str) -> str:
+    """# ELO, FRISS AR, KESZLET (ELSODLEGES) — élő API ár/készlet a synced helyett."""
+    parts: list[str] = []
+    pr = _fmt_price(live.price)
+    if pr:
+        parts.append("ar: " + pr)
+    if live.qty is not None:
+        in_stock = live.qty > 0 or live.available is True
+        parts.append(f"keszlet: {live.qty} db " + ("(raktaron)" if in_stock else "(jelenleg nincs raktaron)"))
+    elif live.available is not None:
+        parts.append("keszlet: " + ("raktaron" if live.available else "jelenleg nincs raktaron"))
+    if not parts:
+        return ""
+    nm = (name or "").strip()
+    line = ("- " + nm + " — " if nm else "- ") + ", ".join(parts)
+    return (
+        "\n\n# ELO, FRISS AR, KESZLET (ELSODLEGES)\n"
+        "Ez a termek ELO, frissen lekert ara es keszlete. Ha barmiben eltér a fenti "
+        "# AKTUALIS TERMEK adatlaptol, az ARNAL es KESZLETNEL EZ az ervenyes — ezt hasznald, "
+        "ne a szinkronizalt adatlap arat/keszletet:\n" + line
+    )
+
+
 def build_system_prompt(
     tenant: Tenant,
     hits: list[dict[str, Any]],
     current: CurrentProduct | None,
     coupons: list[Coupon],
     ctx: PromptContext,
+    live: LivePriceStock | None = None,
 ) -> str:
     base = (tenant.system_prompt or "").strip() or _DEFAULT_BASE
     system = base
@@ -207,6 +232,11 @@ def build_system_prompt(
     chunks = _chunks(hits)
     context = "\n\n---\n\n".join(chunks) if chunks else "(nincs talalat a tudasbazisban)"
     system += "\n\n# TUDASBAZIS\n" + context
+
+    # 4) # ELO, FRISS AR, KESZLET — élő API ár/készlet (csak ha a hívó lekérte; a synced helyett)
+    if live is not None:
+        nm = live.name or (current.name if current else "") or ctx.page_product_name
+        system += _live_block(live, nm)
 
     # 6) # KAPCSOLODO TERMEKEK (current product related_*; fallback: page_url-egyező reranked termék)
     rel_similar_raw = current.related_similar if current else ""

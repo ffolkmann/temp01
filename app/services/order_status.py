@@ -2,32 +2,41 @@
 
 A prod Chat workflow "platform order-lekérés -> Verify Order -> Send Status Email"
 ágának portja. Platformok: Sellvio (eredeti), Shoprenter, Unas, WooCommerce.
+A közös auth/XML primitívek a platform_api.py-ben (live_product.py is osztja).
 
 Adatvédelem: a /chat VÁLASZ matched ÉS nem-matched esetben is UGYANAZ a semleges
 szöveg, hogy ne szivárogjon rendelési adat. A státusz csak e-mailben megy a
-rendeléskor használt címre, háttérben (schedule_email — a /chat latencyt nem növeli).
-Bármely hiba -> semleges válasz + log, SOHA nem dob a widget felé.
+rendeléskor használt címre, háttérben (schedule_email). Bármely hiba -> semleges
+válasz + log, SOHA nem dob a widget felé.
 
-API-kontraktusok (forrás: hivatalos doksik / web — VPS-en ellenőrizendő):
- - Sellvio:     OAuth client_credentials, GET /api/v2/orders/{id} (302->follow), data.* (eredeti, élő).
- - WooCommerce: GET {base}/wp-json/wc/v3/orders/{id}, Basic (ck/cs), billing.email + status.  (BIZTOS)
- - Shoprenter:  OAuth2 (Basic deprecated->403); token: oauth.app.shoprenter.net/{shop}/app/token;
-                GET {api_base}/orders/{base64('order-order_id=<N>')}.  (ELLENŐRIZENDŐ: ordernumber vs innerId, status mező)
- - Unas:        login(ApiKey)->Token, POST /getOrder XML Bearer, Order/Status + Email.  (ELLENŐRIZENDŐ: pontos XML elemnevek)
+API-kontraktusok (VPS-en igazolt / web):
+ - Sellvio:     OAuth, GET /api/v2/orders/{id} (302->follow), data.* (élő).
+ - WooCommerce: GET {base}/wp-json/wc/v3/orders/{id}, Basic (ck/cs), billing.email + status.
+ - Shoprenter:  OAuth2, GET {api_base}/orders/{base64('order-order_id=<N>')}; az api2 csupasz
+                top-level objektumot ad (email top-level); a status href-dict -> guard + generikus.
+ - Unas:        login(ApiKey)->Token, POST /getOrder XML Bearer, Order <Status> + <Email>.
 """
 
 from __future__ import annotations
 
-import base64
 import logging
-import xml.etree.ElementTree as ET
 from typing import TYPE_CHECKING
-from urllib.parse import urlsplit
 from xml.sax.saxutils import escape
 
 import httpx
 
 from app.core.mailer import schedule_email
+from app.services.platform_api import (
+    UNAS_BASE,
+    norm_email,
+    sellvio_token,
+    shoprenter_resource_id,
+    shoprenter_shop,
+    shoprenter_token,
+    unas_login,
+    xml_first_text,
+    xml_root,
+)
 
 if TYPE_CHECKING:
     from app.models.db_models import Tenant
@@ -43,10 +52,6 @@ ORDER_STATUS_REPLY = (
 )
 
 
-def _norm_email(s: str | None) -> str:
-    return str(s or "").strip().lower()
-
-
 def _safe_status(*candidates) -> str:
     """Az első str (nem dict/href/None) jelölt; különben generikus 'ismeretlen'.
 
@@ -59,25 +64,8 @@ def _safe_status(*candidates) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# Sellvio (eredeti, élő — bitre megtartva)
+# Sellvio
 # --------------------------------------------------------------------------- #
-async def _sellvio_token(
-    client: httpx.AsyncClient, api_base: str, client_id: str, client_secret: str
-) -> str:
-    """OAuth client_credentials -> access_token (üres string, ha nincs)."""
-    resp = await client.post(
-        f"{api_base}/oauth/token",
-        data={
-            "grant_type": "client_credentials",
-            "client_id": client_id,
-            "client_secret": client_secret,
-        },
-    )
-    resp.raise_for_status()
-    body = resp.json()
-    return str((body or {}).get("access_token") or "")
-
-
 async def _sellvio_get_order(
     client: httpx.AsyncClient, api_base: str, order_id: str, token: str
 ) -> dict:
@@ -100,7 +88,7 @@ def _verify_order(payload: dict, order_email: str) -> tuple[bool, str]:
     status_obj = data.get("status") or {}
     status_name = status_obj.get("name") if isinstance(status_obj, dict) else None
     status = str(status_name or "ismeretlen")
-    if not _norm_email(data.get("email")) or _norm_email(data.get("email")) != _norm_email(order_email):
+    if not norm_email(data.get("email")) or norm_email(data.get("email")) != norm_email(order_email):
         return False, status
     return True, status
 
@@ -111,7 +99,7 @@ async def _sellvio_lookup(tenant: "Tenant", order: "OrderIntent") -> tuple[bool,
     secret = str(tenant.api_client_secret or "").strip()
     # follow_redirects: a Sellvio /api/v2/orders/{id} 302-t ad (Accept: json + redirect -> 200).
     async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-        token = await _sellvio_token(client, api_base, cid, secret)
+        token = await sellvio_token(client, api_base, cid, secret)
         if not token:
             logger.warning("ORDER[%s] nincs Sellvio token", tenant.client_id)
             return False, "ismeretlen"
@@ -138,8 +126,8 @@ async def _woo_lookup(tenant: "Tenant", order: "OrderIntent") -> tuple[bool, str
         return False, "ismeretlen"
     status = str(data.get("status") or "ismeretlen")
     billing = data.get("billing") if isinstance(data.get("billing"), dict) else {}
-    email = _norm_email((billing or {}).get("email"))
-    if not email or email != _norm_email(order.order_email):
+    email = norm_email((billing or {}).get("email"))
+    if not email or email != norm_email(order.order_email):
         return False, status
     return True, status
 
@@ -147,40 +135,18 @@ async def _woo_lookup(tenant: "Tenant", order: "OrderIntent") -> tuple[bool, str
 # --------------------------------------------------------------------------- #
 # Shoprenter — OAuth2 (Basic deprecated->403); base64 order id
 # --------------------------------------------------------------------------- #
-def _shoprenter_shop(api_base: str) -> str:
-    """{shop}.api2.myshoprenter.hu/api/ -> shop"""
-    host = (urlsplit(api_base).hostname or "")
-    return host.split(".")[0] if host else ""
-
-
-def _shoprenter_order_id(order_id: str) -> str:
-    """A Shoprenter resource-id base64('order-order_id=<N>') sémát követ."""
-    return base64.b64encode(f"order-order_id={order_id}".encode()).decode()
-
-
-async def _shoprenter_token(
-    client: httpx.AsyncClient, shop: str, cid: str, secret: str
-) -> str:
-    resp = await client.post(
-        f"https://oauth.app.shoprenter.net/{shop}/app/token",
-        json={"grant_type": "client_credentials", "client_id": cid, "client_secret": secret},
-    )
-    resp.raise_for_status()
-    return str((resp.json() or {}).get("access_token") or "")
-
-
 async def _shoprenter_lookup(tenant: "Tenant", order: "OrderIntent") -> tuple[bool, str]:
     api_base = str(tenant.api_base or "").strip().rstrip("/")
     cid = str(tenant.api_client_id or "").strip()
     secret = str(tenant.api_client_secret or "").strip()
-    shop = _shoprenter_shop(api_base)
+    shop = shoprenter_shop(api_base)
     async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-        token = await _shoprenter_token(client, shop, cid, secret)
+        token = await shoprenter_token(client, shop, cid, secret)
         if not token:
             logger.warning("ORDER[%s] nincs Shoprenter token", tenant.client_id)
             return False, "ismeretlen"
         resp = await client.get(
-            f"{api_base}/orders/{_shoprenter_order_id(order.order_id)}",
+            f"{api_base}/orders/{shoprenter_resource_id('order', order.order_id)}",
             headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
         )
         resp.raise_for_status()
@@ -198,8 +164,8 @@ async def _shoprenter_lookup(tenant: "Tenant", order: "OrderIntent") -> tuple[bo
     #  host-rewrite *.api.myshoprenter.hu -> *.api2.myshoprenter.hu/api + Bearer ->
     #  GET /orderStatuses/{b64}?full=1 -> lokalizált név az orderStatusDescriptions-ön. Addig generikus.)
     status = _safe_status(o.get("statusName"), o.get("orderStatus"), o.get("status"))
-    email = _norm_email(o.get("email") or o.get("customerEmail"))
-    if not email or email != _norm_email(order.order_email):
+    email = norm_email(o.get("email") or o.get("customerEmail"))
+    if not email or email != norm_email(order.order_email):
         return False, status
     return True, status
 
@@ -207,41 +173,10 @@ async def _shoprenter_lookup(tenant: "Tenant", order: "OrderIntent") -> tuple[bo
 # --------------------------------------------------------------------------- #
 # Unas — login(ApiKey)->Token, POST /getOrder XML, Bearer
 # --------------------------------------------------------------------------- #
-_UNAS_BASE = "https://api.unas.eu/shop"
-
-
-def _xml_root(text: str) -> ET.Element | None:
-    try:
-        return ET.fromstring(text or "")
-    except ET.ParseError:
-        return None
-
-
-def _xml_first_text(el: ET.Element, *local_names: str) -> str:
-    """Az első leszármazott elem szövege, aminek a (namespace nélküli) tagje illik."""
-    wanted = {n.lower() for n in local_names}
-    for sub in el.iter():
-        if sub.tag.split("}")[-1].lower() in wanted and sub.text and sub.text.strip():
-            return sub.text.strip()
-    return ""
-
-
-async def _unas_login(client: httpx.AsyncClient, api_key: str) -> str:
-    body = f'<?xml version="1.0" encoding="UTF-8"?>\n<Params><ApiKey>{escape(api_key)}</ApiKey></Params>'
-    resp = await client.post(
-        f"{_UNAS_BASE}/login",
-        content=body.encode("utf-8"),
-        headers={"Content-Type": "application/xml"},
-    )
-    resp.raise_for_status()
-    root = _xml_root(resp.text)
-    return _xml_first_text(root, "Token") if root is not None else ""
-
-
 async def _unas_lookup(tenant: "Tenant", order: "OrderIntent") -> tuple[bool, str]:
     api_key = str(tenant.api_client_secret or "").strip() or str(tenant.api_client_id or "").strip()
     async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
-        token = await _unas_login(client, api_key)
+        token = await unas_login(client, api_key)
         if not token:
             logger.warning("ORDER[%s] nincs Unas token", tenant.client_id)
             return False, "ismeretlen"
@@ -251,20 +186,20 @@ async def _unas_lookup(tenant: "Tenant", order: "OrderIntent") -> tuple[bool, st
             f"<Params><Key>{escape(order.order_id)}</Key></Params>"
         )
         resp = await client.post(
-            f"{_UNAS_BASE}/getOrder",
+            f"{UNAS_BASE}/getOrder",
             content=body.encode("utf-8"),
             headers={"Authorization": f"Bearer {token}", "Content-Type": "application/xml"},
         )
         resp.raise_for_status()
-        root = _xml_root(resp.text)
+        root = xml_root(resp.text)
     if root is None:
         return False, "ismeretlen"
     order_el = root.find(".//Order")
     if order_el is None:
         return False, "ismeretlen"
-    status = _xml_first_text(order_el, "Status", "StatusName") or "ismeretlen"
-    email = _norm_email(_xml_first_text(order_el, "Email"))
-    if not email or email != _norm_email(order.order_email):
+    status = xml_first_text(order_el, "Status", "StatusName") or "ismeretlen"
+    email = norm_email(xml_first_text(order_el, "Email"))
+    if not email or email != norm_email(order.order_email):
         return False, status
     return True, status
 
