@@ -204,6 +204,21 @@ def _unas_price(prod) -> str:
     return (pr.findtext("Gross") or "").strip() or (pr.findtext("Net") or "").strip()
 
 
+def _unas_qty(prod) -> int | None:
+    """Készlet a WarehouseId-NÉLKÜLI fej-<Stock>/<Qty>-ból (sorrend-független, multi-raktár).
+
+    Fallback az első Qty bárhol (a korábbi, élesben igazolt viselkedés) — így sosem rosszabb.
+    """
+    stocks = prod.find(".//Stocks")
+    if stocks is not None:
+        for st in stocks.findall("Stock"):
+            if st.find("WarehouseId") is None:          # fej-szintű aggregát készlet
+                q = st.findtext("Qty")
+                if q is not None and q.strip():
+                    return _to_int(q)
+    return _to_int(xml_first_text(prod, "Qty"))
+
+
 async def _unas_live(tenant: "Tenant", sku: str) -> LivePriceStock | None:
     if not sku:
         return None
@@ -228,7 +243,7 @@ async def _unas_live(tenant: "Tenant", sku: str) -> LivePriceStock | None:
     prod = root.find(".//Product")
     if prod is None:
         return None
-    qty = _to_int(xml_first_text(prod, "Qty"))        # Stocks/Stock/Qty
+    qty = _unas_qty(prod)                             # fej-<Stock>/Qty (sorrend-független)
     return LivePriceStock(
         price=_unas_price(prod),
         available=_avail_from(None, qty),

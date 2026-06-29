@@ -123,6 +123,32 @@ async def main():
     assert "<Sku>SKU9</Sku>" in body
     ok.append("Unas élő: Actual=1 Gross (4500), Stocks/Stock/Qty (10)")
 
+    # --- Unas multi-raktár: a fej-<Stock> (WarehouseId nélkül) qty-ja, SORREND-független ---
+    reset()
+    ROUTES["/shop/login"] = {"text": "<Login><Token>ut</Token></Login>"}
+    ROUTES["/shop/getProduct"] = {"text": (
+        "<Products><Product>"
+        "<Prices><Price><Type>normal</Type><Actual>1</Actual><Gross>4990</Gross></Price></Prices>"
+        "<Stocks>"
+        "<Stock><WarehouseId>2</WarehouseId><Qty>3</Qty></Stock>"   # raktár — ELŐL
+        "<Stock><Qty>5</Qty></Stock>"                              # fej (WarehouseId nélkül)
+        "</Stocks></Product></Products>")}
+    live = await lp.fetch_live_price_stock(T("unas"), C({"sku": "169059"}))
+    assert live and live.qty == 5 and live.price == "4990"          # a fej 5, NEM az első (3)
+    ok.append("Unas multi-raktár: fej-Stock qty=5 (sorrend-független, nem az első warehouse 3)")
+
+    # --- Unas fallback: ha minden Stock raktár-specifikus -> első Qty ---
+    reset()
+    ROUTES["/shop/login"] = {"text": "<Login><Token>ut</Token></Login>"}
+    ROUTES["/shop/getProduct"] = {"text": (
+        "<Products><Product>"
+        "<Prices><Price><Type>normal</Type><Actual>1</Actual><Gross>100</Gross></Price></Prices>"
+        "<Stocks><Stock><WarehouseId>1</WarehouseId><Qty>7</Qty></Stock></Stocks>"
+        "</Product></Products>")}
+    live = await lp.fetch_live_price_stock(T("unas"), C({"sku": "X"}))
+    assert live and live.qty == 7                                   # nincs fej-Stock -> fallback első Qty
+    ok.append("Unas qty fallback: nincs fej-Stock -> első Qty (7)")
+
     # --- Unas ár fallback: nincs Actual=1 -> normal típusú Price Gross ---
     reset()
     ROUTES["/shop/login"] = {"text": "<Login><Token>ut</Token></Login>"}
