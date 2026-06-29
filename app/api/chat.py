@@ -76,33 +76,27 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
 
     # 1) order-status: a prod élő order-lekérést végez, majd "Send Status Email"-t küld
     #    a vevőnek; a /chat ettől függetlenül SEMLEGES választ ad (adat-szivárgás ellen).
-    #    MOST csak a Sellvio platform van portolva (teslashop); SR/Unas/WC később.
+    #    Platform szerinti dispatch (Sellvio/Shoprenter/Unas/WooCommerce) a service-ben.
     order = detect_order_intent(message, tenant, live_api)
-    if order.is_order_status and order.platform == "sellvio":
+    if order.is_order_status:
         reply = await handle_order_status(tenant, order)
         return ChatResponse(reply=reply, action=None)
-    if order.is_order_status:
-        # SR/Unas/WC: detektálva, de a platform order-lekérés MÉG NINCS portolva -> RAG-fallback
-        logger.info(
-            "ORDER-STATUS[%s] platform=%s még nincs portolva — RAG-fallback",
-            req.client_id, order.platform,
-        )
-    else:
-        # 2) configurator (csak configurator_shop tenantnál)
-        cfg = detect_configurator(message, tenant)
-        if cfg.is_configurator and cfg.cfg:
-            return ChatResponse(
-                reply="Szívesen segítek kiszámolni a klíma telepítés becsült díját! "
-                "Kérlek, töltsd ki az alábbi pár kérdést.",
-                action="quote_configurator",
-                configurator=ConfiguratorRef(**cfg.cfg),
-            )
 
-        # 3) handoff
-        ho = detect_handoff(message, tenant, req.history, ctx.page_url)
-        if ho.is_handoff:
-            await send_handoff_email(req.client_id, ho)
-            return ChatResponse(reply=HANDOFF_REPLY, action="collect_lead")
+    # 2) configurator (csak configurator_shop tenantnál)
+    cfg = detect_configurator(message, tenant)
+    if cfg.is_configurator and cfg.cfg:
+        return ChatResponse(
+            reply="Szívesen segítek kiszámolni a klíma telepítés becsült díját! "
+            "Kérlek, töltsd ki az alábbi pár kérdést.",
+            action="quote_configurator",
+            configurator=ConfiguratorRef(**cfg.cfg),
+        )
+
+    # 3) handoff
+    ho = detect_handoff(message, tenant, req.history, ctx.page_url)
+    if ho.is_handoff:
+        await send_handoff_email(req.client_id, ho)
+        return ChatResponse(reply=HANDOFF_REPLY, action="collect_lead")
 
     # --- RAG + LLM ---
     # embed-input: termékoldalon a termék neve + üzenet, különben csak az üzenet

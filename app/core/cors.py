@@ -1,119 +1,111 @@
-"""Per-tenant CORS — a prod n8n / Google Ads minta portja (CLAUDE.md B.6.2).
+"""Per-tenant CORS allowlist — Starlette BaseHTTPMiddleware (CLAUDE.md B.6.2).
 
-A böngészőből hívott végpontoknál (POST /chat) a TÉNYLEGES kérésnél a body
-client_id -> tenants.domain alapján döntünk: az Origint CSAK akkor reflektáljuk
-vissza (Access-Control-Allow-Origin), ha az Origin host a tenant doménje — apex,
-www vagy bármely aldomén, http/https. Credentials NINCS. Minden válaszon Vary: Origin.
+Az engedélyezett originek forrása a Postgres tenants.domain oszlopa (lazy, process-
+szintű cache): minden doménre https://<domain> ÉS https://www.<domain>. Plusz a
+platform-suffixek BÁRMELY aldoménje engedett (.mysellvio.com, .unas.hu,
+.myshoprenter.hu, .shoprenter.hu).
 
-Sorrend (B.6.2): (1) DB tenants.domain -> (2) beépített DOMAIN_MAP fallback ->
-(3) egyik sincs: fail-open reflect (nehogy egy működő tenantot eltörjünk).
+Engedett Origin -> reflektáljuk: Access-Control-Allow-Origin: <origin> + Vary: Origin.
+Nem engedett -> nincs ACAO. Credentials NINCS. A preflight (OPTIONS) mindig 200.
 
-A preflight (OPTIONS) a main.py middleware-ében dől el (a body ott még nem
-elérhető, ezért reflektál); az érdemi POST-on ez a dependency dönt. Így az ACAO-t
-EGYETLEN logika (resolve_allowed_origin) állítja — nincs globális CORSMiddleware '*'.
+Megjegyzés: a cache process-szintű és lusta — új tenant-domén csak újraindítás után
+látszik (a folyamat élettartamára cache-elünk, ahogy a spec kéri).
 """
 
+import asyncio
+import logging
 from urllib.parse import urlsplit
 
-from fastapi import Depends, Request, Response
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import Response
 
-from app.core.db import get_session
+from app.core.db import SessionLocal
 from app.models.db_models import Tenant
 
-# preflight konstansok (a main.py middleware is ezeket használja)
-CORS_ALLOW_METHODS = "POST, OPTIONS"
-CORS_ALLOW_HEADERS = "content-type"
-CORS_MAX_AGE = "86400"
+logger = logging.getLogger("cx.cors")
 
-# fallback domén-térkép (CLAUDE.md 6.3) — a DB tenants.domain az ELSŐDLEGES forrás
-DOMAIN_MAP = {
-    "welltechnik": "welltechnik.hu",
-    "teslashop": "teslashop.hu",
-    "cegalkusz": "cegalkusz.hu",
-    "ecowindoor": "ecowin.hu",
-    "mastercool": "klimaszereles-budapest-karbantartas.hu",
-    "plcomfort": "plcomfortwebshop.hu",
-    "adlogic": "adlogic.unas.hu",
-    "smartzilla": "smartzilla.hu",
-    "4mfrigo": "webshop.4mfrigo.hu",
-    "rmweb": "rmweb.hu",
-    "kellegyszerszam": "kellegyszerszam.hu",
-    "codexpress": "codexpress.hu",
-    "nagyonallatshop": "nagyonallatshop.hu",
-    "notebookstore": "notebookstore.hu",
-}
+# platform-suffixek: BÁRMELY aldoménjük engedett (host endswith)
+PLATFORM_SUFFIXES = (".mysellvio.com", ".unas.hu", ".myshoprenter.hu", ".shoprenter.hu")
+
+# process-szintű lusta cache
+_ALLOWSET: set[str] | None = None
+_ALLOWSET_LOCK = asyncio.Lock()
 
 
-def origin_host(origin: str) -> str | None:
-    """Az Origin host-ja kisbetűsen, ha a séma http/https; különben None."""
-    try:
-        parts = urlsplit(origin or "")
-    except ValueError:
-        return None
-    if parts.scheme not in ("http", "https"):
-        return None
-    return (parts.hostname or "").lower() or None
+def _build_allowset(domains) -> set[str]:
+    """Domének -> engedett origin-stringek (apex + www, https)."""
+    out: set[str] = set()
+    for d in domains:
+        d = (d or "").strip().lower()
+        if not d:
+            continue
+        base = d[4:] if d.startswith("www.") else d
+        out.add(f"https://{base}")
+        out.add(f"https://www.{base}")
+    return out
 
 
-def origin_matches_domain(origin: str, domain: str) -> bool:
-    """Igaz, ha az Origin a tenant doménje: apex, www vagy bármely aldomén."""
-    host = origin_host(origin)
-    domain = (domain or "").strip().lower().lstrip(".")
-    if not host or not domain:
+async def _load_allowset() -> set[str]:
+    async with SessionLocal() as session:
+        rows = (await session.execute(select(Tenant.domain))).scalars().all()
+    return _build_allowset(rows)
+
+
+async def _get_allowset() -> set[str]:
+    """Lusta, process-szintű cache. Hiba esetén átmeneti üres lista (nem cache-eljük)."""
+    global _ALLOWSET
+    if _ALLOWSET is not None:
+        return _ALLOWSET
+    async with _ALLOWSET_LOCK:
+        if _ALLOWSET is not None:
+            return _ALLOWSET
+        try:
+            built = await _load_allowset()
+        except Exception:  # noqa: BLE001 — DB hiba ne 500-azzon minden kérést
+            logger.exception("CORS allowlist betöltés hiba — átmeneti üres lista")
+            return set()
+        _ALLOWSET = built
+        logger.info("CORS allowlist betöltve: %d origin", len(_ALLOWSET))
+        return _ALLOWSET
+
+
+def _is_allowed(origin: str, allowset: set[str]) -> bool:
+    if not origin:
         return False
-    return host == domain or host.endswith("." + domain)
+    if origin in allowset:
+        return True
+    parts = urlsplit(origin)
+    if parts.scheme != "https":
+        return False
+    host = (parts.hostname or "").lower()
+    return any(host.endswith(suf) for suf in PLATFORM_SUFFIXES)
 
 
-async def _tenant_domain(session: AsyncSession, client_id: str | None) -> str | None:
-    if not client_id:
-        return None
-    dom = (
-        await session.execute(select(Tenant.domain).where(Tenant.client_id == client_id))
-    ).scalar_one_or_none()
-    return (dom or "").strip() or None
+class TenantCORSMiddleware(BaseHTTPMiddleware):
+    """Tenant-tudatos CORS: engedett originnél reflektál, egyébként semmit."""
 
+    async def dispatch(self, request: Request, call_next):
+        origin = request.headers.get("origin")
+        allowed = bool(origin) and _is_allowed(origin, await _get_allowset())
 
-async def resolve_allowed_origin(
-    session: AsyncSession, origin: str, client_id: str | None
-) -> str | None:
-    """Az ACAO értéke: az Origin (reflect) vagy None (blokk) — EGYETLEN döntési hely.
+        if request.method == "OPTIONS":
+            # preflight — mindig 200; engedettnél CORS-fejlécek, egyébként ACAO nélkül
+            headers: dict[str, str] = {}
+            if allowed:
+                req_headers = request.headers.get("access-control-request-headers") or "content-type"
+                headers = {
+                    "Access-Control-Allow-Origin": origin,
+                    "Access-Control-Allow-Methods": "POST, OPTIONS",
+                    "Access-Control-Allow-Headers": req_headers,
+                    "Access-Control-Max-Age": "600",
+                    "Vary": "Origin",
+                }
+            return Response(status_code=200, headers=headers)
 
-    (1) DB tenants.domain -> (2) DOMAIN_MAP -> (3) egyik sincs: fail-open reflect.
-    """
-    if not origin:
-        return None
-    domain = await _tenant_domain(session, client_id)
-    if not domain:
-        domain = DOMAIN_MAP.get((client_id or "").strip().lower())
-    if not domain:
-        return origin  # fail-open (B.6.2 3.)
-    return origin if origin_matches_domain(origin, domain) else None
-
-
-async def cors_headers(
-    request: Request,
-    response: Response,
-    session: AsyncSession = Depends(get_session),
-) -> None:
-    """Dependency a böngésző-POST végpontokra: tenant-tudatos ACAO + Vary: Origin.
-
-    A body-t a cache-ből olvassa (FastAPI a body-t a dependency-k előtt beolvassa a
-    ChatRequest-hez), ezért a request.json() itt nem ütközik a route paraméterrel.
-    Hibás/üres body -> a fail-open ágra esünk (ismeretlen tenant).
-    """
-    origin = request.headers.get("origin")
-    if not origin:
-        return
-    response.headers["Vary"] = "Origin"
-    client_id = None
-    try:
-        data = await request.json()
-        if isinstance(data, dict):
-            client_id = data.get("client_id")
-    except Exception:  # noqa: BLE001 — rossz/üres body: ismeretlen tenant -> fail-open
-        client_id = None
-    allowed = await resolve_allowed_origin(session, origin, client_id)
-    if allowed:
-        response.headers["Access-Control-Allow-Origin"] = allowed
+        response = await call_next(request)
+        if allowed:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Vary"] = "Origin"
+        return response
