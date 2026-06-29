@@ -47,6 +47,17 @@ def _norm_email(s: str | None) -> str:
     return str(s or "").strip().lower()
 
 
+def _safe_status(*candidates) -> str:
+    """Az első str (nem dict/href/None) jelölt; különben generikus 'ismeretlen'.
+
+    Védi az e-mailt attól, hogy egy href-dict ({'href': ...}) string-elve menjen ki.
+    """
+    for v in candidates:
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    return "ismeretlen"
+
+
 # --------------------------------------------------------------------------- #
 # Sellvio (eredeti, élő — bitre megtartva)
 # --------------------------------------------------------------------------- #
@@ -176,10 +187,17 @@ async def _shoprenter_lookup(tenant: "Tenant", order: "OrderIntent") -> tuple[bo
         data = resp.json()
     if not isinstance(data, dict):
         return False, "ismeretlen"
+    # az api2 single GET csupasz top-level objektumot ad (nincs response/order burkoló),
+    # az email top-level mező — a match-logika HELYES, ne nyúlj hozzá.
     o = data.get("order") if isinstance(data.get("order"), dict) else data
     if not o or not (o.get("id") or o.get("innerId") or o.get("orderNumber")):
         return False, "ismeretlen"
-    status = str(o.get("statusName") or o.get("orderStatus") or o.get("status") or "ismeretlen")
+    # GUARD: a valós orderStatus egy href-dict ({'href': '.../orderStatuses/<b64>'}, full=1-gyel
+    # is) -> NEM stringeljük; csak str státuszt fogadunk el, különben generikus.
+    # (Opcionális, Fecó-visszaigazolásra váró ág a valódi HU névhez: orderStatus['href']
+    #  host-rewrite *.api.myshoprenter.hu -> *.api2.myshoprenter.hu/api + Bearer ->
+    #  GET /orderStatuses/{b64}?full=1 -> lokalizált név az orderStatusDescriptions-ön. Addig generikus.)
+    status = _safe_status(o.get("statusName"), o.get("orderStatus"), o.get("status"))
     email = _norm_email(o.get("email") or o.get("customerEmail"))
     if not email or email != _norm_email(order.order_email):
         return False, status
@@ -227,9 +245,10 @@ async def _unas_lookup(tenant: "Tenant", order: "OrderIntent") -> tuple[bool, st
         if not token:
             logger.warning("ORDER[%s] nincs Unas token", tenant.client_id)
             return False, "ismeretlen"
+        # Contents nélkül is teljes a válasz (smartzillán élesben igazolva); a full param nem igazolt.
         body = (
             '<?xml version="1.0" encoding="UTF-8"?>\n'
-            f"<Params><Key>{escape(order.order_id)}</Key><Contents>full</Contents></Params>"
+            f"<Params><Key>{escape(order.order_id)}</Key></Params>"
         )
         resp = await client.post(
             f"{_UNAS_BASE}/getOrder",
@@ -243,7 +262,7 @@ async def _unas_lookup(tenant: "Tenant", order: "OrderIntent") -> tuple[bool, st
     order_el = root.find(".//Order")
     if order_el is None:
         return False, "ismeretlen"
-    status = _xml_first_text(order_el, "StatusName", "Status") or "ismeretlen"
+    status = _xml_first_text(order_el, "Status", "StatusName") or "ismeretlen"
     email = _norm_email(_xml_first_text(order_el, "Email"))
     if not email or email != _norm_email(order.order_email):
         return False, status

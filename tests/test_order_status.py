@@ -117,6 +117,19 @@ async def main():
     assert geturl.endswith("/orders/" + b64), geturl
     ok.append("Shoprenter matched -> e-mail (OAuth2 token, base64 id)")
 
+    # === Shoprenter status href-dict -> GUARD: ne dobjon, ne stringelje a dict-et ===
+    reset()
+    ROUTES["oauth.app.shoprenter.net"] = {"json": {"access_token": "srtok"}}
+    ROUTES["/orders/"] = {"json": {"id": "X", "email": "vevo@x.hu",
+        "orderStatus": {"href": "http://teslashop.api.myshoprenter.hu/orderStatuses/Yg=="}}}
+    r = await osm.handle_order_status(
+        T("shoprenter", "https://teslashop.api2.myshoprenter.hu/api"), O("18", "vevo@x.hu"))
+    assert r == NEUTRAL and len(SENT) == 1, SENT          # match HELYES (top-level email)
+    txt = SENT[0]["text"]
+    assert "ismeretlen" in txt                            # generikus, nem a dict
+    assert "href" not in txt and "{" not in txt           # a dict NEM lett stringelve
+    ok.append("Shoprenter href-dict status -> guard: match ok, generikus, nincs dict-string")
+
     # === Unas (login->token, XML getOrder) ===
     reset()
     ROUTES["/shop/login"] = {"text": "<Login><Token>utok</Token></Login>"}
@@ -128,7 +141,9 @@ async def main():
     # getOrder Bearer tokennel ment
     go = [q for q in REQS if "getOrder" in q[1]][0]
     assert go[2]["headers"]["Authorization"] == "Bearer utok"
-    ok.append("Unas matched -> e-mail (login token, XML Status+Email)")
+    assert "Contents" not in (go[2]["content"] or "")     # <Contents>full</Contents> törölve
+    assert "<Key>1234</Key>" in (go[2]["content"] or "")
+    ok.append("Unas matched -> e-mail; getOrder body <Contents> nélkül (Key megvan)")
 
     reset()
     ROUTES["/shop/login"] = {"text": "<Login><Token>utok</Token></Login>"}
