@@ -1,16 +1,23 @@
 """Élő ár/készlet (current-product real-time) — a prod chat-workflow 'Has Live API?'=true
 current-product ár/készlet ágának portja (az utolsó kihagyott Fázis-3 ág).
 
-Termékoldalon (page_url-horgony) a megnyitott termékre élő API-lekérés platform szerint
-(Sellvio/Shoprenter/Unas/WooCommerce); az eredmény a prompt # ELO, FRISS AR, KESZLET
-blokkjába kerül a synced (Qdrant) érték HELYETT.
+Termékoldalon (page_url-horgony) a megnyitott termékre élő API-lekérés platform szerint;
+az eredmény a prompt # ELO, FRISS AR, KESZLET blokkjába kerül a synced (Qdrant) érték HELYETT.
 
-Azonosító: a Qdrant product-payloadból a platform termék-id (teslashop seed: 'sellvio_id'),
-fallback 'sku'. plan.live_api-gated (a hívó chat.py dönt).
+Azonosító + kontraktusok VPS-en igazolva (valós Qdrant payload + válasz):
+ - Sellvio:     payload sellvio_id -> GET /api/v2/products/{id}; data.price DICT
+                ({netto_price,vat,brutto_price,discount}) -> brutto_price; készlet-DB NINCS,
+                csak is_available_for_order (bool).
+ - WooCommerce: payload wc_id (NEM woo_id; a sku üres lehet) -> GET /products/{wc_id};
+                ár price/regular_price/sale_price, készlet stock_quantity + stock_status.
+ - Shoprenter:  payload-ban NINCS id -> GET /products?sku=<sku>&full=1 (items[0]); készlet=stock1
+                (NEM a quantity aggregátum), orderable(0/1). Az ÁR SYNCED marad (net/gross
+                bizonytalan a SR-nél) -> csak a készlet megy élőben.
+ - Unas:        payload-ban NINCS id -> getProduct <Sku>; ár Prices/Price[Actual=1]/Gross
+                (fallback normal Price Gross), készlet Stocks/Stock/Qty.
 
-FAIL-SAFE: bármely hiba/timeout/üres -> None; a hívó a synced adatlapot hagyja, a chat
-SOHA nem törik. A price/stock MEZŐNEVEK per platform Fecó VPS-visszaigazolására várnak
-(mint az order-statusnál) — a kinyerés ezért több jelölt-mezőt próbál, defenzíven.
+plan.live_api-gated (a hívó chat.py dönt). FAIL-SAFE: bármely hiba/timeout/hiányzó mező ->
+None; a hívó a synced adatlapot hagyja, a chat SOHA nem törik.
 """
 
 from __future__ import annotations
@@ -25,7 +32,6 @@ import httpx
 from app.services.platform_api import (
     UNAS_BASE,
     sellvio_token,
-    shoprenter_resource_id,
     shoprenter_shop,
     shoprenter_token,
     unas_login,
@@ -51,12 +57,12 @@ class LivePriceStock:
         return bool(self.price) or self.available is not None or self.qty is not None
 
 
-# a Qdrant payload platform-id mezői (teslashop seed: sellvio_id + sku); sku a fallback
+# a Qdrant payload platform-id mezői (VPS-en igazolva); ahol nincs, a sku a kulcs
 _ID_FIELDS = {
     "sellvio": ("sellvio_id",),
-    "shoprenter": ("shoprenter_id",),
-    "unas": ("unas_id",),
-    "woocommerce": ("woo_id", "wc_id", "woocommerce_id", "id"),
+    "woocommerce": ("wc_id",),   # NEM woo_id; a WC sku üres lehet
+    "shoprenter": (),            # nincs id -> sku (?sku= szűrő)
+    "unas": (),                  # nincs id -> sku (getProduct <Sku>)
 }
 
 
@@ -76,9 +82,9 @@ def _to_int(v) -> int | None:
 
 
 def _scalar_price(v) -> str:
-    """price -> string; dict esetén próbál gross/amount/value/price; különben ''."""
+    """price -> string; dict esetén brutto_price/netto_price (Sellvio), majd gross/amount/value."""
     if isinstance(v, dict):
-        for k in ("gross", "amount", "value", "price"):
+        for k in ("brutto_price", "netto_price", "gross", "amount", "value", "price"):
             inner = v.get(k)
             if isinstance(inner, (str, int, float)):
                 return str(inner)
@@ -96,7 +102,7 @@ def _avail_from(available, qty: int | None) -> bool | None:
     return None
 
 
-# --- Sellvio: GET /api/v2/products/{id} -------------------------------------
+# --- Sellvio: GET /api/v2/products/{sellvio_id} -----------------------------
 async def _sellvio_live(tenant: "Tenant", pid: str) -> LivePriceStock | None:
     api_base = str(tenant.api_base or "").strip().rstrip("/")
     cid = str(tenant.api_client_id or "").strip()
@@ -114,16 +120,16 @@ async def _sellvio_live(tenant: "Tenant", pid: str) -> LivePriceStock | None:
     o = body.get("data") if isinstance(body, dict) and isinstance(body.get("data"), dict) else body
     if not isinstance(o, dict):
         return None
-    qty = _to_int(o.get("stock") if o.get("stock") is not None else o.get("quantity"))
+    # ár: data.price dict -> brutto_price (fallback netto_price). Készlet-DB nincs, csak elérhetőség.
     return LivePriceStock(
         price=_scalar_price(o.get("price")),
-        available=_avail_from(o.get("available"), qty),
-        qty=qty,
+        available=_avail_from(o.get("is_available_for_order"), None),
+        qty=None,
         name=str(o.get("name") or ""),
     )
 
 
-# --- WooCommerce: GET /wp-json/wc/v3/products/{id} --------------------------
+# --- WooCommerce: GET /wp-json/wc/v3/products/{wc_id} -----------------------
 async def _woo_live(tenant: "Tenant", pid: str) -> LivePriceStock | None:
     base = str(tenant.api_base or "").strip().rstrip("/")
     ck = str(tenant.api_client_id or "").strip()
@@ -138,18 +144,21 @@ async def _woo_live(tenant: "Tenant", pid: str) -> LivePriceStock | None:
         o = resp.json()
     if not isinstance(o, dict) or not o.get("id"):
         return None
+    price = _scalar_price(o.get("price")) or _scalar_price(o.get("regular_price")) or _scalar_price(o.get("sale_price"))
     ss = str(o.get("stock_status") or "").lower()
     avail = (ss in ("instock", "onbackorder")) if ss else None
     return LivePriceStock(
-        price=_scalar_price(o.get("price")),
+        price=price,
         available=avail,
         qty=_to_int(o.get("stock_quantity")),
         name=str(o.get("name") or ""),
     )
 
 
-# --- Shoprenter: GET {api_base}/products/{base64('product-product_id=<N>')} --
-async def _shoprenter_live(tenant: "Tenant", pid: str) -> LivePriceStock | None:
+# --- Shoprenter: GET /products?sku=<sku>&full=1 (csak készlet élőben) -------
+async def _shoprenter_live(tenant: "Tenant", sku: str) -> LivePriceStock | None:
+    if not sku:
+        return None
     api_base = str(tenant.api_base or "").strip().rstrip("/")
     cid = str(tenant.api_client_id or "").strip()
     secret = str(tenant.api_client_secret or "").strip()
@@ -159,34 +168,53 @@ async def _shoprenter_live(tenant: "Tenant", pid: str) -> LivePriceStock | None:
         if not token:
             return None
         resp = await client.get(
-            f"{api_base}/products/{shoprenter_resource_id('product', pid)}",
+            f"{api_base}/products",
+            params={"sku": sku, "full": "1"},
             headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
         )
         resp.raise_for_status()
         data = resp.json()
-    o = data.get("product") if isinstance(data, dict) and isinstance(data.get("product"), dict) else data
+    items = data.get("items") if isinstance(data, dict) else None
+    o = items[0] if isinstance(items, list) and items else None
     if not isinstance(o, dict):
         return None
-    qty = _to_int(o.get("stock1") if o.get("stock1") is not None else o.get("quantity"))
-    return LivePriceStock(
-        price=_scalar_price(o.get("price")),
-        available=_avail_from(o.get("available"), qty),
-        qty=qty,
-        name=str(o.get("name") or ""),
-    )
+    qty = _to_int(o.get("stock1"))                    # NEM a quantity aggregátum
+    ordv = _to_int(o.get("orderable"))
+    avail = (ordv > 0) if ordv is not None else (qty > 0 if qty is not None else None)
+    # ár SYNCED marad (net/gross bizonytalan a SR-nél) -> price=""
+    return LivePriceStock(price="", available=avail, qty=qty, name=str(o.get("name") or ""))
 
 
-# --- Unas: login -> POST /getProduct XML ------------------------------------
-async def _unas_live(tenant: "Tenant", pid: str, sku: str) -> LivePriceStock | None:
+# --- Unas: login -> getProduct <Sku> ----------------------------------------
+def _unas_price(prod) -> str:
+    """Prices/Price[Actual=1]/Gross (fallback normal típusú Price Gross), majd Net."""
+    prices = prod.find(".//Prices")
+    if prices is None:
+        return ""
+    chosen = normal = None
+    for pr in prices.findall("Price"):
+        if (pr.findtext("Actual") or "").strip() == "1":
+            chosen = pr
+            break
+        if (pr.findtext("Type") or "").strip().lower() == "normal" and normal is None:
+            normal = pr
+    pr = chosen or normal
+    if pr is None:
+        return ""
+    return (pr.findtext("Gross") or "").strip() or (pr.findtext("Net") or "").strip()
+
+
+async def _unas_live(tenant: "Tenant", sku: str) -> LivePriceStock | None:
+    if not sku:
+        return None
     api_key = str(tenant.api_client_secret or "").strip() or str(tenant.api_client_id or "").strip()
-    key = pid or sku
     async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
         token = await unas_login(client, api_key)
         if not token:
             return None
         body = (
             '<?xml version="1.0" encoding="UTF-8"?>\n'
-            f"<Params><Sku>{escape(key)}</Sku></Params>"
+            f"<Params><Sku>{escape(sku)}</Sku></Params>"
         )
         resp = await client.post(
             f"{UNAS_BASE}/getProduct",
@@ -200,9 +228,9 @@ async def _unas_live(tenant: "Tenant", pid: str, sku: str) -> LivePriceStock | N
     prod = root.find(".//Product")
     if prod is None:
         return None
-    qty = _to_int(xml_first_text(prod, "Stock", "Quantity"))
+    qty = _to_int(xml_first_text(prod, "Qty"))        # Stocks/Stock/Qty
     return LivePriceStock(
-        price=xml_first_text(prod, "Price", "PriceGross", "Net"),
+        price=_unas_price(prod),
         available=_avail_from(None, qty),
         qty=qty,
         name=xml_first_text(prod, "Name"),
@@ -212,8 +240,8 @@ async def _unas_live(tenant: "Tenant", pid: str, sku: str) -> LivePriceStock | N
 _LIVE = {
     "sellvio": lambda t, pid, sku: _sellvio_live(t, pid or sku),
     "woocommerce": lambda t, pid, sku: _woo_live(t, pid or sku),
-    "shoprenter": lambda t, pid, sku: _shoprenter_live(t, pid or sku),
-    "unas": lambda t, pid, sku: _unas_live(t, pid, sku),
+    "shoprenter": lambda t, pid, sku: _shoprenter_live(t, sku),
+    "unas": lambda t, pid, sku: _unas_live(t, sku),
 }
 
 

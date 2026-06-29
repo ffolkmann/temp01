@@ -34,8 +34,8 @@ class _Client:
     async def post(self, url, data=None, json=None, content=None, headers=None, **k):
         REQS.append(("POST", url, {"content": content.decode() if isinstance(content, bytes) else content}))
         return _match(url)
-    async def get(self, url, auth=None, headers=None, **k):
-        REQS.append(("GET", url, {"auth": auth, "headers": headers})); return _match(url)
+    async def get(self, url, auth=None, headers=None, params=None, **k):
+        REQS.append(("GET", url, {"auth": auth, "headers": headers, "params": params})); return _match(url)
 fh = types.ModuleType("httpx"); fh.AsyncClient = _Client; sys.modules["httpx"] = fh
 
 # --- valódi platform_api (faked httpx), app.services.platform_api néven ---
@@ -65,65 +65,74 @@ def reset(): REQS.clear(); ROUTES.clear()
 async def main():
     ok = []
 
-    # --- _product_id: platform-id elsőbbség, sku fallback ---
+    # --- _product_id: platform-id (igazolt mezők) + sku fallback ---
     assert lp._product_id({"sellvio_id": "777", "sku": "ABC"}, "sellvio") == "777"
     assert lp._product_id({"sku": "ABC"}, "sellvio") == "ABC"          # fallback
-    assert lp._product_id({"id": 55}, "woocommerce") == "55"
+    assert lp._product_id({"wc_id": 55, "sku": ""}, "woocommerce") == "55"   # wc_id, NEM woo_id
+    assert lp._product_id({"sku": "SK"}, "shoprenter") == "SK"         # SR: nincs id -> sku
+    assert lp._product_id({"sku": "SK"}, "unas") == "SK"              # Unas: nincs id -> sku
     assert lp._product_id({}, "sellvio") == ""
-    ok.append("_product_id: platform-id elsőbbség + sku fallback")
+    ok.append("_product_id: sellvio_id / wc_id / SR+Unas sku")
 
-    # --- Sellvio élő ár/készlet ---
+    # --- Sellvio élő: price DICT (brutto_price), is_available_for_order, NINCS qty ---
     reset()
     ROUTES["/oauth/token"] = {"json": {"access_token": "tok"}}
-    ROUTES["/api/v2/products/"] = {"json": {"data": {
-        "name": "X", "price": 80600, "stock": 5, "available": True}}}
+    ROUTES["/api/v2/products/"] = {"json": {"data": {"name": "X",
+        "price": {"netto_price": 63465, "vat": 27, "brutto_price": 80600, "discount": 0},
+        "is_available_for_order": True}}}
     live = await lp.fetch_live_price_stock(T("sellvio", "https://teslashop.sellvio.hu"),
                                            C({"sellvio_id": "777", "sku": "TSL1"}))
-    assert live and live.price == "80600" and live.qty == 5 and live.available is True
+    assert live and live.price == "80600" and live.qty is None and live.available is True
     g = [q for q in REQS if q[0] == "GET"][0]
     assert g[1] == "https://teslashop.sellvio.hu/api/v2/products/777"   # sellvio_id az URL-ben
-    ok.append("Sellvio élő: price/qty/available, sellvio_id az URL-ben")
+    ok.append("Sellvio élő: brutto_price, is_available_for_order, qty None")
 
-    # --- WooCommerce élő (stock_status + stock_quantity) ---
+    # --- WooCommerce élő: wc_id az URL-ben, sku üres is lehet ---
     reset()
     ROUTES["/wp-json/wc/v3/products/55"] = {"json": {
         "id": 55, "name": "W", "price": "12990", "stock_status": "outofstock", "stock_quantity": 0}}
     live = await lp.fetch_live_price_stock(T("woocommerce", "https://woo.example.hu"),
-                                           C({"id": 55, "sku": "S"}))
+                                           C({"wc_id": 55, "sku": ""}))
     assert live and live.price == "12990" and live.qty == 0 and live.available is False
-    ok.append("WooCommerce élő: price + stock_status=outofstock -> available False")
+    ok.append("WooCommerce élő: wc_id (üres sku is ok), stock_status=outofstock")
 
-    # --- Shoprenter élő (base64 id, price dict-guard nem kell, scalar) ---
+    # --- Shoprenter élő: ?sku= szűrő, items[0], stock1, ár SYNCED (price="") ---
     reset()
     ROUTES["oauth.app.shoprenter.net"] = {"json": {"access_token": "srtok"}}
-    ROUTES["/products/"] = {"json": {"id": "x", "name": "S", "price": "9990", "stock1": 3}}
+    ROUTES["/products"] = {"json": {"items": [
+        {"name": "S", "price": "9990", "stock1": 10, "quantity": 0.0, "orderable": 1}]}}
     live = await lp.fetch_live_price_stock(T("shoprenter", "https://teslashop.api2.myshoprenter.hu/api"),
-                                           C({"shoprenter_id": "12", "sku": "S"}))
-    assert live and live.price == "9990" and live.qty == 3 and live.available is True
-    import base64
-    b64 = base64.b64encode(b"product-product_id=12").decode()
-    geturl = [q for q in REQS if q[0] == "GET" and "/products/" in q[1]][0][1]
-    assert geturl.endswith("/products/" + b64), geturl
-    ok.append("Shoprenter élő: base64 product id, stock1 -> qty")
+                                           C({"sku": "SKU-SR"}))
+    assert live and live.qty == 10 and live.available is True
+    assert live.price == ""                                            # ár synced marad
+    g = [q for q in REQS if q[0] == "GET" and q[1].endswith("/products")][0]
+    assert g[2]["params"] == {"sku": "SKU-SR", "full": "1"}
+    ok.append("Shoprenter élő: ?sku=&full=1, items[0].stock1, price='' (synced)")
 
-    # --- Unas élő (login -> getProduct XML) ---
+    # --- Unas élő: getProduct, Prices/Price[Actual=1]/Gross, Stocks/Stock/Qty ---
     reset()
     ROUTES["/shop/login"] = {"text": "<Login><Token>ut</Token></Login>"}
-    ROUTES["/shop/getProduct"] = {"text":
-        "<Products><Product><Name>U</Name><Price>4500</Price><Stock>2</Stock></Product></Products>"}
-    live = await lp.fetch_live_price_stock(T("unas"), C({"unas_id": "", "sku": "SKU9"}))
-    assert live and live.price == "4500" and live.qty == 2 and live.available is True
+    ROUTES["/shop/getProduct"] = {"text": (
+        "<Products><Product><Name>U</Name>"
+        "<Prices><Price><Type>special</Type><Actual>0</Actual><Gross>5000</Gross></Price>"
+        "<Price><Type>normal</Type><Actual>1</Actual><Net>3543</Net><Gross>4500</Gross></Price></Prices>"
+        "<Stocks><Stock><Qty>10</Qty></Stock></Stocks></Product></Products>")}
+    live = await lp.fetch_live_price_stock(T("unas"), C({"sku": "SKU9"}))
+    assert live and live.price == "4500" and live.qty == 10 and live.available is True
     body = [q for q in REQS if "getProduct" in q[1]][0][2]["content"]
-    assert "<Sku>SKU9</Sku>" in body                                    # sku fallback a kérésben
-    ok.append("Unas élő: login token + getProduct XML Price/Stock")
+    assert "<Sku>SKU9</Sku>" in body
+    ok.append("Unas élő: Actual=1 Gross (4500), Stocks/Stock/Qty (10)")
 
-    # --- price dict-guard: {gross: ...} -> string ---
+    # --- Unas ár fallback: nincs Actual=1 -> normal típusú Price Gross ---
     reset()
-    ROUTES["/oauth/token"] = {"json": {"access_token": "tok"}}
-    ROUTES["/api/v2/products/"] = {"json": {"data": {"price": {"gross": 1990}, "stock": 1}}}
-    live = await lp.fetch_live_price_stock(T("sellvio"), C({"sellvio_id": "9"}))
-    assert live and live.price == "1990"                               # dict->gross, nem stringelt dict
-    ok.append("price dict {gross} -> '1990' (nem stringelt dict)")
+    ROUTES["/shop/login"] = {"text": "<Login><Token>ut</Token></Login>"}
+    ROUTES["/shop/getProduct"] = {"text": (
+        "<Products><Product><Prices>"
+        "<Price><Type>normal</Type><Actual>0</Actual><Gross>7000</Gross></Price></Prices>"
+        "<Stocks><Stock><Qty>0</Qty></Stock></Stocks></Product></Products>")}
+    live = await lp.fetch_live_price_stock(T("unas"), C({"sku": "X"}))
+    assert live and live.price == "7000" and live.qty == 0 and live.available is False
+    ok.append("Unas ár fallback: normal típusú Price Gross; qty 0 -> nincs raktaron")
 
     # === FAIL-SAFE ===
     reset()
