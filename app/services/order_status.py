@@ -54,7 +54,7 @@ async def _sellvio_get_order(
 ) -> dict:
     resp = await client.get(
         f"{api_base}/api/v2/orders/{order_id}",
-        headers={"Authorization": f"Bearer {token}"},
+        headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
     )
     resp.raise_for_status()
     body = resp.json()
@@ -95,7 +95,9 @@ async def handle_order_status(tenant: "Tenant", order: "OrderIntent") -> str:
     order_email = order.order_email
 
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        # follow_redirects: a Sellvio /api/v2/orders/{id} 302-t ad; az Accept:
+        # application/json + redirect-követés nélkül HTML-re vinne (a prod n8n is így kap 200-at).
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
             token = await _sellvio_token(client, api_base, cid, secret)
             if not token:
                 logger.warning("ORDER[%s] nincs Sellvio token — semleges válasz", client_id)
