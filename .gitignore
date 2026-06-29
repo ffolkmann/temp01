@@ -1,0 +1,9 @@
+.env
+.env.host
+seed/
+__pycache__/
+*.pyc
+pgdata/
+qdrant_data/
+.venv/
+.pytest_cache/
