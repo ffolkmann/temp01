@@ -27,6 +27,7 @@ from app.services.feedback import store_feedback
 from app.services.handoff import HANDOFF_REPLY, send_handoff_email
 from app.services.intent import detect_configurator, detect_handoff, detect_order_intent
 from app.services.leads import store_lead
+from app.services.order_status import handle_order_status
 from app.services.parse_reply import parse_reply
 from app.services.prompt import PromptContext, build_system_prompt
 from app.services.retrieval import retrieve
@@ -73,19 +74,18 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
     # --- Pre-LLM intent kaszkád (a prod sorrendjében) ---
     live_api = await _plan_live_api(session, tenant.plan)
 
-    # 1) order-status: a prod élő platform-lekérést végez (Sellvio/SR/Unas/WC) majd
-    #    "Send Status Email"-t küld a vevőnek. A kód-magban a platform order-lekérés
-    #    MÉG NINCS portolva, ezért a rendelés-státusz ÉRTESÍTŐ E-MAIL sem köthető be itt
-    #    (nincs order_email / email_subject / email_text). Amint az order-lekérés
-    #    portolva lesz (Fázis 3), ide jön: schedule_email(order_email, email_subject, email_text).
-    #    Addig detektáljuk, de RAG+LLM-re esünk vissza: az LLM az order_form flaggel
-    #    adja az order_status_form akciót (C.5).
+    # 1) order-status: a prod élő order-lekérést végez, majd "Send Status Email"-t küld
+    #    a vevőnek; a /chat ettől függetlenül SEMLEGES választ ad (adat-szivárgás ellen).
+    #    MOST csak a Sellvio platform van portolva (teslashop); SR/Unas/WC később.
     order = detect_order_intent(message, tenant, live_api)
+    if order.is_order_status and order.platform == "sellvio":
+        reply = await handle_order_status(tenant, order)
+        return ChatResponse(reply=reply, action=None)
     if order.is_order_status:
+        # SR/Unas/WC: detektálva, de a platform order-lekérés MÉG NINCS portolva -> RAG-fallback
         logger.info(
-            "ORDER-STATUS[%s] detektálva (id=%s) — élő platform-lekérés + státusz-email "
-            "még nincs portolva, RAG-fallback",
-            req.client_id, order.order_id,
+            "ORDER-STATUS[%s] platform=%s még nincs portolva — RAG-fallback",
+            req.client_id, order.platform,
         )
     else:
         # 2) configurator (csak configurator_shop tenantnál)
