@@ -1,7 +1,7 @@
-"""Lead-modul — lead tárolás + handoff e-mail (CLAUDE.md C.4).
+"""Lead-modul — lead tárolás + értesítő e-mail (CLAUDE.md C.4).
 
-Fázis 1: a tárolás éles (Postgres), az e-mail-küldés STUB (csak logol).
-A valódi SMTP/connector a Fázis 3/5-ben (n8n marad email-glue-nak).
+A tárolás éles (Postgres); az értesítő Mailgunon (EU) megy, HÁTTÉRBEN (a /chat
+latencyt nem növeli). Ugyanez fut a konfigurátor-leadnél is (source="configurator").
 """
 
 import logging
@@ -9,6 +9,7 @@ import logging
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.mailer import schedule_email
 from app.models.db_models import Lead, Tenant
 from app.models.schemas import ChatRequest
 
@@ -29,12 +30,20 @@ async def store_lead(session: AsyncSession, req: ChatRequest) -> None:
     session.add(lead)
     await session.commit()
 
-    # handoff e-mail (STUB)
+    # értesítő e-mail a partnernek (Mailgun, háttérben)
     tenant = (
         await session.execute(select(Tenant).where(Tenant.client_id == req.client_id))
     ).scalar_one_or_none()
-    lead_email = tenant.lead_email if tenant else None
+    lead_email = (tenant.lead_email if tenant else None) or ""
+
+    subject = f"Uj erdeklodo - {req.client_id} chatbot"
+    text = (
+        "Uj erdeklodo erkezett.\n\n"
+        f"Nev: {req.name or ''}\nEmail: {req.email or ''}\n"
+        f"Telefon: {req.phone or ''}\nUzenet: {req.message or ''}"
+    )
     logger.info(
-        "LEAD[%s] -> handoff e-mail (stub) to=%s email=%s phone=%s source=%s",
+        "LEAD[%s] -> e-mail to=%s email=%s phone=%s source=%s",
         req.client_id, lead_email, req.email, req.phone, req.source,
     )
+    schedule_email(lead_email, subject, text)

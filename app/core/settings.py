@@ -24,6 +24,13 @@ class Settings(BaseSettings):
     # admin
     admin_token: str = "dev"
 
+    # Mailgun (EU) — háttér e-mail értesítők (handoff / lead / order-status).
+    # Üres vagy CHANGEME api_key -> nem küld, csak logol (a /chat megy tovább).
+    mailgun_api_key: str = ""
+    mailgun_domain: str = "codexpress.hu"
+    mailgun_from: str = "noreply@codexpress.hu"
+    mailgun_base_url: str = "https://api.eu.mailgun.net"
+
     # retrieval tuning (prod parity: Search KB limit 24, Hybrid Rerank top 8)
     retrieval_top_k: int = 24
     context_top_n: int = 8

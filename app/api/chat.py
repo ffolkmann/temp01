@@ -73,13 +73,18 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
     # --- Pre-LLM intent kaszkád (a prod sorrendjében) ---
     live_api = await _plan_live_api(session, tenant.plan)
 
-    # 1) order-status: a prod élő platform-lekérést végez (Sellvio/SR/Unas/WC) — a kód-magban
-    #    ez MÉG NINCS portolva. Detektáljuk, de RAG+LLM-re esünk vissza: az LLM az
-    #    order_form flaggel adja az order_status_form akciót (C.5).
+    # 1) order-status: a prod élő platform-lekérést végez (Sellvio/SR/Unas/WC) majd
+    #    "Send Status Email"-t küld a vevőnek. A kód-magban a platform order-lekérés
+    #    MÉG NINCS portolva, ezért a rendelés-státusz ÉRTESÍTŐ E-MAIL sem köthető be itt
+    #    (nincs order_email / email_subject / email_text). Amint az order-lekérés
+    #    portolva lesz (Fázis 3), ide jön: schedule_email(order_email, email_subject, email_text).
+    #    Addig detektáljuk, de RAG+LLM-re esünk vissza: az LLM az order_form flaggel
+    #    adja az order_status_form akciót (C.5).
     order = detect_order_intent(message, tenant, live_api)
     if order.is_order_status:
         logger.info(
-            "ORDER-STATUS[%s] detektálva (id=%s) — élő platform-lekérés még nincs portolva, RAG-fallback",
+            "ORDER-STATUS[%s] detektálva (id=%s) — élő platform-lekérés + státusz-email "
+            "még nincs portolva, RAG-fallback",
             req.client_id, order.order_id,
         )
     else:
