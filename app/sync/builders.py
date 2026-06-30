@@ -27,6 +27,24 @@ def _s(v) -> str:
     return "" if v is None else str(v)
 
 
+def _js_key_order(d: dict) -> list[str]:
+    """JS Object.keys / for…in sorrend: az array-index kulcsok (kanonikus egész, <2^32-1)
+    NÖVEKVŐ numerikusan, majd a többi string-kulcs beillesztési sorrendben.
+
+    A Python dict a JSON beillesztési sorrendet tartja; ez egész-kulcsú objektumnál (Sellvio
+    categories) eltérne a JS-től -> más kategória-sorrend a textben -> más vektor. Ezzel egyezik.
+    """
+    idx, rest = [], []
+    for k in d.keys():
+        ks = str(k)
+        if ks.isdigit() and ks == str(int(ks)) and int(ks) < 4294967295:
+            idx.append(ks)
+        else:
+            rest.append(ks)
+    idx.sort(key=int)
+    return idx + rest
+
+
 # =========================================================================== #
 # Sellvio  (wf RMlmusDY3K58gm3N)
 # =========================================================================== #
@@ -41,7 +59,7 @@ def build_sellvio(rows: list[dict], client_id: str) -> list[SourceProduct]:
             continue
         by_id[pid] = {"name": _s(p.get("name")).strip(), "url": purl(p)}
         cats = p.get("categories") if isinstance(p.get("categories"), dict) else {}
-        for ck in cats:
+        for ck in _js_key_order(cats):            # JS for…in sorrend (payload-paritás)
             cat_size[ck] = cat_size.get(ck, 0) + 1
             cat_members.setdefault(ck, [])
             if len(cat_members[ck]) < 40:
@@ -49,7 +67,7 @@ def build_sellvio(rows: list[dict], client_id: str) -> list[SourceProduct]:
 
     def rel_similar(p):
         pid = _s(p.get("id"))
-        cats = list(p["categories"].keys()) if isinstance(p.get("categories"), dict) else []
+        cats = _js_key_order(p["categories"]) if isinstance(p.get("categories"), dict) else []
         cats.sort(key=lambda a: cat_size.get(a, 0))
         out, seen = [], {pid: 1}
         for ck in cats:
@@ -82,7 +100,8 @@ def build_sellvio(rows: list[dict], client_id: str) -> list[SourceProduct]:
         brand = _s(p["brand"]["name"]) if isinstance(p.get("brand"), dict) and p["brand"].get("name") else ""
         cats = []
         if isinstance(p.get("categories"), dict):
-            cats = [_s((v or {}).get("name")) for v in p["categories"].values()]
+            catsd = p["categories"]
+            cats = [_s((catsd.get(k) or {}).get("name")) for k in _js_key_order(catsd)]  # JS Object.keys sorrend (VEKTOR!)
             cats = [c for c in cats if c]
         lead = trunc(strip_full(p.get("lead_text") or ""), 300)
         ld = trunc(strip_full(p.get("description") or ""), 800)

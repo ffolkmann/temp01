@@ -78,6 +78,20 @@ check("sellvio", b.build_sellvio(SELLVIO_IN, "c"), SELLVIO_GOLD)
 check("woocommerce", b.build_woo(WOO_IN, "c"), WOO_GOLD)
 check("unas", b.build_unas(UNAS_CSV, "c", ""), UNAS_GOLD)
 
+# Sellvio kategória-SORREND: JS Object.keys (egész kulcsok növekvő numerikusan), NEM JSON-sorrend.
+# Bizonyíték (prod 6769): kulcsok 1002,1176,1004,1367 -> JS: 1002,1004,1176,1367.
+CATORDER_IN = [{
+    "id": 6769, "code": "P6769", "name": "Kategoriás termék", "pretty_url": "https://shop.hu/p/6769",
+    "price": {"brutto_price": 50000}, "brand": None, "lead_text": "", "description": "", "is_visible": True,
+    "categories": {"1002": {"name": "C1002"}, "1176": {"name": "C1176"},
+                   "1004": {"name": "C1004"}, "1367": {"name": "C1367"}},
+}]
+CATORDER_GOLD = [f"Kategoriás termék — 50{NB}000 Ft. Kategória: C1002, C1004, C1176, C1367. Link: https://shop.hu/p/6769"]
+check("sellvio-catorder", b.build_sellvio(CATORDER_IN, "c"), CATORDER_GOLD)
+assert b._js_key_order({"1002": 1, "1176": 1, "1004": 1, "1367": 1}) == ["1002", "1004", "1176", "1367"]
+assert b._js_key_order({"b": 1, "10": 1, "2": 1, "a": 1}) == ["2", "10", "b", "a"]   # int-kulcsok elöl, többi insertion
+print("OK  _js_key_order: egész-kulcsok numerikusan + string-kulcsok beillesztési sorrendben")
+
 # payload-kulcsok + platform-specifikumok
 sv = b.build_sellvio(SELLVIO_IN, "c")[0]
 assert sv.platform_id_field == "sellvio_id" and sv.platform_id_value == "123"
