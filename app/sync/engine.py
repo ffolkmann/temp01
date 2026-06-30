@@ -31,10 +31,21 @@ logger = logging.getLogger("cx.sync")
 
 
 def _has_creds(tenant: "Tenant") -> bool:
-    # minden portolt platform legalább api_base + (client_secret VAGY client_id) kell
-    return bool(str(tenant.api_base or "").strip()) and bool(
+    """Platformfüggő cred-követelmény:
+      - unas:   csak ApiKey (api_client_secret VAGY _id) — a base hardcoded api.unas.eu, api_base nem kell.
+      - webdoc: csak api_base (publikus feed URL; nincs auth).
+      - egyéb (Sellvio/Shoprenter/Woo): api_base ÉS (api_client_secret VAGY _id).
+    """
+    platform = str(tenant.platform or "").strip().lower()
+    base = bool(str(tenant.api_base or "").strip())
+    secret_or_id = bool(
         str(tenant.api_client_secret or "").strip() or str(tenant.api_client_id or "").strip()
     )
+    if platform == "unas":
+        return secret_or_id
+    if platform == "webdoc":
+        return base
+    return base and secret_or_id
 
 
 async def sync_tenant(tenant: "Tenant", *, dry_run: bool = False) -> dict:

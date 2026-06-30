@@ -149,6 +149,19 @@ async def main():
     assert "nincs portolva" in (await engine.sync_tenant(t2)).get("skipped", "")
     ok.append("I) nincs cred / ismeretlen platform -> skip")
 
+    # --- J) _has_creds platformfüggő szabályok ---
+    def tn(platform, base="", secret="", cid=""):
+        x = T(); x.platform = platform; x.api_base = base; x.api_client_secret = secret; x.api_client_id = cid
+        return x
+    assert engine._has_creds(tn("sellvio", base="b", secret="s"))
+    assert not engine._has_creds(tn("sellvio", base="", secret="s"))     # base kell
+    assert not engine._has_creds(tn("sellvio", base="b"))                # secret/cid kell
+    assert engine._has_creds(tn("unas", base="", secret="k"))            # Unas: base NEM kell
+    assert not engine._has_creds(tn("unas", base="b"))                   # de ApiKey kell
+    assert engine._has_creds(tn("webdoc", base="https://feed"))          # Webdoc: csak feed URL
+    assert not engine._has_creds(tn("webdoc", base="", secret="x"))      # base kell
+    ok.append("J) _has_creds: unas=ApiKey, webdoc=api_base, egyéb=base+key")
+
     for l in ok: print("OK ", l)
     print("\nALL GOOD")
 
