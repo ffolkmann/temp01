@@ -48,6 +48,40 @@ def trunc(s: str, n: int) -> str:
     return (s[:n] + "...") if len(s) > n else s
 
 
+# --- Webdoc entity-dekód (a webdoc node kanonikus dec/strip-je) ------------- #
+# Numerikus (&#x..; / &#..;) + bővebb named tábla; a táblán KÍVÜLI named entity KÓDOLVA marad.
+# FIGYELEM: NEM keverendő a Sellvio/Woo/SR/Unas dec-jével (azok node-verifikált egyszerűbb dec-et
+# használnak — pl. Sellvio &#8217; -> ASCII ', nem ’).
+_WD_ENT = {
+    "amp": "&", "lt": "<", "gt": ">", "quot": '"', "apos": "'", "nbsp": " ",
+    "aacute": "á", "Aacute": "Á", "eacute": "é", "Eacute": "É", "iacute": "í", "Iacute": "Í",
+    "oacute": "ó", "Oacute": "Ó", "ouml": "ö", "Ouml": "Ö", "odblac": "ő", "Odblac": "Ő",
+    "uacute": "ú", "Uacute": "Ú", "uuml": "ü", "Uuml": "Ü", "udblac": "ű", "Udblac": "Ű",
+    "szlig": "ß", "ndash": "–", "mdash": "—", "hellip": "…",
+    "rsquo": "'", "lsquo": "'", "rdquo": '"', "ldquo": '"',
+    "euro": "€", "copy": "©", "reg": "®", "trade": "™", "deg": "°",
+}
+
+
+def _wd_num(m, base):
+    try:
+        return chr(int(m.group(1), base))
+    except (ValueError, OverflowError):
+        return m.group(0)
+
+
+def dec_webdoc(s: str) -> str:
+    s = "" if s is None else str(s)
+    s = re.sub(r"&#x([0-9a-fA-F]+);", lambda m: _wd_num(m, 16), s)
+    s = re.sub(r"&#(\d+);", lambda m: _wd_num(m, 10), s)
+    s = re.sub(r"&([a-zA-Z]+);", lambda m: _WD_ENT.get(m.group(1), m.group(0)), s)
+    return s
+
+
+def strip_webdoc(s: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", dec_webdoc(s))).strip()
+
+
 # --- ár formázás (hu-HU) --------------------------------------------------- #
 def _parse_float(v) -> float | None:
     m = re.match(r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?", str(v).strip())

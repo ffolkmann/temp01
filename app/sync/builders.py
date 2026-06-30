@@ -18,6 +18,7 @@ from app.sync.textutil import (
     huf_unas,
     strip_basic,
     strip_full,
+    strip_webdoc,
     trunc,
 )
 
@@ -623,7 +624,7 @@ def build_webdoc(products: list[dict], client_id: str) -> list[SourceProduct]:
         avail_txt = "raktáron" if available else "jelenleg nincs raktáron"
         brand = _s(p.get("brand"))
         cats = _webdoc_cats(p)
-        ld = trunc(strip_full(p.get("description") or ""), 6000)
+        ld = trunc(strip_webdoc(p.get("description") or ""), 6000)
         params = []
         for pr in (p.get("parameters") or p.get("params") or []):
             if not isinstance(pr, dict):

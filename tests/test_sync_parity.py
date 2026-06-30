@@ -122,6 +122,26 @@ assert "jelenleg nincs raktáron" in strict.text and strict.available is False
 assert b._js_str(["a", "b"]) == "a,b" and b._js_str(True) == "true" and b._js_str(2.0) == "2"
 print("OK  webdoc: price_gross + parameters JS-coercion + strict available + payload-extra (node-igazolt)")
 
+# Webdoc entity-dekód (csak a description megy strip_webdoc-on át; name/brand/category/params NYERS,
+# ahogy a node is hagyja). Numerikus &#225;/&#x151;, magyar named entity, ismeretlen &unknownx; marad.
+ENT_IN = [{
+    "id": "1", "name": "&aacute;rva &oacute;l&oacute;m &hellip;", "price_gross": 12345, "available": True,
+    "brand": "K&amp;M", "category_path": "El&eacute;ktro &gt; Akkuk",
+    "description": "&Aacute;tl&aacute;tsz&oacute; h&#225;z &#x151; &amp; <b>v&eacute;ge</b> &unknownx;",
+    "parameters": [{"name": "Sz&iacute;n", "value": ["Piros", "K&eacute;k"]}], "url": "https://x.hu/1", "sku": "S1",
+}]
+ENT_GOLD = [
+    f"&aacute;rva &oacute;l&oacute;m &hellip; — 12{NB}345 Ft (raktáron). Márka: K&amp;M. "
+    "Kategória: El&eacute;ktro &gt; Akkuk. Átlátszó ház ő & vége &unknownx;. "
+    "Paraméterek: Sz&iacute;n: Piros,K&eacute;k. Link: https://x.hu/1"
+]
+check("webdoc-entities", b.build_webdoc(ENT_IN, "c"), ENT_GOLD)
+# a richer dec a description-re hat (Átlátszó/ő/&), de név/márka/kategória/param NYERS marad
+from app.sync.textutil import dec_webdoc, strip_full  # noqa: E402
+assert dec_webdoc("&#225; &#x151; &amp; &unknownx;") == "á ő & &unknownx;"
+assert strip_full("&#8217;") == "'"        # Sellvio/Woo dec VÁLTOZATLAN (nem ’)
+print("OK  webdoc entity-dekód (numerikus+named, ismeretlen marad); a többi platform dec érintetlen")
+
 # payload-kulcsok + platform-specifikumok
 sv = b.build_sellvio(SELLVIO_IN, "c")[0]
 assert sv.platform_id_field == "sellvio_id" and sv.platform_id_value == "123"
