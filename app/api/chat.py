@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_session
 from app.core.llm import generate_reply
+from app.core.redis import get_redis
 from app.models.db_models import Plan, Tenant
 from app.models.schemas import ChatRequest, ChatResponse, ConfiguratorRef, EventAck
 from app.services.coupons import active_coupons
@@ -32,6 +33,8 @@ from app.services.order_status import handle_order_status
 from app.services.parse_reply import parse_reply
 from app.services.prompt import PromptContext, build_system_prompt
 from app.services.retrieval import retrieve
+from app.services.unanswered import log_unanswered
+from app.services.usage import record_usage
 
 logger = logging.getLogger("cx.chat")
 router = APIRouter()
@@ -63,6 +66,9 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
     message = (req.message or "").strip()
     if not message:
         return ChatResponse(reply=tenant.welcome_message or _FALLBACK)
+
+    # usage-accounting: minden bejövő USER üzenet (message +1; conversation ha új session/period)
+    await record_usage(session, get_redis(), req.client_id, req.session_id)
 
     pc = req.page_context
     ctx = PromptContext(
@@ -106,7 +112,7 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
         if ctx.page_is_product and ctx.page_product_name
         else message
     )
-    hits = await retrieve(
+    hits, top_score = await retrieve(
         embed_input, message, req.client_id, ctx.page_url, ctx.page_url_norm
     )
     current = await get_current_product(req.client_id, ctx.page_url_norm)
@@ -125,6 +131,8 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
         return ChatResponse(reply=_FALLBACK)
 
     parsed = parse_reply(raw)
+    # megválaszolatlan-naplózás (Eval Unanswered): low_score / collect_lead / order_form
+    await log_unanswered(session, req.client_id, req.session_id, message, top_score, parsed.action)
     return ChatResponse(reply=parsed.reply, action=parsed.action, configurator=None)
 
 

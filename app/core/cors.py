@@ -88,16 +88,19 @@ class TenantCORSMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):
         origin = request.headers.get("origin")
-        allowed = bool(origin) and _is_allowed(origin, await _get_allowset())
+        # a /stats publikus (a stat.html bármely hostról fetch-eli; a ?k= titok az auth) -> reflect bárki
+        public = request.url.path.startswith("/stats")
+        allowed = bool(origin) and (public or _is_allowed(origin, await _get_allowset()))
 
         if request.method == "OPTIONS":
             # preflight — mindig 200; engedettnél CORS-fejlécek, egyébként ACAO nélkül
             headers: dict[str, str] = {}
             if allowed:
                 req_headers = request.headers.get("access-control-request-headers") or "content-type"
+                methods = "GET, OPTIONS" if public else "POST, OPTIONS"
                 headers = {
                     "Access-Control-Allow-Origin": origin,
-                    "Access-Control-Allow-Methods": "POST, OPTIONS",
+                    "Access-Control-Allow-Methods": methods,
                     "Access-Control-Allow-Headers": req_headers,
                     "Access-Control-Max-Age": "600",
                     "Vary": "Origin",

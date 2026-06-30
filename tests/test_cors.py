@@ -52,9 +52,11 @@ cors._ALLOWSET = cors._build_allowset(["teslashop.hu", "www.codexpress.hu"])
 
 class Headers(dict):
     def get(self, k, d=None): return super().get(k.lower(), d)
+class _Url:
+    def __init__(self, path): self.path = path
 class Req:
-    def __init__(self, method, origin=None, acrh=None):
-        self.method = method; self.headers = Headers()
+    def __init__(self, method, origin=None, acrh=None, path="/chat"):
+        self.method = method; self.headers = Headers(); self.url = _Url(path)
         if origin is not None: self.headers["origin"] = origin
         if acrh is not None: self.headers["access-control-request-headers"] = acrh
 
@@ -124,6 +126,14 @@ async def main():
     r = await mw.dispatch(Req("POST"), call_next)
     assert "Access-Control-Allow-Origin" not in r.headers
     ok.append("nincs Origin -> nincs ACAO")
+
+    # --- /stats PUBLIC: idegen origin is reflektálva (a ?k= a titok) ---
+    r = await mw.dispatch(Req("GET", "https://evil.example.com", path="/stats"), call_next)
+    assert r.headers.get("Access-Control-Allow-Origin") == "https://evil.example.com"
+    r = await mw.dispatch(Req("OPTIONS", "https://barhol.org", path="/stats"), call_next)
+    assert r.headers.get("Access-Control-Allow-Origin") == "https://barhol.org"
+    assert r.headers.get("Access-Control-Allow-Methods") == "GET, OPTIONS"
+    ok.append("/stats PUBLIC -> bármely origin reflektálva (GET, OPTIONS)")
 
     for l in ok: print("OK ", l)
     print("\nALL GOOD")

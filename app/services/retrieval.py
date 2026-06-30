@@ -20,8 +20,10 @@ async def retrieve(
     client_id: str,
     page_url: str = "",
     page_url_norm: str = "",
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], float]:
     """A kérdésre dense találatok a Qdrantból (client_id-only, limit 24), majd hibrid rerank -> top 8.
+
+    Visszaad: (reranked top_n hits, top_dense_score) — a top score a megválaszolatlan-küszöbhöz.
 
     - `embed_input`: amit vektorizálunk (page_product_name + '. ' + message, vagy csak message)
     - `message`: a rerank token-számításhoz az EREDETI kérdés kell (nem az embed-input)
@@ -36,10 +38,13 @@ async def retrieve(
         limit=_settings.retrieval_top_k,
         product_only=False,  # parity: NINCS type=product szűrő a fő keresésben
     )
-    return rerank(
+    # a prod `Eval Unanswered` a SEARCH KB top dense score-ját nézi (rerank ELŐTT)
+    top_score = float(hits[0].get("score") or 0.0) if hits else 0.0
+    reranked = rerank(
         message,
         hits,
         page_url=page_url,
         page_url_norm=page_url_norm,
         top_n=_settings.context_top_n,
     )
+    return reranked, top_score
