@@ -36,12 +36,13 @@ async def _embed(texts): return [[0.1, 0.2, 0.3, 0.4] for _ in texts]
 fe.embed_texts = _embed
 sys.modules["app.core.embeddings"] = fe
 
-CAP = {"ensure": [], "upsert": [], "delete": [], "count": 0, "existing": []}
+CAP = {"ensure": [], "upsert": [], "delete": [], "ps": [], "count": 0, "existing": []}
 class FakeQ:
     def __init__(self, collection=None): self.collection = collection
     async def ensure_collection(self, c, size, distance="Cosine"): CAP["ensure"].append((c, size))
     async def scroll_products(self, c, cid, fields): return list(CAP["existing"])
     async def upsert(self, c, points): CAP["upsert"].extend(points)
+    async def set_payload_batch(self, c, ops): CAP["ps"].extend(ops)
     async def delete(self, c, ids): CAP["delete"].extend(ids)
     async def count_products(self, c, cid): return CAP["count"]
     async def aclose(self): pass
@@ -65,7 +66,7 @@ class T:
         self.api_client_id="1"; self.api_client_secret="s"
 
 def reset(existing=None, items=None, fail=False):
-    CAP.update(ensure=[], upsert=[], delete=[], count=len(items or []), existing=existing or [])
+    CAP.update(ensure=[], upsert=[], delete=[], ps=[], count=len(items or []), existing=existing or [])
     SOURCES.update(items=items or [], fail=fail)
 
 def prod(id_key, name="N", ch="h1"):
@@ -161,6 +162,51 @@ async def main():
     assert engine._has_creds(tn("webdoc", base="https://feed"))          # Webdoc: csak feed URL
     assert not engine._has_creds(tn("webdoc", base="", secret="x"))      # base kell
     ok.append("J) _has_creds: unas=ApiKey, webdoc=api_base, egyéb=base+key")
+
+    # === --pricestock (Build PS / PS Delta / Set Payload, embed nélkül) ===
+    def wprod(id_key, ps, available=True, price="100"):
+        return SP(id_key=id_key, sku=id_key, name="N", text=f"text-{id_key}-{ps}", content_hash="c",
+                  price=price, available=available, ps_hash_str=ps,
+                  platform_id_field="webdoc_id", platform_id_value=id_key, filename="__webdoc_products__")
+    def existing_ps(client_id, id_key, ps):
+        return {"id": hashing.point_id(client_id, id_key), "payload": {"ps_hash": ps}}
+
+    def wt():  # webdoc tenant
+        x = T(); x.platform = "webdoc"; return x
+    fa.PLATFORM_FETCHERS["webdoc"] = _fetch   # a fake fetchert hasznaljuk webdoc-ra is
+
+    # K) ps változott -> set_payload {price/available/text/ps_hash}, NINCS embed/upsert/delete/ensure
+    reset(existing=[existing_ps("teslashop", "W1", "OLD")], items=[wprod("W1", "NEW", available=False, price="990")])
+    r = await engine.pricestock_tenant(wt())
+    assert r["ps_update"] == 1 and CAP["upsert"] == [] and CAP["delete"] == [] and CAP["ensure"] == []
+    sub, pid = CAP["ps"][0]
+    assert pid == hashing.point_id("teslashop", "W1")
+    assert sub == {"price": "990", "text": "text-W1-NEW", "ps_hash": "NEW", "available": False}
+    ok.append("K) pricestock: ps változott -> set_payload {price/available/text/ps_hash}, nincs embed")
+
+    # L) ps változatlan -> skip
+    reset(existing=[existing_ps("teslashop", "W1", "SAME")], items=[wprod("W1", "SAME")])
+    r = await engine.pricestock_tenant(wt())
+    assert r["ps_update"] == 0 and CAP["ps"] == []
+    ok.append("L) pricestock: ps változatlan -> skip")
+
+    # M) új termék (nincs a kollekcióban) -> NEM hoz létre (a teljes sync embeddeli)
+    reset(existing=[], items=[wprod("W2", "X")])
+    r = await engine.pricestock_tenant(wt())
+    assert r["ps_update"] == 0 and CAP["ps"] == [] and CAP["upsert"] == []
+    ok.append("M) pricestock: új termék -> nem hoz létre")
+
+    # N) dry-run -> nem ír
+    reset(existing=[existing_ps("teslashop", "W1", "OLD")], items=[wprod("W1", "NEW")])
+    r = await engine.pricestock_tenant(wt(), dry_run=True)
+    assert r["dry_run"] and r["ps_update"] == 1 and CAP["ps"] == []
+    ok.append("N) pricestock dry-run: számol, nem ír")
+
+    # O) fetch-hiba -> skip
+    reset(existing=[existing_ps("teslashop", "W1", "OLD")], items=[], fail=True)
+    r = await engine.pricestock_tenant(wt())
+    assert "error" in r and CAP["ps"] == []
+    ok.append("O) pricestock fetch-hiba -> skip")
 
     for l in ok: print("OK ", l)
     print("\nALL GOOD")

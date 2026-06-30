@@ -52,7 +52,8 @@ class Tenant(Base):
     elallas_url: Mapped[str | None] = mapped_column(String)                 # 20
     configurator_shop: Mapped[str | None] = mapped_column(String)           # 21
     popup_config: Mapped[dict | None] = mapped_column(JSONB)                # 22 (str-JSON -> jsonb)
-    fast_sync_minutes: Mapped[float | None] = mapped_column(Float)          # 23
+    fast_sync_minutes: Mapped[float | None] = mapped_column(
+        Float, default=1440, server_default="1440")                         # 23 (napi; adminból állítható)
     domain: Mapped[str | None] = mapped_column(String)                      # 24
 
 

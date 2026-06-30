@@ -131,3 +131,76 @@ async def sync_tenant(tenant: "Tenant", *, dry_run: bool = False) -> dict:
         return res
     finally:
         await q.aclose()
+
+
+def _ps_payload(p) -> dict:
+    """A PriceStock Fast set_payload MERGE mezői: csak price/available/text/ps_hash (vektor érintetlen)."""
+    payload = {"price": p.price, "text": p.text, "ps_hash": p.ps_hash_str}
+    if p.available is not None:
+        payload["available"] = p.available
+    return payload
+
+
+async def pricestock_tenant(tenant: "Tenant", *, dry_run: bool = False) -> dict:
+    """--pricestock: Build PS / PS Delta / Set Payload tükre — EMBED NÉLKÜL.
+
+    A forrásból (feed) újraépíti a ps_hash/price/available/text mezőket, és CSAK a már létező
+    pontok közül a változott ps_hash-úakon frissít (set_payload merge). Új terméket NEM hoz létre
+    (azt a teljes sync embeddeli), és NEM purge-öl. Hiba/üres -> skip.
+    """
+    client_id = tenant.client_id
+    platform = str(tenant.platform or "").strip().lower()
+    res: dict = {"client_id": client_id, "platform": platform, "mode": "pricestock"}
+
+    fetcher = PLATFORM_FETCHERS.get(platform)
+    if fetcher is None:
+        res["skipped"] = f"platform '{platform}' nincs portolva"
+        return res
+    if not _has_creds(tenant):
+        res["skipped"] = "nincs cred"
+        return res
+    try:
+        sources = await fetcher(tenant)
+    except Exception as e:  # noqa: BLE001
+        logger.exception("PRICESTOCK[%s] fetch hiba", client_id)
+        res["error"] = f"fetch: {e}"
+        return res
+    if not sources:
+        res["skipped"] = "0 forrás termék"
+        return res
+
+    settings = get_settings()
+    coll = settings.qdrant_sync_collection
+    q = QdrantClient(collection=coll)
+    try:
+        try:
+            existing = await q.scroll_products(coll, client_id, ["ps_hash"])
+        except Exception:  # noqa: BLE001 — nincs kollekció -> nincs mit frissíteni
+            res["skipped"] = "scroll hiba (nincs v2 kollekció?)"
+            return res
+        ex = {str(pt.get("id")): str((pt.get("payload") or {}).get("ps_hash") or "") for pt in existing}
+
+        seen: set[str] = set()
+        ops: list[tuple[dict, str]] = []
+        for p in sources:
+            if not p.id_key:
+                continue
+            pid = point_id(client_id, p.id_key)
+            if pid in seen:
+                continue
+            seen.add(pid)
+            if pid not in ex:                       # új termék -> a teljes sync hozza létre, nem itt
+                continue
+            if ex[pid] == p.ps_hash_str:            # ár/készlet változatlan
+                continue
+            ops.append((_ps_payload(p), pid))
+
+        res.update(collection=coll, source=len(sources), existing=len(ex), ps_update=len(ops))
+        if dry_run:
+            res["dry_run"] = True
+            return res
+        if ops:
+            await q.set_payload_batch(coll, ops)
+        return res
+    finally:
+        await q.aclose()
