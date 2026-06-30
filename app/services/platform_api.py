@@ -108,26 +108,26 @@ async def sellvio_list_products(api_base: str, client_id: str, client_secret: st
         if not token:
             raise RuntimeError("Sellvio: nincs token")
         headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
-        total = None
-        for page in range(1, _MAX_PAGES + 1):
+        page, last_page = 1, 1
+        for _ in range(_MAX_PAGES):
             r = await client.get(
                 f"{api_base}/api/v2/products",
-                params={"page": page, "per_page": 100},
+                params={"page": page, "limit": 100, "locale": "hu"},
                 headers=headers,
             )
             r.raise_for_status()
             data = (r.json() or {}).get("data") or {}
             items = data.get("items") or []
-            if total is None:
-                total = data.get("total")
             out.extend(i for i in items if isinstance(i, dict))
-            if not items or (total is not None and len(out) >= int(total)):
+            last_page = data.get("last_page") or page
+            if data.get("next_page_url") is None or page >= int(last_page):
                 break
+            page += 1
     return out
 
 
 async def shoprenter_list_products(api_base: str, client_id: str, client_secret: str) -> list[dict]:
-    """Shoprenter: GET /products?full=1 lapozva pageCount alapján (api2 BARE objektum)."""
+    """Shoprenter: GET /productExtend?full=1 lapozva (page 0-tól; api2 BARE objektum)."""
     api_base = api_base.rstrip("/")
     shop = shoprenter_shop(api_base)
     out: list[dict] = []
@@ -136,21 +136,22 @@ async def shoprenter_list_products(api_base: str, client_id: str, client_secret:
         if not token:
             raise RuntimeError("Shoprenter: nincs token")
         headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
-        page_count = None
-        for page in range(1, _MAX_PAGES + 1):
+        page = 0
+        for _ in range(_MAX_PAGES):
             r = await client.get(
-                f"{api_base}/products",
-                params={"full": "1", "page": page, "limit": 200},
+                f"{api_base}/productExtend",
+                params={"full": 1, "limit": 200, "page": page},
                 headers=headers,
             )
             r.raise_for_status()
-            data = r.json() or {}
-            items = data.get("items") or []
-            if page_count is None:
-                page_count = data.get("pageCount") or data.get("pages")
+            body = r.json() or {}
+            items = body.get("items") or (body.get("response") or {}).get("items") or []
             out.extend(i for i in items if isinstance(i, dict))
-            if not items or (page_count is not None and page >= int(page_count)):
+            page_count = body.get("pageCount")
+            has_next = bool(body.get("next")) or (page_count is not None and (page + 1) < int(page_count))
+            if not items or not has_next:
                 break
+            page += 1
     return out
 
 
@@ -176,18 +177,22 @@ async def woo_list_products(base: str, consumer_key: str, consumer_secret: str) 
     return out
 
 
-async def unas_list_products(api_key: str) -> list[ET.Element]:
-    """Unas: getProductDB bulk export (login -> Bearer). NEM per-sku getProduct.
+async def unas_export_csv(api_key: str) -> str:
+    """Unas: getProductDB CSV-export (login -> Bearer -> getProductDB -> <Url> -> CSV letöltés).
 
-    A getProductDB jellemzően egy letölthető export-URL-t ad vissza (<Url>); ezt töltjük le és
-    parse-oljuk a <Product> elemekre. FLAG: a pontos getProductDB válasz-formátum a Sync workflow
-    JSON-ban van — VPS-en igazolandó. Hibánál a hívó (engine) skippel, NEM purge-öl.
+    A getProductDB egy letölthető export-URL-t ad (<Url>); azt töltjük le, a builder parse-olja
+    (;-elválasztott, magyar fejlécek). FLAG: a getProductDB KÉRÉS pontos paraméterei (INFRA, a
+    dumpban nem szerepelnek) VPS-en igazolandók; a CSV-normalizálás a reference node alapján kész.
+    Hibánál a hívó (engine) skippel, NEM purge-öl.
     """
     async with httpx.AsyncClient(timeout=_LIST_TIMEOUT, follow_redirects=True) as client:
         token = await unas_login(client, api_key)
         if not token:
             raise RuntimeError("Unas: nincs token")
-        body = '<?xml version="1.0" encoding="UTF-8"?>\n<Params><Format>xml</Format></Params>'
+        body = (
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            "<Params><Format>csv</Format><GetName>1</GetName><Lang>hu</Lang></Params>"
+        )
         r = await client.post(
             f"{UNAS_BASE}/getProductDB",
             content=body.encode("utf-8"),
@@ -195,14 +200,9 @@ async def unas_list_products(api_key: str) -> list[ET.Element]:
         )
         r.raise_for_status()
         root = xml_root(r.text)
-        if root is None:
-            raise RuntimeError("Unas getProductDB: nem-XML válasz")
-        # 1) export-URL ág (<Url>...</Url>) -> letöltés
-        url = xml_first_text(root, "Url")
-        if url:
-            d = await client.get(url)
-            d.raise_for_status()
-            root = xml_root(d.text)
-            if root is None:
-                raise RuntimeError("Unas getProductDB export: nem-XML")
-    return list(root.iter("Product"))
+        url = xml_first_text(root, "Url") if root is not None else ""
+        if not url:
+            raise RuntimeError("Unas getProductDB: nincs <Url> a válaszban")
+        d = await client.get(url)
+        d.raise_for_status()
+        return d.text

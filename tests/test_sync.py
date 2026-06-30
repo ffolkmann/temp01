@@ -1,9 +1,8 @@
 """Sync-motor teszt — fake qdrant/embeddings/adapters, valós hashing/models.
 Futtatás: python tests/test_sync.py
 
-Lefedi: determinisztikus point_id, content/ps hash, payload-kulcsok (chat-séma),
-delta-döntések (új/változatlan/ps-csak/content-változott), stale mark-and-sweep,
-fail-safe (fetch-hiba/üres -> skip, NINCS purge), dry-run.
+Content-only delta (point_id-re kulcsolva): új/változott -> embed+upsert, változatlan -> skip,
+forrásból eltűnt -> stale delete. Fail-safe (fetch-hiba/üres -> skip, NINCS purge), dry-run.
 """
 import asyncio
 import importlib.util
@@ -23,38 +22,32 @@ def _load(modname, path):
     return mod
 
 
-# valós (tiszta) modulok
 hashing = _load("app.sync.hashing", f"{ROOT}/app/sync/hashing.py")
 models = _load("app.sync.models", f"{ROOT}/app/sync/models.py")
-SourceProduct = models.SourceProduct
+SP = models.SourceProduct
 
-# fake settings
 _settings = types.SimpleNamespace(
     qdrant_sync_collection="cx_chatbot_v2", embed_dim=4, sync_embed_batch=50, sync_upsert_batch=200)
 fs = types.ModuleType("app.core.settings"); fs.get_settings = lambda: _settings
 sys.modules["app.core.settings"] = fs
 
-# fake embeddings
 fe = types.ModuleType("app.core.embeddings")
 async def _embed(texts): return [[0.1, 0.2, 0.3, 0.4] for _ in texts]
 fe.embed_texts = _embed
 sys.modules["app.core.embeddings"] = fe
 
-# fake qdrant — minden hívást rögzít modul-szintű CAP-be
-CAP = {"ensure": [], "upsert": [], "ps": [], "delete": [], "count": 0, "existing": []}
+CAP = {"ensure": [], "upsert": [], "delete": [], "count": 0, "existing": []}
 class FakeQ:
     def __init__(self, collection=None): self.collection = collection
-    async def ensure_collection(self, c, size, distance="Cosine"): CAP["ensure"].append((c, size, distance))
+    async def ensure_collection(self, c, size, distance="Cosine"): CAP["ensure"].append((c, size))
     async def scroll_products(self, c, cid, fields): return list(CAP["existing"])
     async def upsert(self, c, points): CAP["upsert"].extend(points)
-    async def set_payload_batch(self, c, ops): CAP["ps"].extend(ops)
     async def delete(self, c, ids): CAP["delete"].extend(ids)
     async def count_products(self, c, cid): return CAP["count"]
     async def aclose(self): pass
 fq = types.ModuleType("app.core.qdrant"); fq.QdrantClient = FakeQ
 sys.modules["app.core.qdrant"] = fq
 
-# fake adapters — a PLATFORM_FETCHERS-t a teszt állítja
 SOURCES = {"items": [], "fail": False}
 async def _fetch(tenant):
     if SOURCES["fail"]:
@@ -63,7 +56,6 @@ async def _fetch(tenant):
 fa = types.ModuleType("app.sync.adapters"); fa.PLATFORM_FETCHERS = {"sellvio": _fetch}
 sys.modules["app.sync.adapters"] = fa
 
-# valós engine
 engine = _load("app.sync.engine", f"{ROOT}/app/sync/engine.py")
 
 
@@ -72,105 +64,89 @@ class T:
         self.client_id="teslashop"; self.platform="sellvio"; self.api_base="https://x.hu"
         self.api_client_id="1"; self.api_client_secret="s"
 
-def reset(existing=None, items=None, raise_=False):
-    CAP.update(ensure=[], upsert=[], ps=[], delete=[], count=len(items or []), existing=existing or [])
-    SOURCES.update(items=items or [], fail=raise_)
+def reset(existing=None, items=None, fail=False):
+    CAP.update(ensure=[], upsert=[], delete=[], count=len(items or []), existing=existing or [])
+    SOURCES.update(items=items or [], fail=fail)
 
-def existing_point(client_id, p):
-    """A meglévő pont payloadja egy SourceProduct-ból (azonos hash-számítással, mint az engine)."""
-    return {"id": hashing.point_id(client_id, p.sku), "payload": {
-        "sku": p.sku, "content_hash": models.compute_content_hash(p), "ps_hash": models.compute_ps_hash(p)}}
+def prod(id_key, name="N", ch="h1"):
+    return SP(id_key=id_key, sku=id_key, name=name, text=f"text-{id_key}", content_hash=ch,
+             platform_id_field="sellvio_id", platform_id_value=id_key, filename="__sellvio_products__")
+
+def existing_pt(client_id, id_key, ch):
+    return {"id": hashing.point_id(client_id, id_key), "payload": {"content_hash": ch}}
 
 
 async def main():
     ok = []
 
-    # --- pure: point_id determinizmus + hash ---
-    a = hashing.point_id("teslashop", "TSL1", 0)
-    assert a == hashing.point_id("teslashop", "TSL1", 0)               # determinisztikus
-    assert a != hashing.point_id("teslashop", "TSL1", 1)              # chunk_idx számít
-    assert len(a) == 36 and a.count("-") == 4                          # uuid
-    assert hashing.fnv1a_32("abc") == hashing.fnv1a_32("abc")
-    ok.append("point_id determinisztikus (uuid5) + fnv1a stabil")
-
-    # --- payload tartalmazza a chat által olvasott kulcsokat ---
-    p = SourceProduct(sku="TSL1", name="N", url="u", price="100", brand="B",
-                      platform_id_field="sellvio_id", platform_id_value="777", available=True)
-    pl = models.build_payload("teslashop", p, "__sellvio_products__", models.build_text(p),
-                              models.compute_content_hash(p), models.compute_ps_hash(p))
-    for k in ("client_id","type","sku","name","text","url","price","brand","content_hash",
-              "ps_hash","filename","related_similar","related_additional","sellvio_id","available"):
+    # --- pont-id determinizmus + payload kulcsok ---
+    a = hashing.point_id("teslashop", "K1")
+    assert a == hashing.point_id("teslashop", "K1") and len(a) == 36
+    pl = models.build_payload("teslashop", prod("K1"))
+    for k in ("client_id","filename","type","text","name","price","url","sku","brand",
+              "related_similar","related_additional","content_hash","sellvio_id"):
         assert k in pl, k
-    assert pl["type"] == "product" and pl["sellvio_id"] == "777"
-    ok.append("payload: minden chat-olvasott kulcs + platform-id (sellvio_id) + available")
+    assert pl["type"] == "product" and pl["sellvio_id"] == "K1" and "stock" not in pl
+    ok.append("point_id determinisztikus + payload kulcsok (sellvio_id, nincs stock)")
 
-    # --- A) friss kollekció: minden termék embed+upsert ---
-    p1 = SourceProduct(sku="A1", name="Alpha", price="100", url="a")
-    p2 = SourceProduct(sku="A2", name="Beta", price="200", url="b")
-    reset(existing=[], items=[p1, p2])
+    # --- A) friss: minden embed+upsert ---
+    reset(existing=[], items=[prod("A1"), prod("A2")])
     r = await engine.sync_tenant(T())
-    assert r["embed"] == 2 and r["ps_update"] == 0 and r["stale"] == 0
-    assert len(CAP["upsert"]) == 2 and CAP["delete"] == []
+    assert r["embed"] == 2 and r["stale"] == 0 and len(CAP["upsert"]) == 2 and CAP["delete"] == []
     assert all("vector" in pt and pt["payload"]["type"] == "product" for pt in CAP["upsert"])
-    ok.append("A) friss: 2 embed+upsert, nincs ps/stale")
+    ok.append("A) friss: 2 embed+upsert")
 
-    # --- B) változatlan: skip (0 embed, 0 ps, 0 upsert) ---
-    reset(existing=[existing_point("teslashop", p1), existing_point("teslashop", p2)], items=[p1, p2])
+    # --- B) változatlan content_hash -> skip ---
+    reset(existing=[existing_pt("teslashop", "A1", "h1"), existing_pt("teslashop", "A2", "h1")],
+          items=[prod("A1", ch="h1"), prod("A2", ch="h1")])
     r = await engine.sync_tenant(T())
-    assert r["embed"] == 0 and r["ps_update"] == 0 and r["stale"] == 0
-    assert CAP["upsert"] == [] and CAP["ps"] == [] and CAP["delete"] == []
-    ok.append("B) változatlan content+ps -> skip (nincs embed/ps/upsert)")
+    assert r["embed"] == 0 and r["stale"] == 0 and CAP["upsert"] == [] and CAP["delete"] == []
+    ok.append("B) változatlan content_hash -> skip (nincs embed/upsert)")
 
-    # --- C) csak ár/készlet változott: set_payload, NINCS embed ---
-    p1b = SourceProduct(sku="A1", name="Alpha", price="150", url="a")   # csak ár más
-    reset(existing=[existing_point("teslashop", p1)], items=[p1b])
+    # --- C) content_hash változott -> re-embed+upsert ---
+    reset(existing=[existing_pt("teslashop", "A1", "OLD")], items=[prod("A1", ch="NEW")])
     r = await engine.sync_tenant(T())
-    assert r["embed"] == 0 and r["ps_update"] == 1
-    assert CAP["upsert"] == [] and len(CAP["ps"]) == 1
-    sub, pid = CAP["ps"][0]
-    assert sub["price"] == "150" and "ps_hash" in sub and pid == hashing.point_id("teslashop", "A1")
-    ok.append("C) csak ps változott -> set_payload (ár 150), nincs embed/upsert")
+    assert r["embed"] == 1 and len(CAP["upsert"]) == 1
+    ok.append("C) content változott -> re-embed+upsert")
 
-    # --- D) szemantika változott: re-embed + upsert ---
-    p1c = SourceProduct(sku="A1", name="Alpha PRO", price="100", url="a")  # név más -> content_hash más
-    reset(existing=[existing_point("teslashop", p1)], items=[p1c])
-    r = await engine.sync_tenant(T())
-    assert r["embed"] == 1 and r["ps_update"] == 0 and len(CAP["upsert"]) == 1
-    ok.append("D) content változott -> re-embed + upsert")
-
-    # --- E) stale: forrásból eltűnt sku -> delete (mark-and-sweep) ---
-    reset(existing=[existing_point("teslashop", p1), existing_point("teslashop", p2)], items=[p1])
+    # --- D) stale: forrásból eltűnt -> delete ---
+    reset(existing=[existing_pt("teslashop", "A1", "h1"), existing_pt("teslashop", "A2", "h1")],
+          items=[prod("A1", ch="h1")])
     r = await engine.sync_tenant(T())
     assert r["stale"] == 1 and CAP["delete"] == [hashing.point_id("teslashop", "A2")]
-    ok.append("E) stale: a forrásból hiányzó sku törölve")
+    ok.append("D) stale: eltűnt id törölve")
 
-    # --- F) dry-run: számol, de SEMMIT nem ír ---
-    reset(existing=[], items=[p1, p2])
+    # --- E) dedup: két forrás azonos id_key -> egy pont ---
+    reset(existing=[], items=[prod("A1", ch="h1"), prod("A1", ch="h1")])
+    r = await engine.sync_tenant(T())
+    assert r["embed"] == 1 and len(CAP["upsert"]) == 1
+    ok.append("E) dedup: azonos id_key -> egy pont")
+
+    # --- F) dry-run: semmit nem ír ---
+    reset(existing=[], items=[prod("A1"), prod("A2")])
     r = await engine.sync_tenant(T(), dry_run=True)
     assert r["dry_run"] and r["embed"] == 2
-    assert CAP["upsert"] == [] and CAP["ps"] == [] and CAP["delete"] == [] and CAP["ensure"] == []
-    ok.append("F) dry-run: count ok, nincs upsert/ps/delete/ensure")
+    assert CAP["upsert"] == [] and CAP["delete"] == [] and CAP["ensure"] == []
+    ok.append("F) dry-run: nincs ensure/upsert/delete")
 
     # --- G) fetch-hiba -> skip, NINCS purge ---
-    reset(existing=[existing_point("teslashop", p1)], items=[], raise_=True)
+    reset(existing=[existing_pt("teslashop", "A1", "h1")], items=[], fail=True)
     r = await engine.sync_tenant(T())
     assert "error" in r and CAP["delete"] == [] and CAP["upsert"] == []
-    ok.append("G) fetch-hiba -> error skip, NINCS purge/upsert")
+    ok.append("G) fetch-hiba -> skip, NINCS purge")
 
     # --- H) üres forrás -> skip, NINCS purge ---
-    reset(existing=[existing_point("teslashop", p1)], items=[])
+    reset(existing=[existing_pt("teslashop", "A1", "h1")], items=[])
     r = await engine.sync_tenant(T())
     assert r.get("skipped") and CAP["delete"] == []
     ok.append("H) üres forrás -> skip, NINCS purge")
 
-    # --- I) nincs cred / nem portolt platform -> skip ---
+    # --- I) nincs cred / ismeretlen platform -> skip ---
     t = T(); t.api_base = ""
-    reset(existing=[], items=[p1])
-    r = await engine.sync_tenant(t)
-    assert r.get("skipped") == "nincs cred"
+    reset(existing=[], items=[prod("A1")])
+    assert (await engine.sync_tenant(t)).get("skipped") == "nincs cred"
     t2 = T(); t2.platform = "magento"
-    r = await engine.sync_tenant(t2)
-    assert "nincs portolva" in r.get("skipped", "")
+    assert "nincs portolva" in (await engine.sync_tenant(t2)).get("skipped", "")
     ok.append("I) nincs cred / ismeretlen platform -> skip")
 
     for l in ok: print("OK ", l)
