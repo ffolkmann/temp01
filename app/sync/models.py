@@ -21,9 +21,11 @@ class SourceProduct:
     related_additional: str = ""
     text: str = ""               # az embeddelt chunk (byte-match a node-dal)
     content_hash: str = ""       # content-only hash (v2 saját)
-    platform_id_field: str = ""  # "sellvio_id" | "wc_id" | "" (SR/Unas: nincs)
+    platform_id_field: str = ""  # "sellvio_id" | "wc_id" | "webdoc_id" | "" (SR/Unas: nincs)
     platform_id_value: str = ""
     filename: str = ""
+    available: bool | None = None  # webdoc: synced készlet-bool a payloadba
+    ps_hash_str: str = ""          # webdoc: ár/készlet ujjlenyomat (a külön PriceStock Fast-hez)
 
 
 def build_payload(client_id: str, p: SourceProduct) -> dict:
@@ -49,4 +51,8 @@ def build_payload(client_id: str, p: SourceProduct) -> dict:
         payload[p.platform_id_field] = p.platform_id_value
     if p.stock_str != "":
         payload["stock"] = p.stock_str
+    if p.available is not None:          # webdoc: synced készlet-bool
+        payload["available"] = p.available
+    if p.ps_hash_str:                    # webdoc: ár/készlet ujjlenyomat
+        payload["ps_hash"] = p.ps_hash_str
     return payload

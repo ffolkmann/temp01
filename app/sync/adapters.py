@@ -9,8 +9,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import httpx
+
 from app.services import platform_api as pa
-from app.sync.builders import build_sellvio, build_shoprenter, build_unas, build_woo
+from app.sync.builders import build_sellvio, build_shoprenter, build_unas, build_webdoc, build_woo
 
 if TYPE_CHECKING:
     from app.models.db_models import Tenant
@@ -50,9 +52,30 @@ async def fetch_unas(tenant: "Tenant"):
     return build_unas(csv_text, tenant.client_id, pub)
 
 
+async def fetch_webdoc(tenant: "Tenant"):
+    # az api_base itt a FEED URL (publikus JSON, nincs auth) — az egész feedet egyben húzzuk
+    feed_url = str(tenant.api_base or "").strip()
+    async with httpx.AsyncClient(timeout=180.0, follow_redirects=True) as client:
+        r = await client.get(feed_url, headers={"Accept": "application/json"})
+        r.raise_for_status()
+        root = r.json()
+    products = []
+    if isinstance(root, dict):
+        if isinstance(root.get("products"), list):
+            products = root["products"]
+        elif isinstance(root.get("data"), dict) and isinstance(root["data"].get("products"), list):
+            products = root["data"]["products"]
+        elif isinstance(root.get("data"), list):
+            products = root["data"]
+    elif isinstance(root, list):
+        products = root
+    return build_webdoc(products, tenant.client_id)
+
+
 PLATFORM_FETCHERS = {
     "sellvio": fetch_sellvio,
     "woocommerce": fetch_woo,
     "shoprenter": fetch_shoprenter,
     "unas": fetch_unas,
+    "webdoc": fetch_webdoc,
 }

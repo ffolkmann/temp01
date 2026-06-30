@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 
+from app.sync.hashing import ps_hash
 from app.sync.models import SourceProduct
 from app.sync.textutil import (
     content_fnv,
@@ -567,3 +568,71 @@ def build_unas(csv_text: str, client_id: str, public_url: str) -> list[SourcePro
             related_similar=rel_similar, related_additional=rel_additional,
             text=m["line"], content_hash=ch, filename="__unas_products__"))
     return products
+
+
+# =========================================================================== #
+# Webdoc  (wf BRyFj4UvunsJY9ZA) — feed-pillanatkép (data.products)
+# =========================================================================== #
+# FLAG: a webdoc reference node (sync_webdoc_code.js) NEM állt rendelkezésre; az alábbi
+# text/payload/hash a megadott spec szerint pontos, de a FEED MEZŐNEVEI (name/price/available/
+# brand/category_path|category/description/params|parameters/url|link/sku/id) FELTÉTELEZÉSEK —
+# egy valós notebookstore termékkel (vagy a node-dal) megerősítendők. A dec/strip a full variáns.
+def _webdoc_sort_key(p):
+    v = _s(p.get("id"))
+    return (0, int(v)) if v.isdigit() else (1, v)
+
+
+def _webdoc_cats(p) -> list[str]:
+    """catArr: category_path '>'-split (vagy category fallback)."""
+    cp = _s(p.get("category_path")).strip()
+    if cp:
+        return [c.strip() for c in cp.split(">") if c.strip()]
+    cat = _s(p.get("category")).strip()
+    return [cat] if cat else []
+
+
+def build_webdoc(products: list[dict], client_id: str) -> list[SourceProduct]:
+    out = []
+    for p in sorted(products, key=_webdoc_sort_key):   # id szerint rendezve
+        wid = _s(p.get("id"))
+        if not wid:
+            continue
+        name = _s(p.get("name")).strip()
+        if not name:
+            continue
+        price = p.get("price")
+        ph = huf(price)
+        available = bool(p.get("available"))
+        avail_txt = "raktáron" if available else "jelenleg nincs raktáron"
+        brand = _s(p.get("brand"))
+        cats = _webdoc_cats(p)
+        ld = trunc(strip_full(p.get("description") or ""), 6000)
+        params = [_s(x) for x in (p.get("params") or p.get("parameters") or [])]
+        params = [x for x in params if x]
+        url = _s(p.get("url") or p.get("link"))
+        sku = _s(p.get("sku"))
+        line = name
+        if ph:
+            line += " " + EMDASH + " " + ph + " Ft"
+        line += " (" + avail_txt + ")"
+        if brand:
+            line += ". Márka: " + brand
+        if cats:
+            line += ". Kategória: " + " > ".join(cats)
+        if ld:
+            line += ". " + ld
+        if params:
+            line += ". Paraméterek: " + "; ".join(params)
+        if url:
+            line += ". Link: " + url
+        line = trunc(line, 9000)
+        price_str = "" if price is None else str(price)
+        # content-only hash (ár/készlet NÉLKÜL): name|brand|cats('>')|ld|params.sorted(';')|url
+        ch = content_fnv(name, brand, ">".join(cats), ld, ";".join(sorted(params)), url)
+        out.append(SourceProduct(
+            id_key=wid, sku=sku, name=name, url=url, price=price_str, brand=brand,
+            available=available, ps_hash_str=ps_hash(price_str, "", available),
+            text=line, content_hash=ch,
+            platform_id_field="webdoc_id", platform_id_value=wid,
+            filename="__webdoc_products__"))
+    return out

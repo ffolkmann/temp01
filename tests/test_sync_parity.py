@@ -23,7 +23,7 @@ def _load(modname, path):
 
 _load("app.sync.hashing", f"{ROOT}/app/sync/hashing.py")
 _load("app.sync.textutil", f"{ROOT}/app/sync/textutil.py")
-_load("app.sync.models", f"{ROOT}/app/sync/models.py")
+models = _load("app.sync.models", f"{ROOT}/app/sync/models.py")
 b = _load("app.sync.builders", f"{ROOT}/app/sync/builders.py")
 
 NB = " "  # NBSP (hu-HU ezres-elválasztó)
@@ -91,6 +91,30 @@ check("sellvio-catorder", b.build_sellvio(CATORDER_IN, "c"), CATORDER_GOLD)
 assert b._js_key_order({"1002": 1, "1176": 1, "1004": 1, "1367": 1}) == ["1002", "1004", "1176", "1367"]
 assert b._js_key_order({"b": 1, "10": 1, "2": 1, "a": 1}) == ["2", "10", "b", "a"]   # int-kulcsok elöl, többi insertion
 print("OK  _js_key_order: egész-kulcsok numerikusan + string-kulcsok beillesztési sorrendben")
+
+# Webdoc — SPEC-golden (a reference node hiányában a megadott spec alapján kézzel számolva).
+# FLAG: a feed MEZŐNEVEI feltételezések; egy valós notebookstore termékkel megerősítendők.
+WEBDOC_IN = [
+    {"id": 12691, "name": "Laptop X", "price": 250000, "available": True, "brand": "Asus",
+     "category_path": "Számítástechnika>Laptop>Gamer", "description": "Erős <b>gép</b> &amp; jó",
+     "params": ["RAM: 16GB", "CPU: i7"], "url": "https://notebookstore.hu/p/12691", "sku": "NB12691"},
+    {"id": 99, "name": "Kábel", "price": 1990, "available": False, "brand": "",
+     "category": "Tartozék", "description": "", "params": [], "url": "", "sku": "NB99"},
+]
+WEBDOC_GOLD = [
+    f"Laptop X — 250{NB}000 Ft (raktáron). Márka: Asus. Kategória: Számítástechnika > Laptop > Gamer. "
+    "Erős gép & jó. Paraméterek: RAM: 16GB; CPU: i7. Link: https://notebookstore.hu/p/12691",
+    "Kábel — 1990 Ft (jelenleg nincs raktáron). Kategória: Tartozék",
+]
+# rendezés id szerint: 99 elöl, 12691 utána
+wd = b.build_webdoc(WEBDOC_IN, "c")
+assert [p.id_key for p in wd] == ["99", "12691"], [p.id_key for p in wd]
+assert [p.text for p in wd] == [WEBDOC_GOLD[1], WEBDOC_GOLD[0]], [p.text for p in wd]
+# payload-extra: webdoc_id, available, ps_hash
+plw = models.build_payload("c", [p for p in wd if p.id_key == "12691"][0])
+assert plw["webdoc_id"] == "12691" and plw["available"] is True and plw["ps_hash"]
+assert plw["filename"] == "__webdoc_products__" and "stock" not in plw
+print("OK  webdoc build_text (spec-golden) + payload (webdoc_id/available/ps_hash) + id-rendezés")
 
 # payload-kulcsok + platform-specifikumok
 sv = b.build_sellvio(SELLVIO_IN, "c")[0]
