@@ -85,11 +85,11 @@ def xml_first_text(el: ET.Element, *local_names: str) -> str:
 async def unas_login(client: httpx.AsyncClient, api_key: str) -> str:
     from xml.sax.saxutils import escape
 
-    body = f'<?xml version="1.0" encoding="UTF-8"?>\n<Params><ApiKey>{escape(api_key)}</ApiKey></Params>'
+    body = f'<?xml version="1.0" encoding="UTF-8" ?>\n<Params><ApiKey>{escape(api_key)}</ApiKey></Params>'
     resp = await client.post(
         f"{UNAS_BASE}/login",
         content=body.encode("utf-8"),
-        headers={"Content-Type": "application/xml"},
+        headers={"Content-Type": "text/xml"},
     )
     resp.raise_for_status()
     root = xml_root(resp.text)
@@ -177,32 +177,46 @@ async def woo_list_products(base: str, consumer_key: str, consumer_secret: str) 
     return out
 
 
-async def unas_export_csv(api_key: str) -> str:
-    """Unas: getProductDB CSV-export (login -> Bearer -> getProductDB -> <Url> -> CSV letöltés).
+_UNAS_PRODUCTDB_BODY = (
+    '<?xml version="1.0" encoding="UTF-8" ?>\n'
+    "<Params>"
+    "<Format>csv2</Format>"        # csv2 adja a magyar fejléceket (Cikkszám/Termék Név/…), amire a normalizer épül
+    "<Lang>hu</Lang>"
+    "<GetName>1</GetName>"
+    "<GetPrice>1</GetPrice>"
+    "<GetStock>1</GetStock>"
+    "<GetCategory>1</GetCategory>"
+    "<GetDescriptionShort>1</GetDescriptionShort>"
+    "<GetDescriptionLong>1</GetDescriptionLong>"
+    "<GetURL>1</GetURL>"
+    "<GetAttach>1</GetAttach>"
+    "<GetParam>1</GetParam>"
+    "</Params>"
+)
 
-    A getProductDB egy letölthető export-URL-t ad (<Url>); azt töltjük le, a builder parse-olja
-    (;-elválasztott, magyar fejlécek). FLAG: a getProductDB KÉRÉS pontos paraméterei (INFRA, a
-    dumpban nem szerepelnek) VPS-en igazolandók; a CSV-normalizálás a reference node alapján kész.
+
+async def unas_export_csv(api_key: str) -> str:
+    """Unas: getProductDB csv2-export (login -> Bearer -> getProductDB -> <Url> -> CSV letöltés).
+
+    A Format=csv2 adja a magyar fejléceket, amikre a builder normalizere épül (a 'csv' más
+    oszlopkiosztású). Timeoutok: getProductDB 180s (lassú export-generálás), letöltés 120s.
     Hibánál a hívó (engine) skippel, NEM purge-öl.
     """
-    async with httpx.AsyncClient(timeout=_LIST_TIMEOUT, follow_redirects=True) as client:
-        token = await unas_login(client, api_key)
+    async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+        token = await unas_login(client, api_key)  # text/xml, CDATA-safe Token-parse
         if not token:
             raise RuntimeError("Unas: nincs token")
-        body = (
-            '<?xml version="1.0" encoding="UTF-8"?>\n'
-            "<Params><Format>csv</Format><GetName>1</GetName><Lang>hu</Lang></Params>"
-        )
         r = await client.post(
             f"{UNAS_BASE}/getProductDB",
-            content=body.encode("utf-8"),
-            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/xml"},
+            content=_UNAS_PRODUCTDB_BODY.encode("utf-8"),
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "text/xml"},
+            timeout=180.0,
         )
         r.raise_for_status()
         root = xml_root(r.text)
-        url = xml_first_text(root, "Url") if root is not None else ""
+        url = xml_first_text(root, "Url") if root is not None else ""  # CDATA-safe (ElementTree .text)
         if not url:
             raise RuntimeError("Unas getProductDB: nincs <Url> a válaszban")
-        d = await client.get(url)
+        d = await client.get(url, timeout=120.0)
         d.raise_for_status()
         return d.text
