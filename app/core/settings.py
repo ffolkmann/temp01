@@ -35,6 +35,13 @@ class Settings(BaseSettings):
     retrieval_top_k: int = 24
     context_top_n: int = 8
 
+    # sync (Fázis 3) — KÜLÖN cél-kollekció; a chat read-collection (qdrant_collection) érintetlen,
+    # amíg a validálás után át nem állítjuk a QDRANT_COLLECTION-t a v2-re.
+    qdrant_sync_collection: str = "cx_chatbot_v2"
+    embed_dim: int = 1536               # text-embedding-3-small (mint cx_chatbot)
+    sync_embed_batch: int = 50          # OpenAI embed batch (n8n Chunk Texts SIZE=50)
+    sync_upsert_batch: int = 200        # Qdrant upsert batch (n8n PUT batch ~200)
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -70,6 +70,88 @@ class QdrantClient:
         points = r.json().get("result", {}).get("points", [])
         return points[0] if points else None
 
+    # --- sync írás/admin (Fázis 3) — KÜLÖN kollekcióra (cx_chatbot_v2); a chat read-útját
+    #     (search/find_by_url, self.collection) nem érinti. A `collection` mindig explicit. ---
+    async def ensure_collection(self, collection: str, size: int, distance: str = "Cosine") -> None:
+        """Létrehozza a kollekciót, ha nincs (idempotens)."""
+        r = await self._client.get(f"/collections/{collection}")
+        if r.status_code == 200:
+            return
+        r = await self._client.put(
+            f"/collections/{collection}",
+            json={"vectors": {"size": size, "distance": distance}},
+        )
+        r.raise_for_status()
+
+    async def scroll_products(
+        self, collection: str, client_id: str, fields: list[str]
+    ) -> list[dict[str, Any]]:
+        """Egy tenant összes type=product pontja (lapozva) — a delta/stale passhoz."""
+        out: list[dict[str, Any]] = []
+        offset = None
+        while True:
+            body: dict[str, Any] = {
+                "filter": {"must": [
+                    {"key": "client_id", "match": {"value": client_id}},
+                    {"key": "type", "match": {"value": "product"}},
+                ]},
+                "limit": 1000,
+                "with_payload": fields,
+                "with_vector": False,
+            }
+            if offset is not None:
+                body["offset"] = offset
+            r = await self._client.post(f"/collections/{collection}/points/scroll", json=body)
+            r.raise_for_status()
+            res = r.json().get("result", {})
+            pts = res.get("points", [])
+            out.extend(pts)
+            offset = res.get("next_page_offset")
+            if not offset or not pts:
+                break
+        return out
+
+    async def upsert(self, collection: str, points: list[dict[str, Any]]) -> None:
+        if not points:
+            return
+        r = await self._client.put(
+            f"/collections/{collection}/points?wait=true", json={"points": points}
+        )
+        r.raise_for_status()
+
+    async def set_payload_batch(
+        self, collection: str, ops: list[tuple[dict[str, Any], str]]
+    ) -> None:
+        """Csak-payload frissítés (ár/készlet) — pontonként más payload, egy batch-hívásban.
+
+        ops: [(payload_subset, point_id), ...]. set_payload MERGE: csak a megadott mezők íródnak,
+        a vektor és a szemantikus mezők érintetlenek.
+        """
+        operations = [{"set_payload": {"payload": pl, "points": [pid]}} for pl, pid in ops]
+        if not operations:
+            return
+        r = await self._client.post(
+            f"/collections/{collection}/points/batch?wait=true", json={"operations": operations}
+        )
+        r.raise_for_status()
+
+    async def delete(self, collection: str, ids: list[str]) -> None:
+        if not ids:
+            return
+        r = await self._client.post(
+            f"/collections/{collection}/points/delete?wait=true", json={"points": ids}
+        )
+        r.raise_for_status()
+
+    async def count_products(self, collection: str, client_id: str) -> int:
+        body = {"exact": True, "filter": {"must": [
+            {"key": "client_id", "match": {"value": client_id}},
+            {"key": "type", "match": {"value": "product"}},
+        ]}}
+        r = await self._client.post(f"/collections/{collection}/points/count", json=body)
+        r.raise_for_status()
+        return r.json().get("result", {}).get("count", 0)
+
     async def health(self) -> bool:
         try:
             r = await self._client.get(f"/collections/{self.collection}")
