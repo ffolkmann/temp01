@@ -28,6 +28,23 @@ def _s(v) -> str:
     return "" if v is None else str(v)
 
 
+def _js_str(v) -> str:
+    """JS String() coercion (Unas/webdoc param-érték lehet string VAGY lista).
+
+    JS: String(["a","b"]) == "a,b" (vesszővel, zárójel/idézőjel nélkül); a Python str(list)
+    "['a', 'b']" lenne -> drift. Bool -> 'true'/'false', egész float -> egész.
+    """
+    if v is None:
+        return ""
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, list):
+        return ",".join(_js_str(e) for e in v)
+    if isinstance(v, float) and v.is_integer():
+        return str(int(v))
+    return str(v)
+
+
 def _js_key_order(d: dict) -> list[str]:
     """JS Object.keys / for…in sorrend: az array-index kulcsok (kanonikus egész, <2^32-1)
     NÖVEKVŐ numerikusan, majd a többi string-kulcs beillesztési sorrendben.
@@ -600,15 +617,21 @@ def build_webdoc(products: list[dict], client_id: str) -> list[SourceProduct]:
         name = _s(p.get("name")).strip()
         if not name:
             continue
-        price = p.get("price")
+        price = p.get("price_gross")        # a feedben price_gross (NINCS price kulcs)
         ph = huf(price)
-        available = bool(p.get("available"))
+        available = p.get("available") is True   # strict === true
         avail_txt = "raktáron" if available else "jelenleg nincs raktáron"
         brand = _s(p.get("brand"))
         cats = _webdoc_cats(p)
         ld = trunc(strip_full(p.get("description") or ""), 6000)
-        params = [_s(x) for x in (p.get("params") or p.get("parameters") or [])]
-        params = [x for x in params if x]
+        params = []
+        for pr in (p.get("parameters") or p.get("params") or []):
+            if not isinstance(pr, dict):
+                continue
+            pn = _js_str(pr.get("name")).strip()
+            pv = _js_str(pr.get("value")).strip()   # value lehet string VAGY lista
+            if pn and pv:
+                params.append(f"{pn}: {pv}")
         url = _s(p.get("url") or p.get("link"))
         sku = _s(p.get("sku"))
         line = name
