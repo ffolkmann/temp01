@@ -42,6 +42,8 @@ class Settings(BaseSettings):
     sync_embed_batch: int = 50          # OpenAI embed batch (n8n Chunk Texts SIZE=50)
     sync_upsert_batch: int = 200        # Qdrant upsert batch (n8n PUT batch ~200)
     sync_shoprenter_concurrency: int = 4  # SR oldal-lekérés párhuzamosság (latency-kötött; óvatos rate-limit)
+    embed_tpm_limit: int = 1_000_000      # text-embedding-3-small TPM — a throttle 85%-áig pace-el
+    embed_max_retries: int = 8            # embed 429/APIError retry (exp backoff + retry-after)
 
 
 @lru_cache

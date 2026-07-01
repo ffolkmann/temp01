@@ -33,8 +33,11 @@ sys.modules["app.core.settings"] = fs
 
 fe = types.ModuleType("app.core.embeddings")
 EMBED_CALLS = []
+EMBED_FAIL = {"on": False}
 async def _embed(texts):
     EMBED_CALLS.append(len(texts))          # a batch-méretek rögzítése (bounded-flush ellenőrzés)
+    if EMBED_FAIL["on"]:                     # completion-first ág: az embed tartósan hibázik
+        raise RuntimeError("embed retry kimerült")
     return [[0.1, 0.2, 0.3, 0.4] for _ in texts]
 fe.embed_texts = _embed
 sys.modules["app.core.embeddings"] = fe
@@ -101,7 +104,10 @@ async def main():
     r = await engine.sync_tenant(T())
     assert r["embed"] == 2 and r["stale"] == 0 and len(CAP["upsert"]) == 2 and CAP["delete"] == []
     assert all("vector" in pt and pt["payload"]["type"] == "product" for pt in CAP["upsert"])
-    ok.append("A) friss: 2 embed+upsert")
+    # a Qdrant point-id a DETERMINISZTIKUS point_id -> re-run felülír (idempotens, nincs duplikáció)
+    assert {pt["id"] for pt in CAP["upsert"]} == {hashing.point_id("teslashop", "A1"),
+                                                  hashing.point_id("teslashop", "A2")}
+    ok.append("A) friss: 2 embed+upsert (a point-id determinisztikus -> idempotens)")
 
     # --- B) változatlan content_hash -> skip ---
     reset(existing=[existing_pt("teslashop", "A1", "h1"), existing_pt("teslashop", "A2", "h1")],
@@ -178,6 +184,15 @@ async def main():
     assert max(EMBED_CALLS) <= 2
     _settings.sync_embed_batch = 50
     ok.append("P) streamelő bounded flush: batch=2 -> embed-hívások [2,2,1] (peak-buffer korlátos)")
+
+    # --- Q) completion-first: embed tartós hiba -> a batch kimarad, a stream lefut, a purge NEM töröl seen-t ---
+    EMBED_FAIL["on"] = True
+    reset(existing=[existing_pt("teslashop", "A1", "OLD")], items=[prod("A1", ch="NEW")])
+    r = await engine.sync_tenant(T())
+    EMBED_FAIL["on"] = False
+    assert "error" not in r and CAP["upsert"] == []      # embed dobott -> nincs upsert, de a stream lefutott
+    assert CAP["delete"] == [] and r["embed"] == 0       # A1 a seen-ben -> NEM purge-olt (megmarad a régi verzió)
+    ok.append("Q) completion-first: embed-hiba -> batch kimarad, stream+purge lefut, seen NEM törölve")
 
     # === --pricestock (Build PS / PS Delta / Set Payload, embed nélkül) ===
     def wprod(id_key, ps, available=True, price="100"):
