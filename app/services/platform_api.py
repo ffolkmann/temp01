@@ -132,6 +132,18 @@ def _sr_items(body) -> list[dict]:
     return [i for i in items if isinstance(i, dict)]
 
 
+def _sr_json(r):
+    """Tolerns JSON: üres törzs / nem application/json / parse-hiba -> None (nem dobunk)."""
+    if not getattr(r, "content", b""):
+        return None
+    if "json" not in (r.headers.get("content-type", "") if hasattr(r, "headers") else "").lower():
+        return None
+    try:
+        return r.json()
+    except Exception:  # noqa: BLE001 — malformed JSON
+        return None
+
+
 async def shoprenter_list_products(
     api_base: str, client_id: str, client_secret: str, *, full: int = 1, concurrency: int = 4
 ):
@@ -153,18 +165,31 @@ async def shoprenter_list_products(
         headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
 
         async def fetch_page(page: int) -> dict:
+            """Egy lap lekérése tolerns hibakezeléssel. SOHA nem dob: nem-JSON/429/5xx/hálózati hiba
+            -> backoff + retry; tartós hiba (vagy tartós 4xx) -> {} (end-of-pages-ként üres lista)."""
             for attempt in range(4):
-                r = await client.get(
-                    f"{api_base}/productExtend",
-                    params={"full": full, "limit": 200, "page": page},
-                    headers=headers,
-                )
-                if r.status_code == 429:
+                try:
+                    r = await client.get(
+                        f"{api_base}/productExtend",
+                        params={"full": full, "limit": 200, "page": page},
+                        headers=headers,
+                    )
+                except httpx.HTTPError:                       # hálózati hiba -> backoff + retry
                     await asyncio.sleep(2 * (attempt + 1))
                     continue
-                r.raise_for_status()
-                return r.json() or {}
-            raise RuntimeError("Shoprenter: 429 rate-limit (retry kimerült)")
+                if r.status_code == 429 or r.status_code >= 500:
+                    await asyncio.sleep(2 * (attempt + 1))
+                    continue
+                if r.status_code >= 400:                      # tartós 4xx (nem 429) -> üres oldal
+                    logger.warning("Shoprenter page %s HTTP %s -> üres oldal", page, r.status_code)
+                    return {}
+                data = _sr_json(r)
+                if data is None:                              # nem-JSON / üres törzs -> backoff + retry
+                    await asyncio.sleep(2 * (attempt + 1))
+                    continue
+                return data
+            logger.warning("Shoprenter page %s tartósan nem-JSON/hibás -> end-of-pages (üres)", page)
+            return {}
 
         body0 = await fetch_page(0)
         items0 = _sr_items(body0)

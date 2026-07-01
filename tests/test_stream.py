@@ -123,7 +123,10 @@ async def main():
     real_pa = _load("app.services.platform_api_real", f"{ROOT}/app/services/platform_api.py")
 
     class _Resp:
-        def __init__(self, status=200, body=None): self.status_code = status; self._b = body or {}
+        def __init__(self, status=200, body=None, json_ok=True):
+            self.status_code = status; self._b = body or {}
+            self.headers = {"content-type": "application/json" if json_ok else "text/html"}
+            self.content = (b'{"x":1}' if json_ok else b"<html>oops</html>")
         def raise_for_status(self):
             if self.status_code >= 400:
                 raise RuntimeError(f"HTTP {self.status_code}")
@@ -159,6 +162,30 @@ async def main():
     assert _Client.hit429["0"] == 1                          # a 429 retry lefutott (nem dobott)
     assert sum(len(pg) for pg in pages_got) == 3
     ok.append("D) valós SR fetch: párhuzamos ablak (peak=2), full átadva, minden lap, 429->retry")
+
+    # === E) nem-JSON oldal -> retry + end-of-pages (üres), a stream NEM dob, a jó oldalak jönnek ===
+    class _ClientE:
+        tries1 = 0
+        def __init__(self, *a, **k): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def post(self, url, json=None, **k): return _Resp(200, {"access_token": "tok"})
+        async def get(self, url, params=None, headers=None, **k):
+            page = params["page"]
+            if page == 1:                                    # 1. lap: TARTÓSAN nem-JSON (text/html)
+                _ClientE.tries1 += 1
+                return _Resp(200, {}, json_ok=False)
+            if page < 3:
+                return _Resp(200, {"items": [{"innerId": str(page)}], "pageCount": 3})
+            return _Resp(200, {"items": []}, )
+    real_pa.httpx.AsyncClient = _ClientE
+    pages_e = []
+    async for pg in real_pa.shoprenter_list_products("https://x", "i", "s", full=1, concurrency=3):
+        pages_e.append(pg)                                   # NEM dob -> a stream lefut a végéig
+    inner = sorted(it["innerId"] for pg in pages_e for it in pg)
+    assert inner == ["0", "2"]                               # a jó oldalak (0,2) jönnek; az 1. kiesik
+    assert _ClientE.tries1 == 4                              # a nem-JSON oldalt 4x retry-zte, majd üres
+    ok.append("E) nem-JSON oldal -> 4x retry majd üres (end-of-pages); a stream nem dob")
 
     for l in ok: print("OK ", l)
     print("\nALL GOOD")
