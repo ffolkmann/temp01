@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     embed_dim: int = 1536               # text-embedding-3-small (mint cx_chatbot)
     sync_embed_batch: int = 50          # OpenAI embed batch (n8n Chunk Texts SIZE=50)
     sync_upsert_batch: int = 200        # Qdrant upsert batch (n8n PUT batch ~200)
+    sync_shoprenter_concurrency: int = 4  # SR oldal-lekérés párhuzamosság (latency-kötött; óvatos rate-limit)
 
 
 @lru_cache

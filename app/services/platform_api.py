@@ -5,6 +5,7 @@ osztja — az auth EGY helyen él, hogy ne drifteljen szét. A platform-specifik
 lekérdező-logika a hívó modulokban marad.
 """
 
+import asyncio
 import base64
 import logging
 import xml.etree.ElementTree as ET
@@ -125,34 +126,74 @@ async def sellvio_list_products(api_base: str, client_id: str, client_secret: st
             page += 1
 
 
-async def shoprenter_list_products(api_base: str, client_id: str, client_secret: str):
-    """Streamelő async generátor: GET /productExtend?full=1 lapozva, ol­dalanként YIELD (nem gyűjt
-    listába — memória-korlátos nagy katalógusnál). Guard: _MAX_PAGES/_LIST_TIMEOUT; api2 BARE obj."""
+def _sr_items(body) -> list[dict]:
+    body = body or {}
+    items = body.get("items") or (body.get("response") or {}).get("items") or []
+    return [i for i in items if isinstance(i, dict)]
+
+
+async def shoprenter_list_products(
+    api_base: str, client_id: str, client_secret: str, *, full: int = 1, concurrency: int = 4
+):
+    """Streamelő async generátor: GET /productExtend?full=<full> lapozva, oldalanként YIELD.
+
+    - full=0 (könnyű) a pass-1 reláció-indexhez (id->name/url); full=1 (nehéz) csak a pass-2 build-hez.
+    - Ha a válasz megadja a pageCount-ot: ABLAKONKÉNT párhuzamosan tölti a lapokat (concurrency;
+      latency-kötött -> drámai gyorsulás), de a buffer korlátos (≤ concurrency lap) -> streaming-invariáns marad.
+    - 429 rate-limit -> exponenciális backoff + retry. Guard: _MAX_PAGES/_LIST_TIMEOUT.
+    - SR pipeline (dict-index, per-termék build, engine delta/purge) SORREND-FÜGGETLEN -> a párhuzam biztonságos.
+    """
     api_base = api_base.rstrip("/")
     shop = shoprenter_shop(api_base)
+    conc = max(1, int(concurrency or 1))
     async with httpx.AsyncClient(timeout=_LIST_TIMEOUT, follow_redirects=True) as client:
         token = await shoprenter_token(client, shop, client_id, client_secret)
         if not token:
             raise RuntimeError("Shoprenter: nincs token")
         headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
-        page = 0
-        for _ in range(_MAX_PAGES):
-            r = await client.get(
-                f"{api_base}/productExtend",
-                params={"full": 1, "limit": 200, "page": page},
-                headers=headers,
-            )
-            r.raise_for_status()
-            body = r.json() or {}
-            items = [i for i in (body.get("items") or (body.get("response") or {}).get("items") or [])
-                     if isinstance(i, dict)]
-            if items:
-                yield items
-            page_count = body.get("pageCount")
-            has_next = bool(body.get("next")) or (page_count is not None and (page + 1) < int(page_count))
-            if not items or not has_next:
-                break
-            page += 1
+
+        async def fetch_page(page: int) -> dict:
+            for attempt in range(4):
+                r = await client.get(
+                    f"{api_base}/productExtend",
+                    params={"full": full, "limit": 200, "page": page},
+                    headers=headers,
+                )
+                if r.status_code == 429:
+                    await asyncio.sleep(2 * (attempt + 1))
+                    continue
+                r.raise_for_status()
+                return r.json() or {}
+            raise RuntimeError("Shoprenter: 429 rate-limit (retry kimerült)")
+
+        body0 = await fetch_page(0)
+        items0 = _sr_items(body0)
+        if items0:
+            yield items0
+        page_count = body0.get("pageCount")
+
+        if page_count is None:
+            # ismeretlen lapszám -> szekvenciális (next flag alapján)
+            page, has_next = 1, bool(body0.get("next"))
+            while has_next and page < _MAX_PAGES:
+                body = await fetch_page(page)
+                items = _sr_items(body)
+                if items:
+                    yield items
+                has_next = bool(body.get("next"))
+                if not items:
+                    break
+                page += 1
+            return
+
+        # ismert lapszám -> ablakonként párhuzamos (bounded: ≤ conc lap egyszerre a memóriában)
+        pages = list(range(1, min(int(page_count), _MAX_PAGES)))
+        for i in range(0, len(pages), conc):
+            window = pages[i:i + conc]
+            for body in await asyncio.gather(*(fetch_page(p) for p in window)):
+                items = _sr_items(body)
+                if items:
+                    yield items
 
 
 async def woo_list_products(base: str, consumer_key: str, consumer_secret: str):
