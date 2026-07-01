@@ -23,6 +23,7 @@ class Settings(BaseSettings):
 
     # admin
     admin_token: str = "dev"
+    admin_panel_token: str = ""
 
     # Mailgun (EU) — háttér e-mail értesítők (handoff / lead / order-status).
     # Üres vagy CHANGEME api_key -> nem küld, csak logol (a /chat megy tovább).

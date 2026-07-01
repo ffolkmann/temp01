@@ -55,6 +55,8 @@ class Tenant(Base):
     fast_sync_minutes: Mapped[float | None] = mapped_column(
         Float, default=1440, server_default="1440")                         # 23 (napi; adminból állítható)
     domain: Mapped[str | None] = mapped_column(String)                      # 24
+    launcher_anim: Mapped[str | None] = mapped_column(String)               # 28 (none/ring/float/glow/ring_float)
+    use_fastapi: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")  # routing (PG-only)
 
 
 class Plan(Base):

@@ -89,15 +89,23 @@ class TenantCORSMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         origin = request.headers.get("origin")
         # a /stats publikus (a stat.html bármely hostról fetch-eli; a ?k= titok az auth) -> reflect bárki
-        public = request.url.path.startswith("/stats")
-        allowed = bool(origin) and (public or _is_allowed(origin, await _get_allowset()))
+        _path = request.url.path
+        # reflect-any (a titok/token az auth): /stats (?k=) es /admin (admin_token)
+        reflect_any = _path.startswith("/stats") or _path.startswith("/admin")
+        # GET-vegpontok (preflight metodushoz): /stats, /chat-config, /chat-popup
+        is_get_ep = (
+            _path.startswith("/stats")
+            or _path.startswith("/chat-config")
+            or _path.startswith("/chat-popup")
+        )
+        allowed = bool(origin) and (reflect_any or _is_allowed(origin, await _get_allowset()))
 
         if request.method == "OPTIONS":
             # preflight — mindig 200; engedettnél CORS-fejlécek, egyébként ACAO nélkül
             headers: dict[str, str] = {}
             if allowed:
                 req_headers = request.headers.get("access-control-request-headers") or "content-type"
-                methods = "GET, OPTIONS" if public else "POST, OPTIONS"
+                methods = "GET, OPTIONS" if is_get_ep else "POST, OPTIONS"
                 headers = {
                     "Access-Control-Allow-Origin": origin,
                     "Access-Control-Allow-Methods": methods,
