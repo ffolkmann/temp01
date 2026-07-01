@@ -1,0 +1,14 @@
+[Unit]
+Description=CodeXpress termék-szinkron (streamelő) -> cx_chatbot_v2
+Documentation=https://github.com/ffolkmann/temp01
+After=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/docker/chatbot-prod
+# Egyszeri, izolált konténerben futtatja a streamelő syncet minden aktív tenantra.
+# A --rm konténer az api image-et + .env-et örökli; a futó api-t nem érinti.
+ExecStart=/usr/bin/docker compose -f docker-compose.prod.yml run --rm api python -m app.sync --all
+# Nagy katalógus (streamelő, de 2x fetch) -> bőséges limit; a memória korlátos.
+TimeoutStartSec=10800

@@ -99,10 +99,9 @@ async def unas_login(client: httpx.AsyncClient, api_key: str) -> str:
 # --------------------------------------------------------------------------- #
 # BULK termék-listák (sync) — összes termék / tenant, lapozva
 # --------------------------------------------------------------------------- #
-async def sellvio_list_products(api_base: str, client_id: str, client_secret: str) -> list[dict]:
-    """Sellvio: GET /api/v2/products lapozva (resp data.{items,total}; OAuth2 Bearer)."""
+async def sellvio_list_products(api_base: str, client_id: str, client_secret: str):
+    """Streamelő async generátor: GET /api/v2/products lapozva, oldalanként YIELD (data.{items,last_page})."""
     api_base = api_base.rstrip("/")
-    out: list[dict] = []
     async with httpx.AsyncClient(timeout=_LIST_TIMEOUT, follow_redirects=True) as client:
         token = await sellvio_token(client, api_base, client_id, client_secret)
         if not token:
@@ -117,20 +116,20 @@ async def sellvio_list_products(api_base: str, client_id: str, client_secret: st
             )
             r.raise_for_status()
             data = (r.json() or {}).get("data") or {}
-            items = data.get("items") or []
-            out.extend(i for i in items if isinstance(i, dict))
+            items = [i for i in (data.get("items") or []) if isinstance(i, dict)]
+            if items:
+                yield items
             last_page = data.get("last_page") or page
             if data.get("next_page_url") is None or page >= int(last_page):
                 break
             page += 1
-    return out
 
 
-async def shoprenter_list_products(api_base: str, client_id: str, client_secret: str) -> list[dict]:
-    """Shoprenter: GET /productExtend?full=1 lapozva (page 0-tól; api2 BARE objektum)."""
+async def shoprenter_list_products(api_base: str, client_id: str, client_secret: str):
+    """Streamelő async generátor: GET /productExtend?full=1 lapozva, ol­dalanként YIELD (nem gyűjt
+    listába — memória-korlátos nagy katalógusnál). Guard: _MAX_PAGES/_LIST_TIMEOUT; api2 BARE obj."""
     api_base = api_base.rstrip("/")
     shop = shoprenter_shop(api_base)
-    out: list[dict] = []
     async with httpx.AsyncClient(timeout=_LIST_TIMEOUT, follow_redirects=True) as client:
         token = await shoprenter_token(client, shop, client_id, client_secret)
         if not token:
@@ -145,20 +144,20 @@ async def shoprenter_list_products(api_base: str, client_id: str, client_secret:
             )
             r.raise_for_status()
             body = r.json() or {}
-            items = body.get("items") or (body.get("response") or {}).get("items") or []
-            out.extend(i for i in items if isinstance(i, dict))
+            items = [i for i in (body.get("items") or (body.get("response") or {}).get("items") or [])
+                     if isinstance(i, dict)]
+            if items:
+                yield items
             page_count = body.get("pageCount")
             has_next = bool(body.get("next")) or (page_count is not None and (page + 1) < int(page_count))
             if not items or not has_next:
                 break
             page += 1
-    return out
 
 
-async def woo_list_products(base: str, consumer_key: str, consumer_secret: str) -> list[dict]:
-    """WooCommerce: GET /wp-json/wc/v3/products?per_page=100&page=N (Basic ck/cs)."""
+async def woo_list_products(base: str, consumer_key: str, consumer_secret: str):
+    """Streamelő async generátor: GET /wp-json/wc/v3/products?per_page=100&page=N (Basic ck/cs)."""
     base = base.rstrip("/")
-    out: list[dict] = []
     async with httpx.AsyncClient(timeout=_LIST_TIMEOUT, follow_redirects=True) as client:
         for page in range(1, _MAX_PAGES + 1):
             r = await client.get(
@@ -171,10 +170,11 @@ async def woo_list_products(base: str, consumer_key: str, consumer_secret: str) 
             items = r.json()
             if not isinstance(items, list) or not items:
                 break
-            out.extend(i for i in items if isinstance(i, dict))
+            page_items = [i for i in items if isinstance(i, dict)]
+            if page_items:
+                yield page_items
             if len(items) < 100:
                 break
-    return out
 
 
 _UNAS_PRODUCTDB_BODY = (
