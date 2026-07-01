@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 
 import httpx
 
+from app.core.settings import get_settings
 from app.services import platform_api as pa
 from app.sync.builders import (
     ShoprenterBuilder,
@@ -42,11 +43,15 @@ def _creds(tenant):
     )
 
 
-async def _stream_paginated(pages_factory, builder):
-    """2-menetes: pass1 index (könnyű), pass2 újralapozás + build. pages_factory()=friss async gen."""
-    async for page in pages_factory():        # pass 1 — csak a reláció-index
+async def _stream_paginated(index_pages, build_pages, builder):
+    """2-menetes: pass1 index (index_pages — lehet KÖNNYŰ fetch), pass2 build (build_pages).
+
+    index_pages()/build_pages() friss async gen-t adnak. Sellvio/Woo esetén a kettő azonos; Shoprenternél
+    az index_pages full=0 (könnyű), a build_pages full=1 (nehéz) -> nincs második nehéz fetch.
+    """
+    async for page in index_pages():          # pass 1 — csak a reláció-index
         builder.index(page)
-    async for page in pages_factory():        # pass 2 — újralapozva build + yield
+    async for page in build_pages():          # pass 2 — build + yield
         for sp in builder.build(page):
             yield sp
 
@@ -62,22 +67,30 @@ async def _stream_blob(items, builder):
 # --- lapozott, nehéz források (2× fetch, de korlátos memória) ---------------
 async def stream_sellvio(tenant: "Tenant"):
     base, cid, sec, _ = _creds(tenant)
-    async for sp in _stream_paginated(lambda: pa.sellvio_list_products(base, cid, sec),
-                                      SellvioBuilder(tenant.client_id)):
+    def pages():
+        return pa.sellvio_list_products(base, cid, sec)
+    async for sp in _stream_paginated(pages, pages, SellvioBuilder(tenant.client_id)):
         yield sp
 
 
 async def stream_woo(tenant: "Tenant"):
     base, ck, cs, _ = _creds(tenant)
-    async for sp in _stream_paginated(lambda: pa.woo_list_products(base, ck, cs),
-                                      WooBuilder(tenant.client_id)):
+    def pages():
+        return pa.woo_list_products(base, ck, cs)
+    async for sp in _stream_paginated(pages, pages, WooBuilder(tenant.client_id)):
         yield sp
 
 
 async def stream_shoprenter(tenant: "Tenant"):
     base, cid, sec, pub = _creds(tenant)
-    async for sp in _stream_paginated(lambda: pa.shoprenter_list_products(base, cid, sec),
-                                      ShoprenterBuilder(tenant.client_id, pub)):
+    conc = get_settings().sync_shoprenter_concurrency
+    # pass-1: full=0 KÖNNYŰ (csak id->name/url a relációkhoz) — nincs második nehéz fetch.
+    # pass-2: full=1 NEHÉZ (a teljes text), egyszer, ablakonként párhuzamosan lekérve.
+    async for sp in _stream_paginated(
+        lambda: pa.shoprenter_list_products(base, cid, sec, full=0, concurrency=conc),
+        lambda: pa.shoprenter_list_products(base, cid, sec, full=1, concurrency=conc),
+        ShoprenterBuilder(tenant.client_id, pub),
+    ):
         yield sp
 
 
