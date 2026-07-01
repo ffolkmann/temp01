@@ -1,15 +1,13 @@
-"""Sync-motor: forrás-termékek -> embedding -> upsert a v2 Qdrant kollekcióba, delta + stale purge.
+"""Sync-motor: STREAMELŐ forrás -> embedding -> upsert a v2 Qdrant kollekcióba, delta + stale purge.
 
-Paritás az n8n sync-kel:
- - delta-embed: content_hash változatlan -> NEM embeddelünk újra (csak ps_hash-eltérésnél set_payload),
-   változott/új -> embed + upsert.
- - stale purge: mark-and-sweep — a teljes pass után töröljük a pontokat, amiknek a sku-ja már nincs
-   a forrásban.
- - determinisztikus point ID -> idempotens upsert (újrafuttatás konvergál).
+Memória-korlátos: a forrás oldalanként/chunkonként érkezik (app.sync.adapters.stream_products),
+embed-batch-enként (≤sync_embed_batch) upsertelünk és elengedünk. Memóriában csak KÖNNYŰ halmazok
+maradnak: a meglévő pontok content_hash-e (delta) + a látott point-id-k (stale-purge). A purge az
+összes oldal feldolgozása UTÁN fut, a begyűjtött id-halmaz alapján.
 
-BIZTONSÁG: KIZÁRÓLAG a settings.qdrant_sync_collection-be (cx_chatbot_v2) írunk; az élő chat
-read-kollekcióját (cx_chatbot) NEM érintjük. A fetch hibája/üres forrása -> tenant skip, NINCS purge
-(nehogy egy átmeneti hiba kiürítse a kollekciót).
+Paritás: delta content_hash-re (változatlan -> nincs re-embed); mark-and-sweep purge; determinisztikus
+point_id -> idempotens upsert. BIZTONSÁG: kizárólag a settings.qdrant_sync_collection-be írunk.
+Hiba (fetch/stream) VAGY üres forrás -> tenant skip, NINCS purge.
 """
 
 from __future__ import annotations
@@ -20,7 +18,7 @@ from typing import TYPE_CHECKING
 from app.core.embeddings import embed_texts
 from app.core.qdrant import QdrantClient
 from app.core.settings import get_settings
-from app.sync.adapters import PLATFORM_FETCHERS
+from app.sync.adapters import SUPPORTED_PLATFORMS, stream_products
 from app.sync.hashing import point_id
 from app.sync.models import build_payload
 
@@ -48,85 +46,89 @@ def _has_creds(tenant: "Tenant") -> bool:
     return base and secret_or_id
 
 
+async def _existing_hashes(q, coll, client_id, field) -> dict[str, str]:
+    """point_id -> <field> (content_hash vagy ps_hash). Új/hiányzó kollekció -> üres."""
+    try:
+        rows = await q.scroll_products(coll, client_id, [field])
+    except Exception:  # noqa: BLE001 — kollekció még nincs / átmeneti -> üres bázis
+        logger.warning("SYNC[%s] scroll sikertelen (új kollekció?) — üres bázis", client_id)
+        return {}
+    return {str(pt.get("id")): str((pt.get("payload") or {}).get(field) or "") for pt in rows}
+
+
 async def sync_tenant(tenant: "Tenant", *, dry_run: bool = False) -> dict:
-    """Egy tenant teljes szinkronja a v2 kollekcióba. Visszaad egy összegző dict-et."""
+    """Egy tenant teljes (streamelő) szinkronja a v2 kollekcióba."""
     client_id = tenant.client_id
     platform = str(tenant.platform or "").strip().lower()
     res: dict = {"client_id": client_id, "platform": platform}
-
-    fetcher = PLATFORM_FETCHERS.get(platform)
-    if fetcher is None:
+    if platform not in SUPPORTED_PLATFORMS:
         res["skipped"] = f"platform '{platform}' nincs portolva"
         return res
     if not _has_creds(tenant):
         res["skipped"] = "nincs cred"
         return res
 
-    # --- forrás-fetch (hiba -> skip, NINCS purge) ---
-    try:
-        sources = await fetcher(tenant)
-    except Exception as e:  # noqa: BLE001
-        logger.exception("SYNC[%s] fetch hiba", client_id)
-        res["error"] = f"fetch: {e}"
-        return res
-    if not sources:
-        res["skipped"] = "0 forrás termék — purge kihagyva"
-        return res
-
     settings = get_settings()
     coll = settings.qdrant_sync_collection
+    eb, ub = settings.sync_embed_batch, settings.sync_upsert_batch
     q = QdrantClient(collection=coll)
     try:
-        # meglévő pontok (point_id -> content_hash); új kollekciónál üres bázis
-        try:
-            existing = await q.scroll_products(coll, client_id, ["content_hash"])
-        except Exception:  # noqa: BLE001 — kollekció még nincs / átmeneti -> üres bázis (mindent újként kezel)
-            logger.warning("SYNC[%s] scroll sikertelen (új kollekció?) — üres bázis", client_id)
-            existing = []
-        ex: dict[str, str] = {
-            str(pt.get("id")): str((pt.get("payload") or {}).get("content_hash") or "")
-            for pt in existing
-        }
+        ex = await _existing_hashes(q, coll, client_id, "content_hash")
 
-        # delta: content_hash (content-only); változatlan -> skip, új/változott -> embed+upsert.
-        # Az ár/készlet NEM triggerel re-embedet (azt az élő lookup adja).
         seen: set[str] = set()
-        to_embed: list[tuple[str, str, dict]] = []   # (text, point_id, payload)
-        for p in sources:
-            if not p.id_key:
-                continue
-            pid = point_id(client_id, p.id_key)
-            if pid in seen:
-                continue
-            seen.add(pid)
-            if p.content_hash and ex.get(pid) == p.content_hash:
-                continue  # tartalom változatlan -> nincs újra-embed
-            to_embed.append((p.text, pid, build_payload(client_id, p)))
+        buf: list[tuple[str, str, dict]] = []   # (text, point_id, payload) — ≤ eb, aztán flush+ürít
+        embedded = 0
+        ensured = False
+
+        async def flush() -> None:
+            nonlocal embedded, ensured
+            if not buf:
+                return
+            if not dry_run:
+                if not ensured:
+                    await q.ensure_collection(coll, settings.embed_dim, "Cosine")
+                    ensured = True
+                vectors = await embed_texts([t for t, _, _ in buf])
+                points = [{"id": pid, "vector": vec, "payload": pl}
+                          for (t, pid, pl), vec in zip(buf, vectors)]
+                for j in range(0, len(points), ub):
+                    await q.upsert(coll, points[j:j + ub])
+            embedded += len(buf)
+            buf.clear()
+
+        src_count = 0
+        try:
+            async for p in stream_products(tenant):
+                src_count += 1
+                if not p.id_key:
+                    continue
+                pid = point_id(client_id, p.id_key)
+                if pid in seen:
+                    continue
+                seen.add(pid)
+                if p.content_hash and ex.get(pid) == p.content_hash:
+                    continue  # tartalom változatlan -> nincs újra-embed
+                buf.append((p.text, pid, build_payload(client_id, p)))
+                if len(buf) >= eb:
+                    await flush()
+            await flush()
+        except Exception as e:  # noqa: BLE001 — stream/fetch hiba -> skip, NINCS purge
+            logger.exception("SYNC[%s] stream hiba", client_id)
+            res["error"] = f"stream: {e}"
+            return res
+
+        if src_count == 0:
+            res["skipped"] = "0 forrás termék — purge kihagyva"
+            return res
 
         stale_ids = [pid for pid in ex if pid not in seen]
-
-        res.update(collection=coll, source=len(sources), embed=len(to_embed), stale=len(stale_ids))
+        res.update(collection=coll, source=src_count, embed=embedded, stale=len(stale_ids))
         if dry_run:
             res["dry_run"] = True
             return res
 
-        # csak valós futásnál hozzuk létre a kollekciót, az írás előtt (dry-run nem ír semmit)
-        await q.ensure_collection(coll, settings.embed_dim, "Cosine")
-
-        eb, ub = settings.sync_embed_batch, settings.sync_upsert_batch
-        for i in range(0, len(to_embed), eb):
-            chunk = to_embed[i:i + eb]
-            vectors = await embed_texts([t for t, _, _ in chunk])
-            points = [
-                {"id": pid, "vector": vec, "payload": pl}
-                for (t, pid, pl), vec in zip(chunk, vectors)
-            ]
-            for j in range(0, len(points), ub):
-                await q.upsert(coll, points[j:j + ub])
-
         if stale_ids:
             await q.delete(coll, stale_ids)
-
         res["total"] = await q.count_products(coll, client_id)
         return res
     finally:
@@ -142,65 +144,70 @@ def _ps_payload(p) -> dict:
 
 
 async def pricestock_tenant(tenant: "Tenant", *, dry_run: bool = False) -> dict:
-    """--pricestock: Build PS / PS Delta / Set Payload tükre — EMBED NÉLKÜL.
+    """--pricestock (streamelő): Build PS / PS Delta / Set Payload tükre — EMBED NÉLKÜL.
 
-    A forrásból (feed) újraépíti a ps_hash/price/available/text mezőket, és CSAK a már létező
-    pontok közül a változott ps_hash-úakon frissít (set_payload merge). Új terméket NEM hoz létre
-    (azt a teljes sync embeddeli), és NEM purge-öl. Hiba/üres -> skip.
+    A forrásból újraépíti a ps_hash/price/available/text mezőket, és CSAK a már létező pontok közül
+    a változott ps_hash-úakon frissít (set_payload merge). Új terméket NEM hoz létre, NEM purge-öl.
     """
     client_id = tenant.client_id
     platform = str(tenant.platform or "").strip().lower()
     res: dict = {"client_id": client_id, "platform": platform, "mode": "pricestock"}
-
-    fetcher = PLATFORM_FETCHERS.get(platform)
-    if fetcher is None:
+    if platform not in SUPPORTED_PLATFORMS:
         res["skipped"] = f"platform '{platform}' nincs portolva"
         return res
     if not _has_creds(tenant):
         res["skipped"] = "nincs cred"
         return res
-    try:
-        sources = await fetcher(tenant)
-    except Exception as e:  # noqa: BLE001
-        logger.exception("PRICESTOCK[%s] fetch hiba", client_id)
-        res["error"] = f"fetch: {e}"
-        return res
-    if not sources:
-        res["skipped"] = "0 forrás termék"
-        return res
 
     settings = get_settings()
     coll = settings.qdrant_sync_collection
+    ub = settings.sync_upsert_batch
     q = QdrantClient(collection=coll)
     try:
-        try:
-            existing = await q.scroll_products(coll, client_id, ["ps_hash"])
-        except Exception:  # noqa: BLE001 — nincs kollekció -> nincs mit frissíteni
-            res["skipped"] = "scroll hiba (nincs v2 kollekció?)"
-            return res
-        ex = {str(pt.get("id")): str((pt.get("payload") or {}).get("ps_hash") or "") for pt in existing}
+        ex = await _existing_hashes(q, coll, client_id, "ps_hash")
 
         seen: set[str] = set()
         ops: list[tuple[dict, str]] = []
-        for p in sources:
-            if not p.id_key:
-                continue
-            pid = point_id(client_id, p.id_key)
-            if pid in seen:
-                continue
-            seen.add(pid)
-            if pid not in ex:                       # új termék -> a teljes sync hozza létre, nem itt
-                continue
-            if ex[pid] == p.ps_hash_str:            # ár/készlet változatlan
-                continue
-            ops.append((_ps_payload(p), pid))
+        updated = 0
 
-        res.update(collection=coll, source=len(sources), existing=len(ex), ps_update=len(ops))
+        async def flush() -> None:
+            nonlocal updated
+            if not ops:
+                return
+            if not dry_run:
+                await q.set_payload_batch(coll, ops)
+            updated += len(ops)
+            ops.clear()
+
+        src_count = 0
+        try:
+            async for p in stream_products(tenant):
+                src_count += 1
+                if not p.id_key:
+                    continue
+                pid = point_id(client_id, p.id_key)
+                if pid in seen:
+                    continue
+                seen.add(pid)
+                if pid not in ex:                    # új termék -> a teljes sync hozza létre, nem itt
+                    continue
+                if ex[pid] == p.ps_hash_str:         # ár/készlet változatlan
+                    continue
+                ops.append((_ps_payload(p), pid))
+                if len(ops) >= ub:
+                    await flush()
+            await flush()
+        except Exception as e:  # noqa: BLE001
+            logger.exception("PRICESTOCK[%s] stream hiba", client_id)
+            res["error"] = f"stream: {e}"
+            return res
+
+        if src_count == 0:
+            res["skipped"] = "0 forrás termék"
+            return res
+        res.update(collection=coll, source=src_count, existing=len(ex), ps_update=updated)
         if dry_run:
             res["dry_run"] = True
-            return res
-        if ops:
-            await q.set_payload_batch(coll, ops)
         return res
     finally:
         await q.aclose()

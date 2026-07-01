@@ -1,8 +1,13 @@
-"""Platform-adapterek: BULK fetch (platform_api) -> builder (byte-paritás) -> list[SourceProduct].
+"""Streamelő platform-adapterek: forrás -> SourceProduct stream (memória-korlátos).
 
-A fetch a platform_api bulk-lekérő függvényeit hívja; a text/payload-összeállítás a
-builders.py-ben van (a reference/n8n-sync/ node-okkal byte-egyezve). Hibánál a fetch DOB ->
-az engine skippeli a tenantot (NEM purge-öl).
+Minden platform egy `stream_<plat>(tenant)` async generátort ad, ami SourceProduct-okat YIELD-el,
+anélkül hogy az egész katalógust memóriában tartaná:
+ - Sellvio/Woo/Shoprenter (lapozott, nehéz elemek): 2-menetes — pass1 reláció-INDEX (könnyű:
+   id->name/url), pass2 újralapozás + build + yield. A nehéz oldalak eldobásra kerülnek.
+ - Unas/Webdoc (egy letöltés, könnyű nyers): a blob egyszer letöltve, chunkonként build + yield.
+
+A build_* byte-egyező marad (a builder osztályok index()+build()-je); hibánál (fetch) a stream DOB
+-> az engine skippeli a tenantot (NINCS purge).
 """
 
 from __future__ import annotations
@@ -12,10 +17,20 @@ from typing import TYPE_CHECKING
 import httpx
 
 from app.services import platform_api as pa
-from app.sync.builders import build_sellvio, build_shoprenter, build_unas, build_webdoc, build_woo
+from app.sync.builders import (
+    ShoprenterBuilder,
+    SellvioBuilder,
+    UnasBuilder,
+    WebdocBuilder,
+    WooBuilder,
+    unas_rowdicts,
+    webdoc_sorted,
+)
 
 if TYPE_CHECKING:
     from app.models.db_models import Tenant
+
+_CHUNK = 200   # egy-blobos források (webdoc/unas) build-chunk mérete
 
 
 def _creds(tenant):
@@ -27,33 +42,54 @@ def _creds(tenant):
     )
 
 
-async def fetch_sellvio(tenant: "Tenant"):
+async def _stream_paginated(pages_factory, builder):
+    """2-menetes: pass1 index (könnyű), pass2 újralapozás + build. pages_factory()=friss async gen."""
+    async for page in pages_factory():        # pass 1 — csak a reláció-index
+        builder.index(page)
+    async for page in pages_factory():        # pass 2 — újralapozva build + yield
+        for sp in builder.build(page):
+            yield sp
+
+
+async def _stream_blob(items, builder):
+    """Egy-blobos forrás: index az egészen (könnyű), majd chunkonként build + yield."""
+    builder.index(items)
+    for i in range(0, len(items), _CHUNK):
+        for sp in builder.build(items[i:i + _CHUNK]):
+            yield sp
+
+
+# --- lapozott, nehéz források (2× fetch, de korlátos memória) ---------------
+async def stream_sellvio(tenant: "Tenant"):
     base, cid, sec, _ = _creds(tenant)
-    rows = await pa.sellvio_list_products(base, cid, sec)
-    return build_sellvio(rows, tenant.client_id)
+    async for sp in _stream_paginated(lambda: pa.sellvio_list_products(base, cid, sec),
+                                      SellvioBuilder(tenant.client_id)):
+        yield sp
 
 
-async def fetch_woo(tenant: "Tenant"):
+async def stream_woo(tenant: "Tenant"):
     base, ck, cs, _ = _creds(tenant)
-    rows = await pa.woo_list_products(base, ck, cs)
-    return build_woo(rows, tenant.client_id)
+    async for sp in _stream_paginated(lambda: pa.woo_list_products(base, ck, cs),
+                                      WooBuilder(tenant.client_id)):
+        yield sp
 
 
-async def fetch_shoprenter(tenant: "Tenant"):
+async def stream_shoprenter(tenant: "Tenant"):
     base, cid, sec, pub = _creds(tenant)
-    items = await pa.shoprenter_list_products(base, cid, sec)
-    return build_shoprenter(items, tenant.client_id, pub)
+    async for sp in _stream_paginated(lambda: pa.shoprenter_list_products(base, cid, sec),
+                                      ShoprenterBuilder(tenant.client_id, pub)):
+        yield sp
 
 
-async def fetch_unas(tenant: "Tenant"):
+# --- egy-blobos források (1× letöltés, chunkolt build) ----------------------
+async def stream_unas(tenant: "Tenant"):
     _, cid, sec, pub = _creds(tenant)
-    api_key = sec or cid
-    csv_text = await pa.unas_export_csv(api_key)
-    return build_unas(csv_text, tenant.client_id, pub)
+    csv_text = await pa.unas_export_csv(sec or cid)
+    async for sp in _stream_blob(unas_rowdicts(csv_text), UnasBuilder(tenant.client_id)):
+        yield sp
 
 
-async def fetch_webdoc(tenant: "Tenant"):
-    # az api_base itt a FEED URL (publikus JSON, nincs auth) — az egész feedet egyben húzzuk
+async def stream_webdoc(tenant: "Tenant"):
     feed_url = str(tenant.api_base or "").strip()
     async with httpx.AsyncClient(timeout=180.0, follow_redirects=True) as client:
         r = await client.get(feed_url, headers={"Accept": "application/json"})
@@ -69,13 +105,25 @@ async def fetch_webdoc(tenant: "Tenant"):
             products = root["data"]
     elif isinstance(root, list):
         products = root
-    return build_webdoc(products, tenant.client_id)
+    async for sp in _stream_blob(webdoc_sorted(products), WebdocBuilder(tenant.client_id)):
+        yield sp
 
 
-PLATFORM_FETCHERS = {
-    "sellvio": fetch_sellvio,
-    "woocommerce": fetch_woo,
-    "shoprenter": fetch_shoprenter,
-    "unas": fetch_unas,
-    "webdoc": fetch_webdoc,
+_STREAMERS = {
+    "sellvio": stream_sellvio,
+    "woocommerce": stream_woo,
+    "shoprenter": stream_shoprenter,
+    "unas": stream_unas,
+    "webdoc": stream_webdoc,
 }
+
+SUPPORTED_PLATFORMS = frozenset(_STREAMERS)
+
+
+async def stream_products(tenant: "Tenant"):
+    """A tenant platformja szerinti SourceProduct-stream (memória-korlátos)."""
+    fn = _STREAMERS.get(str(tenant.platform or "").strip().lower())
+    if fn is None:
+        return
+    async for sp in fn(tenant):
+        yield sp

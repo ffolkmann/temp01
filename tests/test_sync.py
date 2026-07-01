@@ -32,7 +32,10 @@ fs = types.ModuleType("app.core.settings"); fs.get_settings = lambda: _settings
 sys.modules["app.core.settings"] = fs
 
 fe = types.ModuleType("app.core.embeddings")
-async def _embed(texts): return [[0.1, 0.2, 0.3, 0.4] for _ in texts]
+EMBED_CALLS = []
+async def _embed(texts):
+    EMBED_CALLS.append(len(texts))          # a batch-méretek rögzítése (bounded-flush ellenőrzés)
+    return [[0.1, 0.2, 0.3, 0.4] for _ in texts]
 fe.embed_texts = _embed
 sys.modules["app.core.embeddings"] = fe
 
@@ -50,11 +53,14 @@ fq = types.ModuleType("app.core.qdrant"); fq.QdrantClient = FakeQ
 sys.modules["app.core.qdrant"] = fq
 
 SOURCES = {"items": [], "fail": False}
-async def _fetch(tenant):
+async def _stream(tenant):          # streamelő async generátor (raw hiba -> DOB, mint a fetch)
     if SOURCES["fail"]:
         raise RuntimeError("fetch fail")
-    return list(SOURCES["items"])
-fa = types.ModuleType("app.sync.adapters"); fa.PLATFORM_FETCHERS = {"sellvio": _fetch}
+    for sp in SOURCES["items"]:
+        yield sp
+fa = types.ModuleType("app.sync.adapters")
+fa.stream_products = _stream
+fa.SUPPORTED_PLATFORMS = frozenset({"sellvio", "webdoc"})
 sys.modules["app.sync.adapters"] = fa
 
 engine = _load("app.sync.engine", f"{ROOT}/app/sync/engine.py")
@@ -163,6 +169,16 @@ async def main():
     assert not engine._has_creds(tn("webdoc", base="", secret="x"))      # base kell
     ok.append("J) _has_creds: unas=ApiKey, webdoc=api_base, egyéb=base+key")
 
+    # --- P) STREAMELŐ bounded flush: kis embed-batch -> több embed-hívás, a buffer sosem lépi túl ---
+    _settings.sync_embed_batch = 2
+    EMBED_CALLS.clear()
+    reset(existing=[], items=[prod(f"S{i}", ch=f"h{i}") for i in range(5)])
+    r = await engine.sync_tenant(T())
+    assert r["embed"] == 5 and EMBED_CALLS == [2, 2, 1]     # 5 termék, batch=2 -> 3 flush, egyik sem >2
+    assert max(EMBED_CALLS) <= 2
+    _settings.sync_embed_batch = 50
+    ok.append("P) streamelő bounded flush: batch=2 -> embed-hívások [2,2,1] (peak-buffer korlátos)")
+
     # === --pricestock (Build PS / PS Delta / Set Payload, embed nélkül) ===
     def wprod(id_key, ps, available=True, price="100"):
         return SP(id_key=id_key, sku=id_key, name="N", text=f"text-{id_key}-{ps}", content_hash="c",
@@ -171,9 +187,8 @@ async def main():
     def existing_ps(client_id, id_key, ps):
         return {"id": hashing.point_id(client_id, id_key), "payload": {"ps_hash": ps}}
 
-    def wt():  # webdoc tenant
+    def wt():  # webdoc tenant (a SUPPORTED_PLATFORMS-ban van)
         x = T(); x.platform = "webdoc"; return x
-    fa.PLATFORM_FETCHERS["webdoc"] = _fetch   # a fake fetchert hasznaljuk webdoc-ra is
 
     # K) ps változott -> set_payload {price/available/text/ps_hash}, NINCS embed/upsert/delete/ensure
     reset(existing=[existing_ps("teslashop", "W1", "OLD")], items=[wprod("W1", "NEW", available=False, price="990")])
