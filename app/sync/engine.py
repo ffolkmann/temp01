@@ -84,7 +84,13 @@ async def sync_tenant(tenant: "Tenant", *, dry_run: bool = False) -> dict:
             nonlocal embedded, ensured
             if not buf:
                 return
-            if not dry_run:
+            if dry_run:
+                embedded += len(buf)
+                buf.clear()
+                return
+            # completion-first: egy batch embed/upsert hibája NE törje meg a streamet (a purge fusson).
+            # A batch termékei már a `seen`-ben vannak -> a purge NEM törli őket (megmarad a korábbi verzió).
+            try:
                 if not ensured:
                     await q.ensure_collection(coll, settings.embed_dim, "Cosine")
                     ensured = True
@@ -93,7 +99,9 @@ async def sync_tenant(tenant: "Tenant", *, dry_run: bool = False) -> dict:
                           for (t, pid, pl), vec in zip(buf, vectors)]
                 for j in range(0, len(points), ub):
                     await q.upsert(coll, points[j:j + ub])
-            embedded += len(buf)
+                embedded += len(buf)
+            except Exception:  # noqa: BLE001 — batch-hiba (embed retry kimerült / Qdrant) -> kihagyás, tovább
+                logger.exception("SYNC[%s] embed/upsert batch hiba (%d db) -> kihagyva", client_id, len(buf))
             buf.clear()
 
         src_count = 0
