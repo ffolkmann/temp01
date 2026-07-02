@@ -372,13 +372,14 @@ def _sr_clean_params(raw):
 
 
 class ShoprenterBuilder:
-    def __init__(self, client_id: str, public_url: str = "") -> None:
+    def __init__(self, client_id: str, public_url: str = "", include_inactive: bool = False) -> None:
         self.client_id = client_id
         pub = _s(public_url)
         if pub and not pub.endswith("/"):
             pub += "/"
         self.pub = pub
         self.by_id = {}
+        self.include_inactive = include_inactive
 
     def index(self, page: list[dict]) -> None:
         for p in page:
@@ -416,6 +417,9 @@ class ShoprenterBuilder:
             name = _s(d.get("name")).strip() if d else ""
             if not name:
                 continue
+            active = _s(p.get("status")) == "1"
+            if not active and not self.include_inactive:
+                continue
             prices = p.get("productPrices") if isinstance(p.get("productPrices"), list) else []
             gross = grossSpecial = None
             if prices:
@@ -424,7 +428,6 @@ class ShoprenterBuilder:
             price = grossSpecial if grossSpecial not in (None, "") else gross
             stock = _re.sub(r"\.0+$", "", _s(p.get("stock1"))) if p.get("stock1") is not None else ""
             orderable = _s(p.get("orderable")) == "1"
-            active = _s(p.get("status")) == "1"
             url = _sr_url(p, self.pub)
             sku = _s(p.get("sku") or p.get("modelNumber"))
             manu = _s(p["manufacturer"]["name"]) if isinstance(p.get("manufacturer"), dict) and p["manufacturer"].get("name") else ""
@@ -466,8 +469,8 @@ class ShoprenterBuilder:
         return products
 
 
-def build_shoprenter(items: list[dict], client_id: str, public_url: str) -> list[SourceProduct]:
-    b = ShoprenterBuilder(client_id, public_url)
+def build_shoprenter(items: list[dict], client_id: str, public_url: str, include_inactive: bool = False) -> list[SourceProduct]:
+    b = ShoprenterBuilder(client_id, public_url, include_inactive=include_inactive)
     b.index(items)
     return b.build(items)
 
