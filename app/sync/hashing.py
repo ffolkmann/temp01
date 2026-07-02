@@ -26,6 +26,7 @@ def fnv1a_32(s: str) -> str:
 
 
 def point_id(client_id: str, sku: str, chunk_idx: int = 0) -> str:
+    """Determinisztikus UUID5 pont-azonosítót generál a client_id + sku + chunk_idx hármasból, idempotens Qdrant upserthez."""
     return str(uuid.uuid5(_NS, f"{client_id}:{sku}:{chunk_idx}"))
 
 
