@@ -36,10 +36,12 @@ def _collapse(s: str) -> str:
 
 
 def strip_full(s: str) -> str:
+    """HTML-entitás-dekód (full variáns) + tag-strip + whitespace-collapse; Sellvio/Woo szövegekhez."""
     return _collapse(dec_full(s))
 
 
 def strip_basic(s: str) -> str:
+    """HTML-entitás-dekód (basic variáns) + tag-strip + whitespace-collapse; Shoprenter/Unas szövegekhez."""
     return _collapse(dec_basic(s))
 
 
@@ -71,6 +73,7 @@ def _wd_num(m, base):
 
 
 def dec_webdoc(s: str) -> str:
+    """Webdoc-kanonikus entity-dekód: numerikus (hex/dec) és bővebb named entitások; táblán kívüli named entity kódolva marad."""
     s = "" if s is None else str(s)
     s = re.sub(r"&#x([0-9a-fA-F]+);", lambda m: _wd_num(m, 16), s)
     s = re.sub(r"&#(\d+);", lambda m: _wd_num(m, 10), s)
@@ -79,6 +82,7 @@ def dec_webdoc(s: str) -> str:
 
 
 def strip_webdoc(s: str) -> str:
+    """Webdoc dec + tag-strip + whitespace-collapse egyetlen lépésben."""
     return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", dec_webdoc(s))).strip()
 
 
