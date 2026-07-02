@@ -1,0 +1,51 @@
+name: chatbot-prod
+services:
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: chatbot-api-prod
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "127.0.0.1:8095:8000"
+    mem_limit: 1536m
+    depends_on:
+      - postgres
+      - redis
+    volumes:
+      - n8n_data:/n8n_data:ro
+    networks:
+      - prodnet
+      - qnet
+  postgres:
+    image: postgres:16-alpine
+    container_name: chatbot-db-prod
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: cx
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: cx
+    mem_limit: 512m
+    volumes:
+      - pgdata_prod:/var/lib/postgresql/data
+    networks:
+      - prodnet
+  redis:
+    image: redis:7-alpine
+    container_name: chatbot-redis-prod
+    restart: unless-stopped
+    command: ["redis-server","--maxmemory","192mb","--maxmemory-policy","allkeys-lru"]
+    mem_limit: 256m
+    networks:
+      - prodnet
+volumes:
+  pgdata_prod:
+  n8n_data:
+    external: true
+    name: n8n-cxxz_n8n_data
+networks:
+  prodnet:
+  qnet:
+    external: true
+    name: n8n-cxxz_default

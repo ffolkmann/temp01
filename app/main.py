@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from app.api.chat import router as chat_router
 from app.api.stats import router as stats_router
 from app.api.config import router as config_router
+from app.api.ingest import router as ingest_router
 from app.core.cors import TenantCORSMiddleware
 from app.core.qdrant import get_qdrant
 
@@ -21,6 +22,7 @@ app.add_middleware(TenantCORSMiddleware)
 app.include_router(chat_router)
 app.include_router(stats_router)
 app.include_router(config_router)
+app.include_router(ingest_router)
 
 
 @app.get("/health")
