@@ -45,6 +45,7 @@ class Settings(BaseSettings):
     sync_shoprenter_concurrency: int = 4  # SR oldal-lekérés párhuzamosság (latency-kötött; óvatos rate-limit)
     embed_tpm_limit: int = 1_000_000      # text-embedding-3-small TPM — a throttle 85%-áig pace-el
     embed_max_retries: int = 8            # embed 429/APIError retry (exp backoff + retry-after)
+    sync_include_inactive: bool = False
 
 
 @lru_cache
