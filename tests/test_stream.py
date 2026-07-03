@@ -10,10 +10,12 @@ D) A VALÓS shoprenter_list_products: ismert pageCount -> ablakonként PÁRHUZAM
 import asyncio
 import base64
 import importlib.util
+import os
 import sys
 import types
+from pathlib import Path
 
-ROOT = "/home/folkm/chatbot"
+ROOT = os.environ.get("CHATBOT_ROOT") or str(Path(__file__).resolve().parents[1])
 for n in ("app", "app.core", "app.sync", "app.services"):
     sys.modules.setdefault(n, types.ModuleType(n)).__path__ = []
 
@@ -36,7 +38,7 @@ fh = types.ModuleType("httpx"); fh.AsyncClient = object; sys.modules["httpx"] = 
 
 # fake settings (adapters get_settings -> SR concurrency)
 fs = types.ModuleType("app.core.settings")
-fs.get_settings = lambda: types.SimpleNamespace(sync_shoprenter_concurrency=2)
+fs.get_settings = lambda: types.SimpleNamespace(sync_shoprenter_concurrency=2, sync_include_inactive=False)
 sys.modules["app.core.settings"] = fs
 
 # fake platform_api (az adapters ezt hívja)
