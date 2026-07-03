@@ -6,10 +6,12 @@ Lefedi: platform-id feloldás (sellvio_id/fallback sku), Sellvio/WC/Shoprenter/U
 """
 import asyncio
 import importlib.util
+import os
 import sys
 import types
+from pathlib import Path
 
-ROOT = "/home/folkm/chatbot"
+ROOT = os.environ.get("CHATBOT_ROOT") or str(Path(__file__).resolve().parents[1])
 for name in ("app", "app.core", "app.services", "app.models"):
     sys.modules.setdefault(name, types.ModuleType(name)).__path__ = []
 
