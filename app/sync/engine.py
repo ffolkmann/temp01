@@ -78,10 +78,11 @@ async def sync_tenant(tenant: "Tenant", *, dry_run: bool = False) -> dict:
         seen: set[str] = set()
         buf: list[tuple[str, str, dict]] = []   # (text, point_id, payload) — ≤ eb, aztán flush+ürít
         embedded = 0
+        failed = 0
         ensured = False
 
         async def flush() -> None:
-            nonlocal embedded, ensured
+            nonlocal embedded, failed, ensured
             if not buf:
                 return
             if dry_run:
@@ -102,6 +103,7 @@ async def sync_tenant(tenant: "Tenant", *, dry_run: bool = False) -> dict:
                 embedded += len(buf)
             except Exception:  # noqa: BLE001 — batch-hiba (embed retry kimerült / Qdrant) -> kihagyás, tovább
                 logger.exception("SYNC[%s] embed/upsert batch hiba (%d db) -> kihagyva", client_id, len(buf))
+                failed += len(buf)
             buf.clear()
 
         src_count = 0
@@ -131,6 +133,8 @@ async def sync_tenant(tenant: "Tenant", *, dry_run: bool = False) -> dict:
 
         stale_ids = [pid for pid in ex if pid not in seen]
         res.update(collection=coll, source=src_count, embed=embedded, stale=len(stale_ids))
+        if failed:
+            res["failed"] = failed
         if dry_run:
             res["dry_run"] = True
             return res
