@@ -117,9 +117,9 @@ class FakeSession:
         if "rating='down'" in s:
             return _Res([{"question": "rossz", "answer": "a", "page_context": {"url": "u"}, "created_at": DT1}])
         if "FROM unanswered" in s:
-            return _Res([{"question": "miért?", "score": 0.10, "reasons": ["low_score"], "created_at": DT1},
-                         {"question": "miért?", "score": 0.20, "reasons": ["collect_lead"], "created_at": DT2},
-                         {"question": "hol?", "score": 0.30, "reasons": [], "created_at": DT3}])
+            return _Res([{"question": "miért?", "score": 0.10, "reasons": ["low_score"], "session_id": "s1", "created_at": DT1},
+                         {"question": "miért?", "score": 0.20, "reasons": ["collect_lead"], "session_id": "s2", "created_at": DT2},
+                         {"question": "hol?", "score": 0.30, "reasons": [], "session_id": None, "created_at": DT3}])
         return _Res()
     async def execute_commit(self): pass
 
@@ -163,6 +163,8 @@ async def main():
     assert qs[0]["score"] == 0.1                                          # latest (DESC első) score
     assert qs[0]["reasons"] == ["collect_lead", "low_score"]             # union, sorted
     assert qs[0]["last_ts"] == stats._iso(DT1)
+    assert qs[0]["sessions"] == ["s1", "s2"]                              # m22: session-lista a visszanézőhöz
+    assert qs[1]["sessions"] == []                                        # None session_id -> üres
     assert qs[1]["question"] == "hol?" and qs[1]["count"] == 1
     assert ua["current_week_label"] == stats._iso_week(datetime.now(timezone.utc))
     assert all(set(w) == {"week", "count"} for w in ua["weekly"])

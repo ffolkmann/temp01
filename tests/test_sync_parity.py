@@ -54,7 +54,8 @@ WOO_IN = [
      "short_description": "", "description": "", "attributes": [], "stock_status": "outofstock"},
 ]
 WOO_GOLD = [
-    "Woo Termék — 9990 Ft (készlet: 5 db). Márka: Acme. Kategória: Kat1, Kat2. "
+    # m22: on_sale terméknél AKCIÓS jelölés (a fixture-ben nincs regular_price -> nincs eredeti ár rész)
+    "Woo Termék — 9990 Ft (AKCIÓS ár) (készlet: 5 db). Márka: Acme. Kategória: Kat1, Kat2. "
     "Rövid le. Hosszú & le. Paraméterek: Szín: Piros, Kék. Link: https://woo.hu/t",
     "Nincs ár (jelenleg nincs raktáron)",
 ]
