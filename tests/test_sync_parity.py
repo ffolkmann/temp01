@@ -5,10 +5,12 @@ Az elvárt stringeket a Node node-ok produkálták (scratchpad/parity_node.js), 
 rögzítve, hogy node nélkül is fusson. Ellenőrzi: entity-dekód, NBSP huf, em-dash, truncate, CSV.
 """
 import importlib.util
+import os
 import sys
 import types
+from pathlib import Path
 
-ROOT = "/home/folkm/chatbot"
+ROOT = os.environ.get("CHATBOT_ROOT") or str(Path(__file__).resolve().parents[1])
 for n in ("app", "app.sync"):
     sys.modules.setdefault(n, types.ModuleType(n)).__path__ = []
 

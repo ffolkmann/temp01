@@ -3,10 +3,12 @@ Futtatás: python tests/test_embed.py
 """
 import asyncio
 import importlib.util
+import os
 import sys
 import types
+from pathlib import Path
 
-ROOT = "/home/folkm/chatbot"
+ROOT = os.environ.get("CHATBOT_ROOT") or str(Path(__file__).resolve().parents[1])
 for n in ("app", "app.core"):
     sys.modules.setdefault(n, types.ModuleType(n)).__path__ = []
 
