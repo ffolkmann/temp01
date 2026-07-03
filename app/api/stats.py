@@ -102,8 +102,8 @@ async def stats(k: str = Query(...), session: AsyncSession = Depends(get_session
 
     # --- unanswered (Python-aggregáció: weekly + questions score/reasons) ---
     ua_rows = (await session.execute(text(
-        "SELECT question, score, reasons, created_at FROM unanswered WHERE client_id=:c "
-        "ORDER BY created_at DESC"
+        "SELECT question, score, reasons, session_id, created_at FROM unanswered "
+        "WHERE client_id=:c ORDER BY created_at DESC"
     ), P)).mappings().all()
     weekly_counts: dict[str, int] = {}
     groups: dict[str, dict] = {}
@@ -114,14 +114,18 @@ async def stats(k: str = Query(...), session: AsyncSession = Depends(get_session
         g = groups.get(q)
         if g is None:  # első előfordulás = legutóbbi (DESC) -> innen a score + last_ts
             g = groups[q] = {"count": 0, "last_ts": r["created_at"],
-                             "score": r["score"], "reasons": set()}
+                             "score": r["score"], "reasons": set(), "sessions": []}
         g["count"] += 1
+        sid = r["session_id"]
+        if sid and sid not in g["sessions"] and len(g["sessions"]) < 5:
+            g["sessions"].append(sid)  # DESC sorrend -> a legfrissebb sessionök
         for rs in (r["reasons"] or []):
             g["reasons"].add(rs)
     questions = [{
         "question": q, "count": g["count"],
         "score": round(float(g["score"]), 4) if g["score"] is not None else 0.0,
         "reasons": sorted(g["reasons"]), "last_ts": _iso(g["last_ts"]),
+        "sessions": g["sessions"],
     } for q, g in groups.items()]
     questions.sort(key=lambda x: x["last_ts"], reverse=True)
     questions.sort(key=lambda x: x["count"], reverse=True)   # stabil: count DESC, majd last_ts DESC
@@ -165,4 +169,34 @@ async def stats(k: str = Query(...), session: AsyncSession = Depends(get_session
             "total": len(ua_rows), "current_week": weekly_counts.get(cw, 0),
             "current_week_label": cw, "weekly": weekly, "questions": questions,
         },
+    }
+
+
+@router.get("/stats/conversation")
+async def stats_conversation(
+    k: str = Query(...), sid: str = Query(...),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Egy session teljes beszélgetése — a stat.html visszanéző modálja (m22).
+
+    Auth: stat_key (mint a /stats). A messages napló 30 napos retentionű,
+    régebbi sessionöknél a turns üres lehet.
+    """
+    tenant = (await session.execute(text(
+        "SELECT client_id, bot_name FROM tenants WHERE stat_key = :k"
+    ), {"k": k})).mappings().first()
+    if tenant is None:
+        raise HTTPException(status_code=404, detail="ismeretlen stat_key")
+
+    rows = (await session.execute(text(
+        "SELECT question, answer, action, created_at FROM messages "
+        "WHERE client_id=:c AND session_id=:s ORDER BY created_at, id"
+    ), {"c": tenant["client_id"], "s": sid})).mappings().all()
+    return {
+        "session_id": sid,
+        "bot_name": tenant["bot_name"] or "Bot",
+        "turns": [{
+            "question": r["question"] or "", "answer": r["answer"] or "",
+            "action": r["action"] or "", "ts": _iso(r["created_at"]),
+        } for r in rows],
     }

@@ -22,6 +22,7 @@ from app.core.llm import generate_reply
 from app.core.redis import get_redis
 from app.models.db_models import Plan, Tenant
 from app.models.schemas import ChatRequest, ChatResponse, ConfiguratorRef, EventAck
+from app.services.conversations import format_transcript, get_transcript, log_turn
 from app.services.coupons import active_coupons
 from app.services.current_product import get_current_product, normalize_url
 from app.services.feedback import store_feedback
@@ -87,14 +88,21 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
     order = detect_order_intent(message, tenant, live_api)
     if order.is_order_status:
         reply = await handle_order_status(tenant, order)
+        await log_turn(session, req.client_id, req.session_id, message, reply)
         return ChatResponse(reply=reply, action=None)
 
     # 2) configurator (csak configurator_shop tenantnál)
     cfg = detect_configurator(message, tenant)
     if cfg.is_configurator and cfg.cfg:
+        cfg_reply = (
+            "Szívesen segítek kiszámolni a klíma telepítés becsült díját! "
+            "Kérlek, töltsd ki az alábbi pár kérdést."
+        )
+        await log_turn(
+            session, req.client_id, req.session_id, message, cfg_reply, "quote_configurator"
+        )
         return ChatResponse(
-            reply="Szívesen segítek kiszámolni a klíma telepítés becsült díját! "
-            "Kérlek, töltsd ki az alábbi pár kérdést.",
+            reply=cfg_reply,
             action="quote_configurator",
             configurator=ConfiguratorRef(**cfg.cfg),
         )
@@ -102,7 +110,13 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
     # 3) handoff
     ho = detect_handoff(message, tenant, req.history, ctx.page_url)
     if ho.is_handoff:
-        await send_handoff_email(req.client_id, ho)
+        # előbb logolunk, hogy az aktuális kérés IS benne legyen a teljes átiratban
+        await log_turn(
+            session, req.client_id, req.session_id, message, HANDOFF_REPLY, "collect_lead"
+        )
+        turns = await get_transcript(session, req.client_id, req.session_id)
+        transcript = format_transcript(turns, tenant.bot_name or "Bot") if turns else None
+        await send_handoff_email(req.client_id, ho, transcript=transcript)
         return ChatResponse(reply=HANDOFF_REPLY, action="collect_lead")
 
     # --- RAG + LLM ---
@@ -128,11 +142,14 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
         raw = await generate_reply(system_prompt, req.history, message)
     except Exception:  # noqa: BLE001 — a widget mindig kapjon választ
         logger.exception("LLM hívás hiba")
+        await log_turn(session, req.client_id, req.session_id, message, _FALLBACK)
         return ChatResponse(reply=_FALLBACK)
 
     parsed = parse_reply(raw)
     # megválaszolatlan-naplózás (Eval Unanswered): low_score / collect_lead / order_form
     await log_unanswered(session, req.client_id, req.session_id, message, top_score, parsed.action)
+    # beszélgetés-napló (m22): a stat.html visszanéző + e-mail átiratok forrása
+    await log_turn(session, req.client_id, req.session_id, message, parsed.reply, parsed.action)
     return ChatResponse(reply=parsed.reply, action=parsed.action, configurator=None)
 
 

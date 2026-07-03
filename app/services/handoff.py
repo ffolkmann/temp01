@@ -20,14 +20,21 @@ HANDOFF_REPLY = (
 )
 
 
-async def send_handoff_email(client_id: str, intent: HandoffIntent) -> None:
-    """Élő segítségkérés értesítő a partnernek — Mailgunon, háttérben."""
+async def send_handoff_email(
+    client_id: str, intent: HandoffIntent, transcript: str | None = None,
+) -> None:
+    """Élő segítségkérés értesítő a partnernek — Mailgunon, háttérben.
+
+    `transcript`: a TELJES beszélgetés a messages naplóból (m22); ha nincs
+    (üres session / DB-hiba), fallback a widget-küldött intent.transcript.
+    """
     now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
     subject = f"Elo segitsegkeres - {client_id} chatbot"
+    body_transcript = transcript or intent.transcript
     text = (
         "Egy latogato elo segitseget / munkatarsat kert a chatbotban.\n\n"
         f"Webshop: {client_id}\nOldal: {intent.page}\nIdopont: {now_iso}\n\n"
-        f"--- BESZELGETES ---\n{intent.transcript}\n\n"
+        f"--- TELJES BESZELGETES ---\n{body_transcript}\n\n"
         "Ha a latogato megadja az elerhetoseget, kulon lead-ertesitot is kuldunk."
     )
     logger.info("HANDOFF[%s] -> e-mail to=%s page=%s", client_id, intent.to, intent.page)

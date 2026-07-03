@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.mailer import schedule_email
+from app.services.conversations import format_history, format_transcript, get_transcript
 from app.models.db_models import Lead, Tenant
 from app.models.schemas import ChatRequest
 
@@ -36,12 +37,21 @@ async def store_lead(session: AsyncSession, req: ChatRequest) -> None:
     ).scalar_one_or_none()
     lead_email = (tenant.lead_email if tenant else None) or ""
 
+    # teljes beszélgetés (m22): DB-napló session szerint; fallback a widget history
+    turns = await get_transcript(session, req.client_id, req.session_id)
+    convo = (
+        format_transcript(turns, (tenant.bot_name if tenant else None) or "Bot")
+        if turns else format_history(req.history)
+    )
+
     subject = f"Uj erdeklodo - {req.client_id} chatbot"
     text = (
         "Uj erdeklodo erkezett.\n\n"
         f"Nev: {req.name or ''}\nEmail: {req.email or ''}\n"
         f"Telefon: {req.phone or ''}\nUzenet: {req.message or ''}"
     )
+    if convo:
+        text += f"\n\n--- TELJES BESZELGETES ---\n{convo}"
     logger.info(
         "LEAD[%s] -> e-mail to=%s email=%s phone=%s source=%s",
         req.client_id, lead_email, req.email, req.phone, req.source,

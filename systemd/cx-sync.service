@@ -11,4 +11,5 @@ WorkingDirectory=/docker/chatbot-prod
 # A --rm konténer az api image-et + .env-et örökli; a futó api-t nem érinti.
 ExecStart=/usr/bin/docker compose -f docker-compose.prod.yml run --rm api python -m app.sync --all
 # Nagy katalógus (streamelő, de 2x fetch) -> bőséges limit; a memória korlátos.
+ExecStartPost=/usr/bin/docker compose -f docker-compose.prod.yml run --rm api python scripts/purge_messages.py
 TimeoutStartSec=10800
