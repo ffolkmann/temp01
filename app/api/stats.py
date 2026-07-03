@@ -85,6 +85,43 @@ async def stats(k: str = Query(...), session: AsyncSession = Depends(get_session
     leads = [{"name": r["name"] or "", "email": r["email"] or "", "phone": r["phone"] or "",
               "message": r["message"] or "", "created": _iso(r["created_at"])} for r in leads_rows]
 
+    # --- events (m22): order_lookup / product_rec / link_click / handoff / configurator ---
+    ev_rows = (await session.execute(text(
+        "SELECT kind, to_char(created_at AT TIME ZONE 'Europe/Budapest','YYYY-MM') period, "
+        "COUNT(*) n, COALESCE(SUM(NULLIF(meta->>'count','')::int),0) s "
+        "FROM events WHERE client_id=:c GROUP BY 1,2"
+    ), P)).mappings().all()
+    ev_by_kind: dict[str, dict[str, int]] = {}   # kind -> {period: ertek}
+    for r in ev_rows:
+        val = _int(r["s"]) if r["kind"] == "product_rec" else _int(r["n"])
+        ev_by_kind.setdefault(r["kind"], {})[r["period"]] = val
+
+    def _ev(kind: str, period: str | None = None) -> int:
+        d_ = ev_by_kind.get(kind, {})
+        return _int(d_.get(period)) if period else sum(d_.values())
+
+    top_links = [{"url": r["url"] or "", "title": r["title"] or "", "count": _int(r["n"])}
+                 for r in (await session.execute(text(
+                     "SELECT meta->>'url' url, max(meta->>'title') title, COUNT(*) n "
+                     "FROM events WHERE client_id=:c AND kind='link_click' "
+                     "GROUP BY 1 ORDER BY n DESC LIMIT 10"
+                 ), P)).mappings().all()]
+
+    # --- beszélgetés-statisztika (m22, messages napló — 30 napos ablak) ---
+    avg_msgs = (await session.execute(text(
+        "SELECT ROUND((COUNT(*)::numeric / NULLIF(COUNT(DISTINCT session_id),0)), 1) "
+        "FROM messages WHERE client_id=:c"
+    ), P)).scalar()
+    hourly_rows = (await session.execute(text(
+        "SELECT EXTRACT(HOUR FROM created_at AT TIME ZONE 'Europe/Budapest')::int h, COUNT(*) n "
+        "FROM messages WHERE client_id=:c GROUP BY 1"
+    ), P)).mappings().all()
+    hourly = [0] * 24
+    for r in hourly_rows:
+        h = _int(r["h"])
+        if 0 <= h <= 23:
+            hourly[h] = _int(r["n"])
+
     # --- feedback ---
     fb_counts = {r["rating"]: _int(r["n"]) for r in (await session.execute(text(
         "SELECT rating, COUNT(*) n FROM feedback WHERE client_id=:c GROUP BY rating"
@@ -138,7 +175,8 @@ async def stats(k: str = Query(...), session: AsyncSession = Depends(get_session
     cur_leads = leads_by_period.get(cp, 0)
     tot_conv = _int(tot_u["c"]) if tot_u else 0
 
-    periods = sorted(set(usage_monthly) | set(leads_by_period))
+    periods = sorted(set(usage_monthly) | set(leads_by_period)
+                     | set(ev_by_kind.get("order_lookup", {})) | set(ev_by_kind.get("product_rec", {})))
     monthly = []
     for per in periods:
         u = usage_monthly.get(per)
@@ -146,7 +184,8 @@ async def stats(k: str = Query(...), session: AsyncSession = Depends(get_session
             "period": per,
             "conversations": _int(u["conversations"]) if u else 0,
             "messages": _int(u["messages"]) if u else 0,
-            "order_lookups": 0, "product_recs": 0,
+            "order_lookups": _ev("order_lookup", per),
+            "product_recs": _ev("product_rec", per),
             "leads": leads_by_period.get(per, 0),
         })
 
@@ -157,12 +196,24 @@ async def stats(k: str = Query(...), session: AsyncSession = Depends(get_session
         "monthly_limit": monthly_limit,
         "generated_at": _iso(now), "current_period": cp,
         "current": {"period": cp, "conversations": cur_conv, "messages": cur_msg,
-                    "order_lookups": 0, "product_recs": 0, "leads": cur_leads},
+                    "order_lookups": _ev("order_lookup", cp),
+                    "product_recs": _ev("product_rec", cp), "leads": cur_leads},
         "limit_pct": round(cur_conv / monthly_limit * 100) if monthly_limit else 0,
         "totals": {"conversations": tot_conv, "messages": _int(tot_u["m"]) if tot_u else 0,
-                   "leads": _int(leads_total), "order_lookups": 0, "product_recs": 0},
+                   "leads": _int(leads_total),
+                   "order_lookups": _ev("order_lookup"), "product_recs": _ev("product_rec")},
         "conversion_rate": round(_int(leads_total) / tot_conv * 100, 1) if tot_conv else 0.0,
         "monthly": monthly,
+        "events": {
+            "link_clicks": {"total": _ev("link_click"), "current": _ev("link_click", cp),
+                            "top": top_links},
+            "handoffs": {"total": _ev("handoff"), "current": _ev("handoff", cp)},
+            "configurator": {"total": _ev("configurator"), "current": _ev("configurator", cp)},
+        },
+        "conversation_stats": {
+            "avg_messages": float(avg_msgs) if avg_msgs is not None else 0.0,
+            "hourly": hourly, "window_days": 30,
+        },
         "leads": leads,
         "feedback": feedback,
         "unanswered": {

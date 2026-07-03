@@ -116,6 +116,16 @@ class FakeSession:
             return _Res([{"rating": "up", "n": 5}, {"rating": "down", "n": 2}])
         if "rating='down'" in s:
             return _Res([{"question": "rossz", "answer": "a", "page_context": {"url": "u"}, "created_at": DT1}])
+        if "FROM events WHERE client_id=:c GROUP BY 1,2" in s:
+            return _Res([{"kind": "link_click", "period": CP, "n": 4, "s": 0},
+                         {"kind": "product_rec", "period": CP, "n": 2, "s": 5},
+                         {"kind": "order_lookup", "period": "2020-01", "n": 3, "s": 0}])
+        if "kind='link_click'" in s:
+            return _Res([{"url": "https://x/p1", "title": "P1", "n": 4}])
+        if "COUNT(DISTINCT session_id)" in s:
+            return _Res(scalar=4.5)
+        if "EXTRACT(HOUR" in s:
+            return _Res([{"h": 9, "n": 7}, {"h": 14, "n": 3}])
         if "FROM unanswered" in s:
             return _Res([{"question": "miért?", "score": 0.10, "reasons": ["low_score"], "session_id": "s1", "created_at": DT1},
                          {"question": "miért?", "score": 0.20, "reasons": ["collect_lead"], "session_id": "s2", "created_at": DT2},
@@ -143,10 +153,10 @@ async def main():
     assert d["white_label"] is True and d["live_api"] is True and d["monthly_limit"] == 500
     assert d["generated_at"].endswith("Z") and d["current_period"] == CP
     assert d["current"] == {"period": CP, "conversations": 10, "messages": 25,
-                            "order_lookups": 0, "product_recs": 0, "leads": 3}
+                            "order_lookups": 0, "product_recs": 5, "leads": 3}
     assert d["limit_pct"] == 2                                # round(10/500*100)
     assert d["totals"] == {"conversations": 40, "messages": 100, "leads": 7,
-                           "order_lookups": 0, "product_recs": 0}
+                           "order_lookups": 3, "product_recs": 5}
     assert d["conversion_rate"] == 17.5                       # round(7/40*100,1)
     assert [m["period"] for m in d["monthly"]] == sorted([CP, "2020-01"])   # ASC
     assert d["leads"][0]["name"] == "A" and d["leads"][0]["created"].endswith("Z")
@@ -154,6 +164,17 @@ async def main():
                              "down_items": [{"question": "rossz", "answer": "a",
                                              "created": stats._iso(DT1), "page_context": {"url": "u"}}]}
     ok.append("/stats: kulcsra-pontos shape + current/totals/limit_pct/conversion_rate/monthly/leads/feedback")
+
+    # === events + conversation_stats (m22) ===
+    ev = d["events"]
+    assert ev["link_clicks"] == {"total": 4, "current": 4,
+                                 "top": [{"url": "https://x/p1", "title": "P1", "count": 4}]}
+    assert ev["handoffs"] == {"total": 0, "current": 0}
+    assert ev["configurator"] == {"total": 0, "current": 0}
+    cs = d["conversation_stats"]
+    assert cs["avg_messages"] == 4.5 and cs["window_days"] == 30
+    assert cs["hourly"][9] == 7 and cs["hourly"][14] == 3 and sum(cs["hourly"]) == 10 and len(cs["hourly"]) == 24
+    ok.append("events (link_clicks/handoffs/configurator + product_rec SUM) + conversation_stats (avg/hourly)")
 
     # === unanswered aggregáció ===
     ua = d["unanswered"]

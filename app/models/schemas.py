@@ -47,6 +47,11 @@ class ChatRequest(BaseModel):
     name: str | None = None
     source: str | None = None
 
+    # event (m22): widget-esemény (jelenleg: link_click)
+    event: str | None = None
+    url: str | None = None
+    title: str | None = None
+
     model_config = {"extra": "ignore"}
 
 

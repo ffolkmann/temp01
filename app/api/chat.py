@@ -23,6 +23,7 @@ from app.core.redis import get_redis
 from app.models.db_models import Plan, Tenant
 from app.models.schemas import ChatRequest, ChatResponse, ConfiguratorRef, EventAck
 from app.services.conversations import format_transcript, get_transcript, log_turn
+from app.services.events import WIDGET_KINDS, count_product_links, log_event
 from app.services.coupons import active_coupons
 from app.services.current_product import get_current_product, normalize_url
 from app.services.feedback import store_feedback
@@ -89,6 +90,8 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
     if order.is_order_status:
         reply = await handle_order_status(tenant, order)
         await log_turn(session, req.client_id, req.session_id, message, reply)
+        await log_event(session, req.client_id, req.session_id, "order_lookup",
+                        {"order_id": order.order_id})
         return ChatResponse(reply=reply, action=None)
 
     # 2) configurator (csak configurator_shop tenantnál)
@@ -101,6 +104,7 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
         await log_turn(
             session, req.client_id, req.session_id, message, cfg_reply, "quote_configurator"
         )
+        await log_event(session, req.client_id, req.session_id, "configurator", None)
         return ChatResponse(
             reply=cfg_reply,
             action="quote_configurator",
@@ -117,6 +121,7 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
         turns = await get_transcript(session, req.client_id, req.session_id)
         transcript = format_transcript(turns, tenant.bot_name or "Bot") if turns else None
         await send_handoff_email(req.client_id, ho, transcript=transcript)
+        await log_event(session, req.client_id, req.session_id, "handoff", {"page": ho.page})
         return ChatResponse(reply=HANDOFF_REPLY, action="collect_lead")
 
     # --- RAG + LLM ---
@@ -150,6 +155,10 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
     await log_unanswered(session, req.client_id, req.session_id, message, top_score, parsed.action)
     # beszélgetés-napló (m22): a stat.html visszanéző + e-mail átiratok forrása
     await log_turn(session, req.client_id, req.session_id, message, parsed.reply, parsed.action)
+    # termékajánlás-számláló (m22): a válaszban linkelt webshop-termékek
+    rec_n = count_product_links(parsed.reply, tenant)
+    if rec_n:
+        await log_event(session, req.client_id, req.session_id, "product_rec", {"count": rec_n})
     return ChatResponse(reply=parsed.reply, action=parsed.action, configurator=None)
 
 
@@ -165,6 +174,14 @@ async def chat(req: ChatRequest, session: AsyncSession = Depends(get_session)):
     if t == "lead":
         await store_lead(session, req)
         return EventAck(stored="lead")
+
+    if t == "event":
+        # widget-esemény (m22): csak whitelistelt fajta; ismeretlen -> csendes ack
+        kind = (req.event or "").strip().lower()
+        if kind in WIDGET_KINDS:
+            await log_event(session, req.client_id, req.session_id, kind,
+                            {"url": (req.url or "")[:500], "title": (req.title or "")[:200]})
+        return EventAck(stored="event")
 
     # nincs type -> üzenet
     return await _handle_message(req, session)
