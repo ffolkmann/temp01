@@ -127,8 +127,8 @@ async def stats(k: str = Query(...), session: AsyncSession = Depends(get_session
         "reasons": sorted(g["reasons"]), "last_ts": _iso(g["last_ts"]),
         "sessions": g["sessions"],
     } for q, g in groups.items()]
-    questions.sort(key=lambda x: x["last_ts"], reverse=True)
-    questions.sort(key=lambda x: x["count"], reverse=True)   # stabil: count DESC, majd last_ts DESC
+    questions.sort(key=lambda x: x["count"], reverse=True)
+    questions.sort(key=lambda x: x["last_ts"], reverse=True)  # stabil: LEGFRISSEBB felül (last_ts DESC), azon belül count DESC
     questions = questions[:60]
     weekly = [{"week": w, "count": weekly_counts[w]} for w in sorted(weekly_counts)]
 
