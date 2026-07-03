@@ -122,6 +122,13 @@ class SellvioBuilder:
             sku = _s(p.get("code"))
             price_obj = p.get("price") if isinstance(p.get("price"), dict) else {}
             price = price_obj.get("brutto_price")
+            # m23: a brutto_price MAR az akcios (effektiv) ar; a discount a kedvezmeny
+            # brutto OSSZEGE (0=number ha nincs, STRING ha van - elo teszt: plcomfort #3576;
+            # az is_special flag NEM megbizhato akcio-jelzo). Eredeti ar = brutto + discount.
+            try:
+                sv_disc = float(price_obj.get("discount") or 0)
+            except (TypeError, ValueError):
+                sv_disc = 0.0
             ph = huf(price) if price is not None else ""
             brand = _s(p["brand"]["name"]) if isinstance(p.get("brand"), dict) and p["brand"].get("name") else ""
             cats = []
@@ -134,6 +141,12 @@ class SellvioBuilder:
             line = name
             if ph:
                 line += " " + EMDASH + " " + ph + " Ft"
+                if sv_disc > 0:
+                    try:
+                        oh = huf(float(price) + sv_disc)
+                    except (TypeError, ValueError):
+                        oh = ""
+                    line += " (AKCIÓS ár" + ((", eredeti ár: " + oh + " Ft") if oh else "") + ")"
             if brand:
                 line += ". Márka: " + brand
             if cats:
@@ -153,7 +166,7 @@ class SellvioBuilder:
                 related_similar=self._rel_similar(p), related_additional="",
                 text=line, content_hash=ch,
                 platform_id_field="sellvio_id", platform_id_value=pid,
-                ps_hash_str=ps_hash(_pstr, "", ""),
+                ps_hash_str=ps_hash(_pstr, "", str(int(sv_disc)) if sv_disc > 0 else ""),
                 filename="__sellvio_products__"))
         return products
 

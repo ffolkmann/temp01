@@ -78,6 +78,20 @@ def check(label, products, gold):
 
 
 check("sellvio", b.build_sellvio(SELLVIO_IN, "c"), SELLVIO_GOLD)
+
+# m23: Sellvio AKCIOS - a brutto_price az akcios ar, a discount a kedvezmeny brutto
+# osszege STRINGKENT (elo minta: plcomfort #3576, is_special=false mellett!).
+SELLVIO_AKCIOS_IN = [{
+    "id": 3576, "code": "AKC1", "name": "Akciós klíma", "pretty_url": "https://shop.hu/p/3576",
+    "price": {"netto_price": 11331.5, "vat": 27, "brutto_price": 14391, "discount": "1599"},
+    "brand": None, "categories": {}, "lead_text": "", "description": "", "is_visible": True,
+}]
+SELLVIO_AKCIOS_GOLD = [f"Akciós klíma — 14{NB}391 Ft (AKCIÓS ár, eredeti ár: 15{NB}990 Ft). Link: https://shop.hu/p/3576"]
+check("sellvio-akcios", b.build_sellvio(SELLVIO_AKCIOS_IN, "c"), SELLVIO_AKCIOS_GOLD)
+_ak = b.build_sellvio(SELLVIO_AKCIOS_IN, "c")[0]
+_no = b.build_sellvio(SELLVIO_IN, "c")[0]
+assert _ak.ps_hash_str == b.ps_hash(_ak.price, "", "1599"), "akciosnal a discount a ps_hash-ben"
+assert _no.ps_hash_str == b.ps_hash(_no.price, "", ""), "nem-akciosnal a ps_hash VALTOZATLAN formula"
 check("woocommerce", b.build_woo(WOO_IN, "c"), WOO_GOLD)
 check("unas", b.build_unas(UNAS_CSV, "c", ""), UNAS_GOLD)
 
