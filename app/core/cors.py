@@ -41,6 +41,15 @@ def _build_allowset(domains) -> set[str]:
         d = (d or "").strip().lower()
         if not d:
             continue
+        # strip scheme prefix
+        for scheme in ("https://", "http://"):
+            if d.startswith(scheme):
+                d = d[len(scheme):]
+                break
+        # strip path component: keep only the hostname
+        d = d.split("/")[0].rstrip("/")
+        if not d:
+            continue
         base = d[4:] if d.startswith("www.") else d
         out.add(f"https://{base}")
         out.add(f"https://www.{base}")

@@ -8,10 +8,12 @@ Elfogadási kritériumok (a feladatból):
 """
 import asyncio
 import importlib.util
+import os
 import sys
 import types
+from pathlib import Path
 
-ROOT = "/home/folkm/chatbot"
+ROOT = os.environ.get("CHATBOT_ROOT") or str(Path(__file__).resolve().parents[1])
 
 for name in ("app", "app.core", "app.models"):
     sys.modules.setdefault(name, types.ModuleType(name)).__path__ = []
@@ -73,6 +75,12 @@ async def main():
     assert "https://teslashop.hu" in s and "https://www.teslashop.hu" in s
     assert "https://codexpress.hu" in s and "https://www.codexpress.hu" in s
     ok.append("_build_allowset: apex+www, www->bare, üres kihagyva")
+
+    # --- TRIM: trailing slash, scheme prefix, path strip ---
+    s_trim = cors._build_allowset(["www.fishingoutlet.hu/", "https://example.com/utvonal"])
+    assert "https://fishingoutlet.hu" in s_trim and "https://www.fishingoutlet.hu" in s_trim, s_trim
+    assert "https://example.com" in s_trim and "https://www.example.com" in s_trim, s_trim
+    ok.append("_build_allowset trim: trailing slash + https:// scheme + path stripped")
 
     # --- _is_allowed ---
     a = cors._ALLOWSET
