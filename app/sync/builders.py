@@ -146,12 +146,14 @@ class SellvioBuilder:
                 line += ". Link: " + url
             line = trunc(line, 9000)
             ch = content_fnv(name, brand, ",".join(sorted(cats)), lead, ld, url)
+            _pstr = "" if price is None else str(price)
             products.append(SourceProduct(
                 id_key=pid, sku=sku, name=name, url=url,
-                price=("" if price is None else str(price)), brand=brand,
+                price=_pstr, brand=brand,
                 related_similar=self._rel_similar(p), related_additional="",
                 text=line, content_hash=ch,
                 platform_id_field="sellvio_id", platform_id_value=pid,
+                ps_hash_str=ps_hash(_pstr, "", ""),
                 filename="__sellvio_products__"))
         return products
 
@@ -279,13 +281,15 @@ class WooBuilder:
             line = trunc(line, 9000)
             cross = [_s(i) for i in (p.get("upsell_ids") or [])] + [_s(i) for i in (p.get("cross_sell_ids") or [])]
             ch = content_fnv(name, brand, ",".join(sorted(cats)), sd, ld, ";".join(sorted(attrs)), url, ",".join(sorted(cross)))
+            _pstr = "" if eff is None else str(eff)
             products.append(SourceProduct(
                 id_key=wid, sku=sku, name=name, url=url,
-                price=("" if eff is None else str(eff)), brand=brand,
+                price=_pstr, brand=brand,
                 related_similar=self._rel_similar_cat(p),
                 related_additional=self._rel_list((p.get("upsell_ids") or []) + (p.get("cross_sell_ids") or [])),
                 text=line, content_hash=ch,
                 platform_id_field="wc_id", platform_id_value=wid,
+                ps_hash_str=ps_hash(_pstr, "", stock_note),
                 filename="__woocommerce_products__"))
         return products
 
@@ -482,11 +486,14 @@ class ShoprenterBuilder:
                 ",".join(sorted([x for x in rel_additional.split("; ") if x])),
             )
             id_key = sku or url or name
+            _pstr = "" if price is None else str(price)
             products.append(SourceProduct(
                 id_key=id_key, sku=sku, name=name, url=url,
-                price=("" if price is None else str(price)), brand=manu, stock_str=stock,
+                price=_pstr, brand=manu, stock_str=stock,
                 related_similar=rel_similar, related_additional=rel_additional,
-                text=line, content_hash=ch, filename="__shoprenter_products__"))
+                text=line, content_hash=ch,
+                ps_hash_str=ps_hash(_pstr, stock, avail),
+                filename="__shoprenter_products__"))
         return products
 
 
@@ -653,7 +660,9 @@ class UnasBuilder:
                 id_key=(m["sku"] or m["url"] or m["name"]), sku=m["sku"], name=m["name"], url=m["url"],
                 price=m["price"], brand=m["brand"], stock_str=m["stock"],
                 related_similar=rel_similar, related_additional=rel_additional,
-                text=m["line"], content_hash=ch, filename="__unas_products__"))
+                text=m["line"], content_hash=ch,
+                ps_hash_str=ps_hash(m["price"], m["stock"], ""),
+                filename="__unas_products__"))
         return products
 
 

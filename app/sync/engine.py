@@ -74,11 +74,14 @@ async def sync_tenant(tenant: "Tenant", *, dry_run: bool = False) -> dict:
     q = QdrantClient(collection=coll)
     try:
         ex = await _existing_hashes(q, coll, client_id, "content_hash")
+        ex_ps = await _existing_hashes(q, coll, client_id, "ps_hash")
 
         seen: set[str] = set()
         buf: list[tuple[str, str, dict]] = []   # (text, point_id, payload) — ≤ eb, aztán flush+ürít
+        ps_ops: list[tuple[dict, str]] = []     # ár/készlet payload-merge (m22, EMBED nélkül)
         embedded = 0
         failed = 0
+        ps_updated = 0
         ensured = False
 
         async def flush() -> None:
@@ -106,6 +109,23 @@ async def sync_tenant(tenant: "Tenant", *, dry_run: bool = False) -> dict:
                 failed += len(buf)
             buf.clear()
 
+        async def ps_flush() -> None:
+            # fail-safe: a set_payload hiba NE törje a streamet/purge-öt
+            nonlocal ps_updated
+            if not ps_ops:
+                return
+            if dry_run:
+                ps_updated += len(ps_ops)
+                ps_ops.clear()
+                return
+            try:
+                await q.set_payload_batch(coll, ps_ops)
+                ps_updated += len(ps_ops)
+            except Exception:  # noqa: BLE001
+                logger.exception("SYNC[%s] ps set_payload batch hiba (%d db) -> kihagyva",
+                                 client_id, len(ps_ops))
+            ps_ops.clear()
+
         src_count = 0
         try:
             async for p in stream_products(tenant):
@@ -117,11 +137,18 @@ async def sync_tenant(tenant: "Tenant", *, dry_run: bool = False) -> dict:
                     continue
                 seen.add(pid)
                 if p.content_hash and ex.get(pid) == p.content_hash:
-                    continue  # tartalom változatlan -> nincs újra-embed
+                    # tartalom változatlan -> nincs újra-embed; DE ár/készlet-delta ->
+                    # payload-merge (m22): price/text/ps_hash frissül embedding nélkül
+                    if p.ps_hash_str and ex_ps.get(pid) != p.ps_hash_str:
+                        ps_ops.append((_ps_payload(p), pid))
+                        if len(ps_ops) >= ub:
+                            await ps_flush()
+                    continue
                 buf.append((p.text, pid, build_payload(client_id, p)))
                 if len(buf) >= eb:
                     await flush()
             await flush()
+            await ps_flush()
         except Exception as e:  # noqa: BLE001 — stream/fetch hiba -> skip, NINCS purge
             logger.exception("SYNC[%s] stream hiba", client_id)
             res["error"] = f"stream: {e}"
@@ -133,6 +160,8 @@ async def sync_tenant(tenant: "Tenant", *, dry_run: bool = False) -> dict:
 
         stale_ids = [pid for pid in ex if pid not in seen]
         res.update(collection=coll, source=src_count, embed=embedded, stale=len(stale_ids))
+        if ps_updated:
+            res["ps_update"] = ps_updated
         if failed:
             res["failed"] = failed
         if dry_run:
