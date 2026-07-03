@@ -6,11 +6,13 @@ score/reasons aggregáció, eval_reasons (low_score/collect_lead/order_form), us
 """
 import asyncio
 import importlib.util
+import os
 import sys
 import types
 from datetime import datetime, timezone
+from pathlib import Path
 
-ROOT = "/home/folkm/chatbot"
+ROOT = os.environ.get("CHATBOT_ROOT") or str(Path(__file__).resolve().parents[1])
 for n in ("app", "app.core", "app.api", "app.models", "app.services", "sqlalchemy", "sqlalchemy.dialects"):
     sys.modules.setdefault(n, types.ModuleType(n)).__path__ = []
 
