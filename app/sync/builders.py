@@ -229,6 +229,8 @@ class WooBuilder:
             sku = _s(p.get("sku"))
             url = _s(p.get("permalink"))
             eff = p.get("sale_price") if (p.get("on_sale") and p.get("sale_price") not in (None, "")) else p.get("price")
+            woo_on_sale = bool(p.get("on_sale")) and p.get("sale_price") not in (None, "")
+            woo_orig = p.get("regular_price")
             ph = huf(eff)
             brands = p.get("brands")
             brand = _s(brands[0].get("name")) if isinstance(brands, list) and brands and isinstance(brands[0], dict) and brands[0].get("name") else ""
@@ -257,6 +259,9 @@ class WooBuilder:
             line = name
             if ph:
                 line += " " + EMDASH + " " + ph + " Ft"
+                if woo_on_sale:
+                    woh = huf(woo_orig) if woo_orig not in (None, "") else ""
+                    line += " (AKCIÓS ár" + ((", eredeti ár: " + woh + " Ft") if woh else "") + ")"
             if stock_note:
                 line += " (" + stock_note + ")"
             if brand:
@@ -425,7 +430,20 @@ class ShoprenterBuilder:
             if prices:
                 gross = prices[0].get("gross")
                 grossSpecial = prices[0].get("grossSpecial")
+                if grossSpecial in (None, ""):
+                    # az akciós ár gyakran NEM a [0] price-sorban jön: az azonos grossOriginal-ú
+                    # további sorok első kitöltött grossSpecial-ja az érvényes akciós ár (m22)
+                    base_orig = _s(prices[0].get("grossOriginal") or gross)
+                    for row in prices[1:]:
+                        if not isinstance(row, dict):
+                            continue
+                        gs = row.get("grossSpecial")
+                        if gs not in (None, "") and _s(row.get("grossOriginal")) == base_orig:
+                            grossSpecial = gs
+                            break
             price = grossSpecial if grossSpecial not in (None, "") else gross
+            on_sale = grossSpecial not in (None, "") and _s(grossSpecial) != _s(gross)
+            price_orig = (prices[0].get("grossOriginal") or gross) if prices else None
             stock = _re.sub(r"\.0+$", "", _s(p.get("stock1"))) if p.get("stock1") is not None else ""
             orderable = _s(p.get("orderable")) == "1"
             url = _sr_url(p, self.pub)
@@ -440,6 +458,9 @@ class ShoprenterBuilder:
             ph = huf(price)
             if ph:
                 line += " " + EMDASH + " " + ph + " Ft"
+                if on_sale:
+                    oh = huf(price_orig)
+                    line += " (AKCIÓS ár" + ((", eredeti ár: " + oh + " Ft") if oh else "") + ")"
             line += " (" + avail + (", készlet: " + stock + " db" if stock != "" else "") + ")"
             if manu:
                 line += ". Márka: " + manu

@@ -366,6 +366,15 @@ def build_system_prompt(
             "nem letezo kupont vagy kuponkodot.\n" + "\n".join(coupon_lines)
         )
 
+    # 13.5) # AR-KOMMUNIKACIO (m22): akcios arnal MINDIG az akcios ar megy a vasarlonak
+    system += (
+        "\n\n# AR-KOMMUNIKACIO\n"
+        "Ha egy termeknel AKCIOS ar szerepel, MINDIG az akcios arat kommunikald a vasarlonak, "
+        "es minden esetben jelezd, hogy az ar akcios. Ha az eredeti ar is ismert, azt is ird le "
+        "(pl. 'akcios aron 14 391 Ft, eredeti ar: 15 990 Ft'). SOHA ne az eredeti (nem akcios) "
+        "arat add meg a termek arakent, ha van ervenyes akcios ar."
+    )
+
     # 14) # VALASZ FORMATUM
     system += (
         "\n\n# VALASZ FORMATUM\n"
