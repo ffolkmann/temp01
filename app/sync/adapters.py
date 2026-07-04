@@ -66,10 +66,10 @@ async def _stream_blob(items, builder):
 
 # --- lapozott, nehéz források (2× fetch, de korlátos memória) ---------------
 async def stream_sellvio(tenant: "Tenant"):
-    base, cid, sec, _ = _creds(tenant)
+    base, cid, sec, pub = _creds(tenant)
     def pages():
         return pa.sellvio_list_products(base, cid, sec)
-    async for sp in _stream_paginated(pages, pages, SellvioBuilder(tenant.client_id)):
+    async for sp in _stream_paginated(pages, pages, SellvioBuilder(tenant.client_id, pub)):
         yield sp
 
 

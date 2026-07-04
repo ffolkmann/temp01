@@ -92,6 +92,19 @@ _ak = b.build_sellvio(SELLVIO_AKCIOS_IN, "c")[0]
 _no = b.build_sellvio(SELLVIO_IN, "c")[0]
 assert _ak.ps_hash_str == b.ps_hash(_ak.price, "", "1599"), "akciosnal a discount a ps_hash-ben"
 assert _no.ps_hash_str == b.ps_hash(_no.price, "", ""), "nem-akciosnal a ps_hash VALTOZATLAN formula"
+# m24: Sellvio pretty_url INSTABIL host (hol egyedi domain, hol <shop>.mysellvio.com) ->
+# public_url-lel normalizalunk. Ket kulonbozo hostu bemenetnek AZONOS text/content_hash-t
+# kell adnia; public_url nelkul a viselkedes byte-valtozatlan (parity-golds fent).
+_UIN_A = [{"id": 9, "code": "U9", "name": "Url Termék", "pretty_url": "https://shop.mysellvio.com/hu/url-termek/termek/9",
+           "price": {"brutto_price": 1000}, "brand": None, "categories": {}, "lead_text": "", "description": "", "is_visible": True}]
+_UIN_B = [{**_UIN_A[0], "pretty_url": "https://shop.hu/hu/url-termek/termek/9"}]
+_ua = b.build_sellvio(_UIN_A, "c", "https://shop.hu")[0]
+_ub = b.build_sellvio(_UIN_B, "c", "https://shop.hu/")[0]
+assert _ua.url == _ub.url == "https://shop.hu/hu/url-termek/termek/9", f"url norm: {_ua.url!r} / {_ub.url!r}"
+assert _ua.text == _ub.text and _ua.content_hash == _ub.content_hash, "host-flip nem okozhat content-driftet"
+assert b.build_sellvio(_UIN_A, "c")[0].url == "https://shop.mysellvio.com/hu/url-termek/termek/9", "public_url nelkul valtozatlan"
+print("OK  sellvio-urlnorm: host-normalizálás public_url-re, hash stabil")
+
 check("woocommerce", b.build_woo(WOO_IN, "c"), WOO_GOLD)
 check("unas", b.build_unas(UNAS_CSV, "c", ""), UNAS_GOLD)
 

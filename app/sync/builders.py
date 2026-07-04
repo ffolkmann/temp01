@@ -77,13 +77,32 @@ class SellvioBuilder:
     def __init__(self, client_id: str, public_url: str = "") -> None:
         self.client_id = client_id
         self.by_id, self.cat_members, self.cat_size = {}, {}, {}
+        # m24: a Sellvio API pretty_url-je INSTABIL hostot ad (hol egyedi domain, hol
+        # <shop>.mysellvio.com) -> content_fnv oszcillál -> napi tomeges re-embed + rossz
+        # link a valaszban. Ha van tenant.public_url, arra normalizaljuk a hostot.
+        self.pub_origin = ""
+        pu = (public_url or "").strip().rstrip("/")
+        if pu.startswith("http://") or pu.startswith("https://"):
+            host = pu.split("://", 1)[1].split("/", 1)[0]
+            if host:
+                self.pub_origin = pu.split("://", 1)[0] + "://" + host
+
+    def _url(self, raw: str) -> str:
+        """pretty_url host-normalizálás a public_url-re (path/query változatlan)."""
+        if not self.pub_origin or not raw:
+            return raw
+        if raw.startswith("http://") or raw.startswith("https://"):
+            rest = raw.split("://", 1)[1]
+            path = rest.split("/", 1)
+            return self.pub_origin + ("/" + path[1] if len(path) > 1 else "")
+        return raw
 
     def index(self, page: list[dict]) -> None:
         for p in page:
             pid = _s(p.get("id"))
             if not pid or p.get("is_visible") is False:
                 continue
-            self.by_id[pid] = {"name": _s(p.get("name")).strip(), "url": _s(p.get("pretty_url"))}
+            self.by_id[pid] = {"name": _s(p.get("name")).strip(), "url": self._url(_s(p.get("pretty_url")))}
             cats = p.get("categories") if isinstance(p.get("categories"), dict) else {}
             for ck in _js_key_order(cats):        # JS for…in sorrend (payload-paritás)
                 self.cat_size[ck] = self.cat_size.get(ck, 0) + 1
@@ -118,7 +137,7 @@ class SellvioBuilder:
             name = _s(p.get("name")).strip()
             if not name:
                 continue
-            url = _s(p.get("pretty_url"))
+            url = self._url(_s(p.get("pretty_url")))
             sku = _s(p.get("code"))
             price_obj = p.get("price") if isinstance(p.get("price"), dict) else {}
             price = price_obj.get("brutto_price")
@@ -171,8 +190,8 @@ class SellvioBuilder:
         return products
 
 
-def build_sellvio(rows: list[dict], client_id: str) -> list[SourceProduct]:
-    b = SellvioBuilder(client_id)
+def build_sellvio(rows: list[dict], client_id: str, public_url: str = "") -> list[SourceProduct]:
+    b = SellvioBuilder(client_id, public_url)
     b.index(rows)
     return b.build(rows)
 
