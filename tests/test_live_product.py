@@ -102,10 +102,10 @@ async def main():
     reset()
     ROUTES["oauth.app.shoprenter.net"] = {"json": {"access_token": "srtok"}}
     ROUTES["/products"] = {"json": {"items": [
-        {"name": "S", "price": "9990", "stock1": 10, "quantity": 0.0, "orderable": 1}]}}
+        {"name": "S", "price": "9990", "stock1": 10, "stock2": 4, "quantity": 0.0, "orderable": 1}]}}
     live = await lp.fetch_live_price_stock(T("shoprenter", "https://teslashop.api2.myshoprenter.hu/api"),
                                            C({"sku": "SKU-SR"}))
-    assert live and live.qty == 10 and live.available is True
+    assert live and live.qty == 14 and live.available is True   # m24: stock1+stock2
     assert live.price == ""                                            # ár synced marad
     g = [q for q in REQS if q[0] == "GET" and q[1].endswith("/products")][0]
     assert g[2]["params"] == {"sku": "SKU-SR", "full": "1"}

@@ -10,8 +10,8 @@ Azonosító + kontraktusok VPS-en igazolva (valós Qdrant payload + válasz):
                 csak is_available_for_order (bool).
  - WooCommerce: payload wc_id (NEM woo_id; a sku üres lehet) -> GET /products/{wc_id};
                 ár price/regular_price/sale_price, készlet stock_quantity + stock_status.
- - Shoprenter:  payload-ban NINCS id -> GET /products?sku=<sku>&full=1 (items[0]); készlet=stock1
-                (NEM a quantity aggregátum), orderable(0/1). Az ÁR SYNCED marad (net/gross
+ - Shoprenter:  payload-ban NINCS id -> GET /products?sku=<sku>&full=1 (items[0]); készlet=stock1..stock4 összege
+                (a quantity aggregátum megbízhatatlan), orderable(0/1). Az ÁR SYNCED marad (net/gross
                 bizonytalan a SR-nél) -> csak a készlet megy élőben.
  - Unas:        payload-ban NINCS id -> getProduct <Sku>; ár Prices/Price[Actual=1]/Gross
                 (fallback normal Price Gross), készlet Stocks/Stock/Qty.
@@ -178,7 +178,13 @@ async def _shoprenter_live(tenant: "Tenant", sku: str) -> LivePriceStock | None:
     o = items[0] if isinstance(items, list) and items else None
     if not isinstance(o, dict):
         return None
-    qty = _to_int(o.get("stock1"))                    # NEM a quantity aggregátum
+    # m24: stock1..stock4 OSSZEGE (tobb-raktaras shopnal a keszlet nem feltetlen a
+    # stock1-ben van - FO 12550-013: stock1=0, stock2=6; a quantity aggregatum megbizhatatlan)
+    qty = None
+    for k in ("stock1", "stock2", "stock3", "stock4"):
+        v = _to_int(o.get(k))
+        if v is not None:
+            qty = (qty or 0) + v
     ordv = _to_int(o.get("orderable"))
     avail = (ordv > 0) if ordv is not None else (qty > 0 if qty is not None else None)
     # ár SYNCED marad (net/gross bizonytalan a SR-nél) -> price=""

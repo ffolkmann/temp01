@@ -480,7 +480,19 @@ class ShoprenterBuilder:
             price = grossSpecial if grossSpecial not in (None, "") else gross
             on_sale = grossSpecial not in (None, "") and _s(grossSpecial) != _s(gross)
             price_orig = (prices[0].get("grossOriginal") or gross) if prices else None
-            stock = _re.sub(r"\.0+$", "", _s(p.get("stock1"))) if p.get("stock1") is not None else ""
+            # m24: keszlet = a NEGY raktar OSSZEGE (stock1..stock4). FO-bizonyitek (12550-013):
+            # stock1=0, stock2=6 -> az oldal "Raktaron", a bot "0 db"-t mondott. A `quantity`
+            # aggregatum megbizhatatlan (0.0000 volt 6-os keszletnel) -> NEM hasznaljuk.
+            _stq, _sthas = 0.0, False
+            for _sk in ("stock1", "stock2", "stock3", "stock4"):
+                _sv = p.get(_sk)
+                if _sv not in (None, ""):
+                    _sthas = True
+                    try:
+                        _stq += float(_sv)
+                    except (TypeError, ValueError):
+                        pass
+            stock = _re.sub(r"\.0+$", "", str(_stq)) if _sthas else ""
             orderable = _s(p.get("orderable")) == "1"
             url = _sr_url(p, self.pub)
             sku = _s(p.get("sku") or p.get("modelNumber"))
