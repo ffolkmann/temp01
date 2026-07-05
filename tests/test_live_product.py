@@ -47,6 +47,15 @@ _pa = importlib.util.module_from_spec(_pa_spec)
 sys.modules["app.services.platform_api"] = _pa
 _pa_spec.loader.exec_module(_pa)
 
+# --- sr_warehouse_note a valódi builders.py-ból (a live_product lazy importja ezt kéri) ---
+_bsrc = Path(f"{ROOT}/app/sync/builders.py").read_text()
+_bns: dict = {}
+exec(_bsrc[_bsrc.index("def sr_warehouse_note"):_bsrc.index("class ShoprenterBuilder:")], _bns)
+sys.modules.setdefault("app.sync", types.ModuleType("app.sync")).__path__ = []
+_bm = types.ModuleType("app.sync.builders")
+_bm.sr_warehouse_note = _bns["sr_warehouse_note"]
+sys.modules["app.sync.builders"] = _bm
+
 # --- valódi live_product.py ---
 spec = importlib.util.spec_from_file_location("lp_under_test", f"{ROOT}/app/services/live_product.py")
 lp = importlib.util.module_from_spec(spec)
@@ -110,6 +119,19 @@ async def main():
     g = [q for q in REQS if q[0] == "GET" and q[1].endswith("/products")][0]
     assert g[2]["params"] == {"sku": "SKU-SR", "full": "1"}
     ok.append("Shoprenter élő: ?sku=&full=1, items[0].stock1, price='' (synced)")
+
+    # --- Shoprenter élő + raktár-szemantika (m24): warehouse_config -> note ---
+    reset()
+    ROUTES["oauth.app.shoprenter.net"] = {"json": {"access_token": "srtok"}}
+    ROUTES["/products"] = {"json": {"items": [
+        {"name": "S", "price": "9990", "stock1": 0, "stock2": 6, "orderable": 1}]}}
+    _twh = T("shoprenter", "https://teslashop.api2.myshoprenter.hu/api")
+    _twh.warehouse_config = {"own": "2", "external": "3",
+                             "own_delivery": "2 munkanap", "external_delivery": "4-5 munkanap"}
+    live = await lp.fetch_live_price_stock(_twh, C({"sku": "SKU-SR"}))
+    assert live and live.qty == 6 and live.available is True
+    assert live.note == "saját raktáron: 6 db, szállítás: 2 munkanap", live.note
+    ok.append("Shoprenter élő + warehouse_config: note = saját raktár, szállítási idővel")
 
     # --- Unas élő: getProduct, Prices/Price[Actual=1]/Gross, Stocks/Stock/Qty ---
     reset()

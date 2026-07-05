@@ -206,6 +206,10 @@ def _tenant_to_dict(t: Tenant) -> dict[str, Any]:
     d["popup_config"] = (
         json.dumps(pcv, ensure_ascii=False) if isinstance(pcv, (dict, list)) else (pcv or "")
     )
+    wcv = d.get("warehouse_config")
+    d["warehouse_config"] = (
+        json.dumps(wcv, ensure_ascii=False) if isinstance(wcv, (dict, list)) else (wcv or "")
+    )
     return d
 
 
@@ -241,6 +245,15 @@ async def _save_config(session: AsyncSession, row_in: dict[str, Any]) -> dict[st
                 row["popup_config"] = json.loads(pcv) if pcv.strip() else {}
             except Exception:  # noqa: BLE001
                 row["popup_config"] = {}
+
+    # warehouse_config: string-JSON -> dict (JSONB) — popup_config mintájára (m24)
+    if "warehouse_config" in row:
+        wcv = row["warehouse_config"]
+        if isinstance(wcv, str):
+            try:
+                row["warehouse_config"] = json.loads(wcv) if wcv.strip() else {}
+            except Exception:  # noqa: BLE001
+                row["warehouse_config"] = {}
 
     # stat_key: megőriz vagy generál (a gatherForm NEM küldi)
     sk = str(row.get("stat_key") or "")

@@ -1,0 +1,191 @@
+"""Embeddings retry + TPM-throttle teszt — FAKE openai + fake óra, a VALÓS app/core/embeddings.py-vel.
+Futtatás: python3 tests/test_embeddings.py   (nem kell openai csomag a hoston — sys.modules-fake)
+
+Esetek:
+  1) sikeres batch                      5) 400 -> azonnal dob (nem transient)
+  2) 429 x3 -> növekvő exp backoff      6) 503 x2 -> retry, majd siker
+  3) Retry-After=17 -> pontosan 17s     7) TPM-throttle: budget felett vár (~60s ablak)
+  4) max_retries kimerülés -> dob       8) embed_query is retry-zik
+"""
+import asyncio
+import importlib.util
+import os
+import sys
+import types
+from pathlib import Path
+
+ROOT = os.environ.get("CHATBOT_ROOT") or str(Path(__file__).resolve().parents[1])
+for n in ("app", "app.core"):
+    sys.modules.setdefault(n, types.ModuleType(n)).__path__ = []
+
+
+def _load(modname, path):
+    spec = importlib.util.spec_from_file_location(modname, path)
+    m = importlib.util.module_from_spec(spec)
+    sys.modules[modname] = m
+    spec.loader.exec_module(m)
+    return m
+
+
+# --- fake openai modul (a valós embeddings.py importja alá) ---------------------------------
+class APIError(Exception):
+    def __init__(self, msg="err", status_code=None):
+        super().__init__(msg)
+        self.status_code = status_code
+        self.response = None
+
+
+class RateLimitError(APIError):
+    def __init__(self, msg="429", headers=None):
+        super().__init__(msg, status_code=429)
+        self.response = types.SimpleNamespace(headers=headers) if headers is not None else None
+
+
+class APIConnectionError(APIError):
+    pass
+
+
+SCRIPT: list = []   # elemek: ("ok",) | ("raise", exc) — a create() sorban fogyasztja
+CALLS: list = []    # a create() input-listái
+
+
+class _FakeEmbeddings:
+    async def create(self, model=None, input=None):
+        CALLS.append(list(input))
+        act = SCRIPT.pop(0) if SCRIPT else ("ok",)
+        if act[0] == "raise":
+            raise act[1]
+        return types.SimpleNamespace(
+            data=[types.SimpleNamespace(embedding=[0.1, 0.2, 0.3, 0.4]) for _ in input])
+
+
+class _FakeAsyncOpenAI:
+    def __init__(self, api_key=None, max_retries=None, **kw):
+        self.embeddings = _FakeEmbeddings()
+
+
+fo = types.ModuleType("openai")
+fo.AsyncOpenAI = _FakeAsyncOpenAI
+fo.APIError = APIError
+fo.APIConnectionError = APIConnectionError
+fo.RateLimitError = RateLimitError
+sys.modules["openai"] = fo
+
+# --- fake settings ---------------------------------------------------------------------------
+CFG = types.SimpleNamespace(
+    openai_api_key="test-key", embed_model="text-embedding-3-small",
+    embed_tpm_limit=1_000_000, embed_tpm_safety=0.85, embed_max_retries=7)
+fs = types.ModuleType("app.core.settings")
+fs.get_settings = lambda: CFG
+sys.modules["app.core.settings"] = fs
+
+emb = _load("app.core.embeddings", f"{ROOT}/app/core/embeddings.py")
+
+# --- fake óra + sleep (a throttle várakozása determinisztikus, azonnali) ---------------------
+class _Clk:
+    t = 1000.0
+
+
+SLEEPS: list = []
+_real_sleep = asyncio.sleep
+
+
+async def _fsleep(s):
+    SLEEPS.append(round(float(s), 3))
+    _Clk.t += float(s)
+    await _real_sleep(0)
+
+
+emb.asyncio = types.SimpleNamespace(sleep=_fsleep)
+emb.time = types.SimpleNamespace(monotonic=lambda: _Clk.t)
+
+
+def reset(max_retries=7, tpm=1_000_000, safety=0.85):
+    SCRIPT.clear()
+    CALLS.clear()
+    SLEEPS.clear()
+    emb._tok_events.clear()
+    CFG.embed_max_retries = max_retries
+    CFG.embed_tpm_limit = tpm
+    CFG.embed_tpm_safety = safety
+
+
+async def main():
+    ok = []
+
+    # 1) sikeres batch: 1 hívás, 2 vektor, nincs várakozás
+    reset()
+    v = await emb.embed_texts(["alma", "körte"])
+    assert len(v) == 2 and v[0] == [0.1, 0.2, 0.3, 0.4]
+    assert CALLS == [["alma", "körte"]] and SLEEPS == []
+    ok.append("1) sikeres batch: 1 create, 2 vektor, 0 sleep")
+
+    # 2) 429 x3 (Retry-After nélkül) -> növekvő exp backoff (1+j, 2+j, 4+j), 4. hívás siker
+    reset()
+    SCRIPT.extend([("raise", RateLimitError()), ("raise", RateLimitError()), ("raise", RateLimitError())])
+    v = await emb.embed_texts(["x"])
+    assert len(v) == 1 and len(CALLS) == 4
+    b = SLEEPS
+    assert len(b) == 3 and 1.0 <= b[0] <= 1.75 and 2.0 <= b[1] <= 2.75 and 4.0 <= b[2] <= 4.75, b
+    assert b[0] < b[1] < b[2]
+    ok.append("2) 429 x3 -> növekvő backoff (%.2f, %.2f, %.2f), majd siker" % tuple(b))
+
+    # 3) Retry-After: 17 -> pontosan 17.0s várakozás
+    reset()
+    SCRIPT.append(("raise", RateLimitError(headers={"retry-after": "17"})))
+    v = await emb.embed_texts(["x"])
+    assert len(v) == 1 and len(CALLS) == 2 and SLEEPS == [17.0], SLEEPS
+    ok.append("3) Retry-After=17 -> pontosan 17.0s")
+
+    # 4) max_retries kimerülés -> RateLimitError dob (3 hívás, 2 várakozás max_retries=2-nél)
+    reset(max_retries=2)
+    SCRIPT.extend([("raise", RateLimitError())] * 3)
+    raised = False
+    try:
+        await emb.embed_texts(["x"])
+    except RateLimitError:
+        raised = True
+    assert raised and len(CALLS) == 3 and len(SLEEPS) == 2
+    ok.append("4) max_retries=2 kimerül -> dob (3 hívás, 2 sleep)")
+
+    # 5) 400 (nem transient) -> azonnal dob, nincs retry
+    reset()
+    SCRIPT.append(("raise", APIError("bad request", status_code=400)))
+    raised = False
+    try:
+        await emb.embed_texts(["x"])
+    except APIError:
+        raised = True
+    assert raised and len(CALLS) == 1 and SLEEPS == []
+    ok.append("5) 400 -> azonnal dob (1 hívás, 0 sleep)")
+
+    # 6) 503 x2 (transient) -> retry, 3. hívás siker
+    reset()
+    SCRIPT.extend([("raise", APIError("unavailable", status_code=503))] * 2)
+    v = await emb.embed_texts(["x"])
+    assert len(v) == 1 and len(CALLS) == 3 and len(SLEEPS) == 2
+    assert all(0.0 < s <= 30.0 for s in SLEEPS)
+    ok.append("6) 503 x2 -> retry, majd siker")
+
+    # 7) TPM-throttle: budget=1000, 2x ~900 token -> a 2. hívás ~60s-et vár (az ablak lejártáig)
+    reset(tpm=1000, safety=1.0)
+    big = "a" * 3600  # ~900 becsült token
+    await emb.embed_texts([big])
+    assert SLEEPS == []
+    await emb.embed_texts([big])
+    assert len(CALLS) == 2 and len(SLEEPS) == 1 and 59.0 <= SLEEPS[0] <= 61.0, SLEEPS
+    ok.append("7) TPM-throttle: 2. batch %.2fs-et várt (60s ablak)" % SLEEPS[0])
+
+    # 8) embed_query is retry-zik (429 -> siker)
+    reset()
+    SCRIPT.append(("raise", RateLimitError()))
+    e = await emb.embed_query("mi az ár?")
+    assert e == [0.1, 0.2, 0.3, 0.4] and len(CALLS) == 2 and CALLS[1] == ["mi az ár?"]
+    ok.append("8) embed_query: 429 -> retry -> siker")
+
+    for l in ok:
+        print("OK ", l)
+    print("\nALL GOOD")
+
+
+asyncio.run(main())

@@ -1,0 +1,95 @@
+"""Stabil Shoprenter id_key + determinisztikus point_id teszt — VALÓS hashing + builders.
+Futtatás: python3 tests/test_point_id.py
+
+Esetek:
+  1) point_id determinisztikus + client-scoped + chunk-scoped
+  2) id_key = innerId, az sku-tól FÜGGETLENÜL (üres sku sem billenti át url/name-re)
+  3) azonos innerId + eltérő sku -> azonos id_key -> azonos point_id (nincs duplikáció)
+  4) innerId hiányában a base64 id-ból product_id; ha az sincs -> sku fallback
+"""
+import base64
+import importlib.util
+import os
+import sys
+import types
+from pathlib import Path
+
+ROOT = os.environ.get("CHATBOT_ROOT") or str(Path(__file__).resolve().parents[1])
+for n in ("app", "app.core", "app.sync"):
+    sys.modules.setdefault(n, types.ModuleType(n)).__path__ = []
+
+
+def _load(modname, path):
+    spec = importlib.util.spec_from_file_location(modname, path)
+    m = importlib.util.module_from_spec(spec)
+    sys.modules[modname] = m
+    spec.loader.exec_module(m)
+    return m
+
+
+hashing = _load("app.sync.hashing", f"{ROOT}/app/sync/hashing.py")
+_load("app.sync.textutil", f"{ROOT}/app/sync/textutil.py")
+_load("app.sync.models", f"{ROOT}/app/sync/models.py")
+builders = _load("app.sync.builders", f"{ROOT}/app/sync/builders.py")
+
+
+def _b64(s: str) -> str:
+    return base64.b64encode(s.encode("utf-8")).decode("ascii")
+
+
+def sr_prod(inner=None, sku="", rid=None, name="Ponty Peti csali 5kg"):
+    p = {
+        "sku": sku,
+        "productDescriptions": [{
+            "id": _b64("productDescription-product_id=1&language_id=1"),
+            "name": name, "shortDescription": "", "description": "", "parameters": "",
+        }],
+    }
+    if inner is not None:
+        p["innerId"] = inner
+    if rid is not None:
+        p["id"] = rid
+    return p
+
+
+def build_one(p):
+    b = builders.ShoprenterBuilder("fishingoutlet", "https://fishingoutlet.hu/")
+    b.index([p])
+    out = b.build([p])
+    assert len(out) == 1, out
+    return out[0]
+
+
+ok = []
+
+# 1) point_id: determinisztikus, client- és chunk-scoped
+a = hashing.point_id("fishingoutlet", "4711")
+assert a == hashing.point_id("fishingoutlet", "4711") and len(a) == 36
+assert a != hashing.point_id("teslashop", "4711")
+assert a != hashing.point_id("fishingoutlet", "4711", 1)
+ok.append("1) point_id determinisztikus + client-scoped + chunk-scoped")
+
+# 2) id_key = innerId, sku-tól függetlenül (üres sku esetén sem url/name!)
+p_sku = build_one(sr_prod(inner="4711", sku="SKU-1"))
+p_nosku = build_one(sr_prod(inner="4711", sku=""))
+assert p_sku.id_key == "4711", p_sku.id_key
+assert p_nosku.id_key == "4711", p_nosku.id_key
+ok.append("2) id_key = innerId ('4711'), üres sku esetén is")
+
+# 3) azonos innerId + eltérő sku -> azonos id_key -> azonos point_id
+p_other = build_one(sr_prod(inner="4711", sku="SKU-MASIK"))
+assert p_other.id_key == p_sku.id_key
+assert hashing.point_id("fishingoutlet", p_other.id_key) == hashing.point_id("fishingoutlet", p_sku.id_key)
+ok.append("3) azonos innerId + eltérő sku -> azonos id_key/point_id (nincs dup)")
+
+# 4) innerId nélkül: base64 id -> product_id; dekódolhatatlan/pid-mentes id -> sku fallback
+p_b64 = build_one(sr_prod(inner=None, sku="SKU-9",
+                          rid=_b64("http://shop.api.myshoprenter.hu/productExtend?product_id=888&full=1")))
+assert p_b64.id_key == "888", p_b64.id_key
+p_fb = build_one(sr_prod(inner=None, sku="SKU-9", rid=_b64("productExtend-nincs-pid")))
+assert p_fb.id_key == "SKU-9", p_fb.id_key
+ok.append("4) innerId hiányában base64 id -> product_id ('888'); különben sku fallback")
+
+for l in ok:
+    print("OK ", l)
+print("\nALL GOOD")

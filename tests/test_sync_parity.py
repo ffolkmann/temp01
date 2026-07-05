@@ -105,6 +105,18 @@ assert _ua.text == _ub.text and _ua.content_hash == _ub.content_hash, "host-flip
 assert b.build_sellvio(_UIN_A, "c")[0].url == "https://shop.mysellvio.com/hu/url-termek/termek/9", "public_url nelkul valtozatlan"
 print("OK  sellvio-urlnorm: host-normalizálás public_url-re, hash stabil")
 
+# m24: SR raktár-szemantika helper — (stock_str, note) a warehouse_config szerint
+_WH = {"own": "2", "external": "3", "own_delivery": "2 munkanap", "external_delivery": "4-5 munkanap"}
+_st, _nt = b.sr_warehouse_note({"stock1": "0", "stock2": "6", "stock3": "0", "stock4": "0"}, _WH)
+assert (_st, _nt) == ("6", "saját raktáron: 6 db, szállítás: 2 munkanap"), (_st, _nt)
+_st, _nt = b.sr_warehouse_note({"stock1": "1", "stock2": "2", "stock3": "4"}, _WH)
+assert _st == "7" and _nt == "saját raktáron: 2 db, szállítás: 2 munkanap; külső raktáron: 4 db, szállítás: 4-5 munkanap; egyéb raktáron: 1 db", (_st, _nt)
+_st, _nt = b.sr_warehouse_note({"stock1": "5"}, None)
+assert (_st, _nt) == ("5", "")            # config nélkül: csak összeg, note nincs
+_st, _nt = b.sr_warehouse_note({}, _WH)
+assert (_st, _nt) == ("", "")             # nincs stock-mező: üres
+print("OK  sr-warehouse-note: saját/külső/egyéb bontás + szállítási idő")
+
 check("woocommerce", b.build_woo(WOO_IN, "c"), WOO_GOLD)
 check("unas", b.build_unas(UNAS_CSV, "c", ""), UNAS_GOLD)
 

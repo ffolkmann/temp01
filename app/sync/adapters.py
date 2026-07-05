@@ -89,7 +89,8 @@ async def stream_shoprenter(tenant: "Tenant"):
     async for sp in _stream_paginated(
         lambda: pa.shoprenter_list_products(base, cid, sec, full=0, concurrency=conc),
         lambda: pa.shoprenter_list_products(base, cid, sec, full=1, concurrency=conc),
-        ShoprenterBuilder(tenant.client_id, pub, include_inactive=get_settings().sync_include_inactive),
+        ShoprenterBuilder(tenant.client_id, pub, include_inactive=get_settings().sync_include_inactive,
+                          warehouse_config=getattr(tenant, "warehouse_config", None)),
     ):
         yield sp
 

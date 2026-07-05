@@ -412,8 +412,71 @@ def _sr_clean_params(raw):
     return out
 
 
+def sr_warehouse_note(p: dict, cfg: dict | None) -> tuple[str, str]:
+    """(stock_str, note) — stock1..4 összege + raktár-szemantikájú megjegyzés (m24).
+
+    cfg: {"own": "2", "external": "3", "own_delivery": "2 munkanap",
+          "external_delivery": "4-5 munkanap"} — own/external: vesszős raktár-sorszámok (1..4).
+    Note csak akkor, ha van cfg és van készlet; a nem besorolt raktár "egyéb raktáron".
+    """
+    def _f(v) -> float:
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return 0.0
+
+    import re as _re
+
+    qty: dict[int, float] = {}
+    has = False
+    for i in (1, 2, 3, 4):
+        v = p.get(f"stock{i}")
+        if v not in (None, ""):
+            has = True
+        qty[i] = _f(v) if v not in (None, "") else 0.0
+    total = sum(qty.values())
+
+    def _fmt(x: float) -> str:
+        return _re.sub(r"\.0+$", "", str(x))
+
+    stock = _fmt(total) if has else ""
+    cfgd = cfg if isinstance(cfg, dict) else {}
+
+    def _ids(key: str) -> set[int]:
+        out: set[int] = set()
+        for tok in _re.split(r"[,;\s]+", str(cfgd.get(key) or "")):
+            if tok.strip().isdigit():
+                n = int(tok.strip())
+                if 1 <= n <= 4:
+                    out.add(n)
+        return out
+
+    own_ids, ext_ids = _ids("own"), _ids("external")
+    note = ""
+    if has and (own_ids or ext_ids):
+        own = sum(qty[i] for i in own_ids)
+        ext = sum(qty[i] for i in ext_ids)
+        other = total - own - ext
+        parts: list[str] = []
+        if own > 0:
+            s = "saját raktáron: " + _fmt(own) + " db"
+            if cfgd.get("own_delivery"):
+                s += ", szállítás: " + str(cfgd["own_delivery"])
+            parts.append(s)
+        if ext > 0:
+            s = "külső raktáron: " + _fmt(ext) + " db"
+            if cfgd.get("external_delivery"):
+                s += ", szállítás: " + str(cfgd["external_delivery"])
+            parts.append(s)
+        if other > 0:
+            parts.append("egyéb raktáron: " + _fmt(other) + " db")
+        note = "; ".join(parts)
+    return stock, note
+
+
 class ShoprenterBuilder:
-    def __init__(self, client_id: str, public_url: str = "", include_inactive: bool = False) -> None:
+    def __init__(self, client_id: str, public_url: str = "", include_inactive: bool = False,
+                 warehouse_config: dict | None = None) -> None:
         self.client_id = client_id
         pub = _s(public_url)
         if pub and not pub.endswith("/"):
@@ -421,6 +484,7 @@ class ShoprenterBuilder:
         self.pub = pub
         self.by_id = {}
         self.include_inactive = include_inactive
+        self.whcfg = warehouse_config if isinstance(warehouse_config, dict) else None
 
     def index(self, page: list[dict]) -> None:
         for p in page:
@@ -480,19 +544,8 @@ class ShoprenterBuilder:
             price = grossSpecial if grossSpecial not in (None, "") else gross
             on_sale = grossSpecial not in (None, "") and _s(grossSpecial) != _s(gross)
             price_orig = (prices[0].get("grossOriginal") or gross) if prices else None
-            # m24: keszlet = a NEGY raktar OSSZEGE (stock1..stock4). FO-bizonyitek (12550-013):
-            # stock1=0, stock2=6 -> az oldal "Raktaron", a bot "0 db"-t mondott. A `quantity`
-            # aggregatum megbizhatatlan (0.0000 volt 6-os keszletnel) -> NEM hasznaljuk.
-            _stq, _sthas = 0.0, False
-            for _sk in ("stock1", "stock2", "stock3", "stock4"):
-                _sv = p.get(_sk)
-                if _sv not in (None, ""):
-                    _sthas = True
-                    try:
-                        _stq += float(_sv)
-                    except (TypeError, ValueError):
-                        pass
-            stock = _re.sub(r"\.0+$", "", str(_stq)) if _sthas else ""
+            # m24: keszlet = a NEGY raktar OSSZEGE + tenant raktár-szemantika (sr_warehouse_note)
+            stock, wh_note = sr_warehouse_note(p, self.whcfg)
             orderable = _s(p.get("orderable")) == "1"
             url = _sr_url(p, self.pub)
             sku = _s(p.get("sku") or p.get("modelNumber"))
@@ -509,7 +562,8 @@ class ShoprenterBuilder:
                 if on_sale:
                     oh = huf(price_orig)
                     line += " (AKCIÓS ár" + ((", eredeti ár: " + oh + " Ft") if oh else "") + ")"
-            line += " (" + avail + (", készlet: " + stock + " db" if stock != "" else "") + ")"
+            line += " (" + avail + (", készlet: " + stock + " db" if stock != "" else "") \
+                + ((" — " + wh_note) if wh_note else "") + ")"
             if manu:
                 line += ". Márka: " + manu
             if sd:
@@ -536,13 +590,15 @@ class ShoprenterBuilder:
                 price=_pstr, brand=manu, stock_str=stock,
                 related_similar=rel_similar, related_additional=rel_additional,
                 text=line, content_hash=ch,
-                ps_hash_str=ps_hash(_pstr, stock, avail),
+                ps_hash_str=ps_hash(_pstr, stock + ("|" + wh_note if wh_note else ""), avail),
                 filename="__shoprenter_products__"))
         return products
 
 
-def build_shoprenter(items: list[dict], client_id: str, public_url: str, include_inactive: bool = False) -> list[SourceProduct]:
-    b = ShoprenterBuilder(client_id, public_url, include_inactive=include_inactive)
+def build_shoprenter(items: list[dict], client_id: str, public_url: str, include_inactive: bool = False,
+                     warehouse_config: dict | None = None) -> list[SourceProduct]:
+    b = ShoprenterBuilder(client_id, public_url, include_inactive=include_inactive,
+                          warehouse_config=warehouse_config)
     b.index(items)
     return b.build(items)
 

@@ -52,6 +52,7 @@ class LivePriceStock:
     available: bool | None = None
     qty: int | None = None
     name: str = ""
+    note: str = ""  # m24: raktár-szemantika (saját/külső raktár, szállítási idő)
 
     def has_data(self) -> bool:
         return bool(self.price) or self.available is not None or self.qty is not None
@@ -188,7 +189,9 @@ async def _shoprenter_live(tenant: "Tenant", sku: str) -> LivePriceStock | None:
     ordv = _to_int(o.get("orderable"))
     avail = (ordv > 0) if ordv is not None else (qty > 0 if qty is not None else None)
     # ár SYNCED marad (net/gross bizonytalan a SR-nél) -> price=""
-    return LivePriceStock(price="", available=avail, qty=qty, name=str(o.get("name") or ""))
+    from app.sync.builders import sr_warehouse_note  # lazy: körimport-mentes
+    _, note = sr_warehouse_note(o, getattr(tenant, "warehouse_config", None))
+    return LivePriceStock(price="", available=avail, qty=qty, name=str(o.get("name") or ""), note=note)
 
 
 # --- Unas: login -> getProduct <Sku> ----------------------------------------

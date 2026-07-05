@@ -193,6 +193,9 @@ def _live_block(live: LivePriceStock, name: str) -> str:
         parts.append(f"keszlet: {live.qty} db " + ("(raktaron)" if in_stock else "(jelenleg nincs raktaron)"))
     elif live.available is not None:
         parts.append("keszlet: " + ("raktaron" if live.available else "jelenleg nincs raktaron"))
+    if getattr(live, "note", ""):
+        # m24: raktár-szemantika (pl. "külső raktáron: 6 db, szállítás: 4-5 munkanap")
+        parts.append(live.note)
     if not parts:
         return ""
     nm = (name or "").strip()
