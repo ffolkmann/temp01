@@ -1,6 +1,17 @@
-"""parse_reply keményítés (m24) — csonkolt/fence-elt/hibrid modellkimenetek."""
+"""parse_reply keményítés (m24) — csonkolt/fence-elt/hibrid modellkimenetek.
 
-from app.services.parse_reply import _FALLBACK, parse_reply
+A modult FÁJLBÓL töltjük (importlib), mert a suite többi tesztje üres stubokkal
+írja felül az app.* csomagfát a sys.modules-ban -> a sima import elhasalna.
+"""
+
+import importlib.util
+import pathlib
+
+_p = pathlib.Path(__file__).resolve().parents[1] / "app" / "services" / "parse_reply.py"
+_spec = importlib.util.spec_from_file_location("parse_reply_under_test", _p)
+_pr = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_pr)
+parse_reply, _FALLBACK = _pr.parse_reply, _pr._FALLBACK
 
 
 def test_valid_json():
