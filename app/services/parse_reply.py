@@ -58,8 +58,9 @@ def parse_reply(text: str) -> ParsedReply:
             o = json.loads(m.group(0), strict=False)
             if isinstance(o, dict):
                 parsed = True
-                if o.get("reply"):
-                    reply = o["reply"]
+                # parsolt envelope-nal a reply KIZAROLAG az envelope-bol jon; ures ->
+                # a lenti fallback (korabban a nyers JSON ment ki - latens bug).
+                reply = str(o.get("reply") or "")
                 if isinstance(o.get("collect_lead"), bool):
                     collect = o["collect_lead"]
                 if isinstance(o.get("order_form"), bool):
