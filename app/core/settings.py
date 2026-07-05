@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     chat_model: str = "claude-haiku-4-5-20251001"
     embed_model: str = "text-embedding-3-small"
-    max_tokens: int = 1024
+    max_tokens: int = 2048  # m24: 1024-nel a hosszu listas valaszok JSON-envelope-ja csonkolt -> nyers dump a widgetben
 
     # admin
     admin_token: str = "dev"
