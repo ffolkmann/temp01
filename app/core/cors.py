@@ -99,8 +99,16 @@ class TenantCORSMiddleware(BaseHTTPMiddleware):
         origin = request.headers.get("origin")
         # a /stats publikus (a stat.html bármely hostról fetch-eli; a ?k= titok az auth) -> reflect bárki
         _path = request.url.path
-        # reflect-any (a titok/token az auth): /stats (?k=) es /admin (admin_token)
-        reflect_any = _path.startswith("/stats") or _path.startswith("/admin")
+        # reflect-any (a titok/token az auth): /stats (?k=), /admin (admin_token),
+        # /ingest + /sync (admin panel KB-feltoltes es kezi sync; ?token= az auth) — m24:
+        # e ketto nelkul az admin.html (codexpress.cloud origin) preflightja ACAO nelkul
+        # jott vissza -> a bongeszo "Failed to fetch"-csel dobta a feltoltest.
+        reflect_any = (
+            _path.startswith("/stats")
+            or _path.startswith("/admin")
+            or _path.startswith("/ingest")
+            or _path.startswith("/sync")
+        )
         # GET-vegpontok (preflight metodushoz): /stats, /chat-config, /chat-popup
         is_get_ep = (
             _path.startswith("/stats")
