@@ -413,19 +413,20 @@ def _sr_clean_params(raw):
 
 
 def sr_warehouse_note(p: dict, cfg: dict | None) -> tuple[str, str]:
-    """(stock_str, note) — stock1..4 összege + raktár-szemantikájú megjegyzés (m24).
+    """(stock_str, note) — stock1..4 összege + nevesített raktár-bontás (m24).
 
-    cfg: {"own": "2", "external": "3", "own_delivery": "2 munkanap",
-          "external_delivery": "4-5 munkanap"} — own/external: vesszős raktár-sorszámok (1..4).
-    Note csak akkor, ha van cfg és van készlet; a nem besorolt raktár "egyéb raktáron".
+    Új séma: {"warehouses": {"2": {"name": "saját raktár", "delivery": "2 munkanap"},
+                             "3": {"name": "külső raktár", "delivery": "4-5 munkanap"}}}
+    Kompat (régi): {"own": "2", "external": "3", "own_delivery": ..., "external_delivery": ...}.
+    Note csak akkor, ha van config és van készlet; a nem besorolt raktár "egyéb raktáron".
     """
+    import re as _re
+
     def _f(v) -> float:
         try:
             return float(v)
         except (TypeError, ValueError):
             return 0.0
-
-    import re as _re
 
     qty: dict[int, float] = {}
     has = False
@@ -442,32 +443,41 @@ def sr_warehouse_note(p: dict, cfg: dict | None) -> tuple[str, str]:
     stock = _fmt(total) if has else ""
     cfgd = cfg if isinstance(cfg, dict) else {}
 
-    def _ids(key: str) -> set[int]:
-        out: set[int] = set()
-        for tok in _re.split(r"[,;\s]+", str(cfgd.get(key) or "")):
-            if tok.strip().isdigit():
-                n = int(tok.strip())
-                if 1 <= n <= 4:
-                    out.add(n)
-        return out
+    # raktár -> (név, szállítási idő) térkép
+    wmap: dict[int, tuple[str, str]] = {}
+    ws = cfgd.get("warehouses")
+    if isinstance(ws, dict):
+        for k, v in ws.items():
+            if str(k).strip().isdigit() and isinstance(v, dict):
+                n = int(str(k).strip())
+                if 1 <= n <= 4 and (str(v.get("name") or "").strip() or str(v.get("delivery") or "").strip()):
+                    wmap[n] = (str(v.get("name") or f"raktár {n}").strip(),
+                               str(v.get("delivery") or "").strip())
+    else:
+        # kompat: régi own/external séma -> fix nevek (a korábbi kimenettel azonos)
+        for key, label, dkey in (("own", "saját raktáron", "own_delivery"),
+                                 ("external", "külső raktáron", "external_delivery")):
+            for tok in _re.split(r"[,;\s]+", str(cfgd.get(key) or "")):
+                if tok.strip().isdigit():
+                    n = int(tok.strip())
+                    if 1 <= n <= 4:
+                        wmap[n] = (label, str(cfgd.get(dkey) or "").strip())
 
-    own_ids, ext_ids = _ids("own"), _ids("external")
     note = ""
-    if has and (own_ids or ext_ids):
-        own = sum(qty[i] for i in own_ids)
-        ext = sum(qty[i] for i in ext_ids)
-        other = total - own - ext
+    if has and wmap:
         parts: list[str] = []
-        if own > 0:
-            s = "saját raktáron: " + _fmt(own) + " db"
-            if cfgd.get("own_delivery"):
-                s += ", szállítás: " + str(cfgd["own_delivery"])
-            parts.append(s)
-        if ext > 0:
-            s = "külső raktáron: " + _fmt(ext) + " db"
-            if cfgd.get("external_delivery"):
-                s += ", szállítás: " + str(cfgd["external_delivery"])
-            parts.append(s)
+        other = 0.0
+        for i in (1, 2, 3, 4):
+            if qty[i] <= 0:
+                continue
+            if i in wmap:
+                nm, dl = wmap[i]
+                s = nm + ": " + _fmt(qty[i]) + " db"
+                if dl:
+                    s += ", szállítás: " + dl
+                parts.append(s)
+            else:
+                other += qty[i]
         if other > 0:
             parts.append("egyéb raktáron: " + _fmt(other) + " db")
         note = "; ".join(parts)

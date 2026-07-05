@@ -116,6 +116,15 @@ assert (_st, _nt) == ("5", "")            # config nélkül: csak összeg, note 
 _st, _nt = b.sr_warehouse_note({}, _WH)
 assert (_st, _nt) == ("", "")             # nincs stock-mező: üres
 print("OK  sr-warehouse-note: saját/külső/egyéb bontás + szállítási idő")
+_WH2 = {"warehouses": {"2": {"name": "saját raktár", "delivery": "2 munkanap"},
+                       "3": {"name": "külső raktár", "delivery": "4-5 munkanap"}}}
+_st, _nt = b.sr_warehouse_note({"stock2": "6", "stock3": "2"}, _WH2)
+assert (_st, _nt) == ("8", "saját raktár: 6 db, szállítás: 2 munkanap; külső raktár: 2 db, szállítás: 4-5 munkanap"), (_st, _nt)
+_st, _nt = b.sr_warehouse_note({"stock1": "3", "stock4": "1"}, _WH2)
+assert (_st, _nt) == ("4", "egyéb raktáron: 4 db"), (_st, _nt)   # be nem sorolt raktárak
+_st, _nt = b.sr_warehouse_note({"stock2": "0", "stock3": "5"}, {"warehouses": {"3": {"name": "beszállítói raktár", "delivery": "1 hét"}}})
+assert _nt == "beszállítói raktár: 5 db, szállítás: 1 hét", _nt
+print("OK  sr-warehouse-note: nevesített (warehouses) séma + kompat")
 
 check("woocommerce", b.build_woo(WOO_IN, "c"), WOO_GOLD)
 check("unas", b.build_unas(UNAS_CSV, "c", ""), UNAS_GOLD)
