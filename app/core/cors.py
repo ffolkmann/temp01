@@ -35,24 +35,29 @@ _ALLOWSET_LOCK = asyncio.Lock()
 
 
 def _build_allowset(domains) -> set[str]:
-    """Domének -> engedett origin-stringek (apex + www, https)."""
+    """Domének -> engedett origin-stringek (apex + www, https).
+
+    Egy tenants.domain mező vesszővel elválasztva TÖBB domént is tartalmazhat
+    (pl. 'codexpress.hu,codexpress.cloud').
+    """
     out: set[str] = set()
-    for d in domains:
-        d = (d or "").strip().lower()
-        if not d:
-            continue
-        # strip scheme prefix
-        for scheme in ("https://", "http://"):
-            if d.startswith(scheme):
-                d = d[len(scheme):]
-                break
-        # strip path component: keep only the hostname
-        d = d.split("/")[0].rstrip("/")
-        if not d:
-            continue
-        base = d[4:] if d.startswith("www.") else d
-        out.add(f"https://{base}")
-        out.add(f"https://www.{base}")
+    for raw in domains:
+        for d in str(raw or "").split(","):
+            d = d.strip().lower()
+            if not d:
+                continue
+            # strip scheme prefix
+            for scheme in ("https://", "http://"):
+                if d.startswith(scheme):
+                    d = d[len(scheme):]
+                    break
+            # strip path component: keep only the hostname
+            d = d.split("/")[0].rstrip("/")
+            if not d:
+                continue
+            base = d[4:] if d.startswith("www.") else d
+            out.add(f"https://{base}")
+            out.add(f"https://www.{base}")
     return out
 
 

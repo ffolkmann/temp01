@@ -36,15 +36,16 @@ async def log_event(
 
 def _shop_hosts(tenant: Tenant) -> set[str]:
     hosts: set[str] = set()
-    for d in (tenant.domain, tenant.public_url):
-        d = str(d or "").strip().lower()
-        if not d:
-            continue
-        d = d.split("//")[-1].split("/")[0]
-        if d.startswith("www."):
-            d = d[4:]
-        if d:
-            hosts.add(d)
+    for raw in (tenant.domain, tenant.public_url):
+        for d in str(raw or "").split(","):
+            d = d.strip().lower()
+            if not d:
+                continue
+            d = d.split("//")[-1].split("/")[0]
+            if d.startswith("www."):
+                d = d[4:]
+            if d:
+                hosts.add(d)
     return hosts
 
 
