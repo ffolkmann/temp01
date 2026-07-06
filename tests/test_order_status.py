@@ -63,3 +63,18 @@ def test_matched_reply_never_ismeretlen():
 def test_safe_status_guard():
     assert _os._safe_status({"href": "x"}, None, "Teljesítve") == "Teljesítve"
     assert _os._safe_status({"href": "x"}, None) == "ismeretlen"
+
+
+def test_format_wh_note():
+    n = _os._format_wh_note([("saját raktár", "2 munkanap", 2), ("külső raktár", "4-5 munkanap", 1)])
+    assert n == ("Raktár szerinti bontás — saját raktár: 2 tétel (szállítás: 2 munkanap); "
+                 "külső raktár: 1 tétel (szállítás: 4-5 munkanap). "
+                 "A csomag szállítási ideje a leghosszabb szállítású tétel szerint alakul."), n
+    n1 = _os._format_wh_note([("saját raktár", "2 munkanap", 3)])
+    assert n1.endswith("saját raktár: 3 tétel (szállítás: 2 munkanap).") and "leghosszabb" not in n1
+    assert _os._format_wh_note([]) == ""
+
+
+def test_matched_reply_with_note():
+    r = _os._matched_reply("99", "Csomagolható", "Raktár szerinti bontás — saját raktár: 1 tétel.")
+    assert r.endswith("Raktár szerinti bontás — saját raktár: 1 tétel.")

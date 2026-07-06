@@ -52,19 +52,21 @@ ORDER_STATUS_REPLY = (
 )
 
 
-def _matched_reply(order_id: str, status: str) -> str:
+def _matched_reply(order_id: str, status: str, note: str = "") -> str:
     """m24/A: matched esetén a chat is kimondja a státuszt (a vevő igazolta magát a
     rendelésszám+e-mail párral). 'ismeretlen'/üres státusz SOHA nem megy ki."""
     if status and status != "ismeretlen":
-        return (
+        base = (
             f"A(z) #{order_id} rendelésed állapota: {status}. "
             "A részleteket e-mailben is elküldtük a rendeléskor megadott címre."
         )
-    return (
-        f"A(z) #{order_id} rendelésedet megtaláltuk, a részleteket e-mailben "
-        "elküldtük a rendeléskor megadott címre. Az aktuális állapotról "
-        "ügyfélszolgálatunk tud pontos tájékoztatást adni."
-    )
+    else:
+        base = (
+            f"A(z) #{order_id} rendelésedet megtaláltuk, a részleteket e-mailben "
+            "elküldtük a rendeléskor megadott címre. Az aktuális állapotról "
+            "ügyfélszolgálatunk tud pontos tájékoztatást adni."
+        )
+    return base + (f" {note}" if note else "")
 
 
 def _pick_status_name(j: dict) -> str:
@@ -133,6 +135,86 @@ async def _sr_status_name(client, api_base: str, token: str, status_obj) -> str:
                         return it["name"].strip()
         return ""
     except Exception:  # noqa: BLE001 — nev-feloldasi hiba SOHA ne torje a lookupot
+        return ""
+
+
+def _format_wh_note(buckets: list[tuple[str, str, int]], skipped: int = 0) -> str:
+    """Raktár-bontás szöveg (m24/C, pure). buckets: (név, szállítás, tételszám)."""
+    if not buckets:
+        return ""
+    parts = []
+    for name, delivery, cnt in buckets:
+        p = f"{name}: {cnt} tétel"
+        if delivery:
+            p += f" (szállítás: {delivery})"
+        parts.append(p)
+    note = "Raktár szerinti bontás — " + "; ".join(parts) + "."
+    if len(buckets) > 1:
+        note += " A csomag szállítási ideje a leghosszabb szállítású tétel szerint alakul."
+    return note
+
+
+async def _sr_order_warehouse_note(tenant: "Tenant", order_id: str) -> str:
+    """m24/C: a rendelés tételei raktár szerint (orderProducts.stock1..4 = raktár-foglalás).
+
+    A tenant warehouse_config-ja (nevesített raktárak) szerint csoportosít; a nem
+    konfigurált raktárból foglalt / foglalás nélküli tételek kimaradnak a bontásból.
+    Bármely hiba -> "" (a rendelés-flow nem törhet).
+    """
+    cfg = getattr(tenant, "warehouse_config", None)
+    ws = cfg.get("warehouses") if isinstance(cfg, dict) else None
+    if not isinstance(ws, dict) or not ws:
+        return ""
+    try:
+        api_base = str(tenant.api_base or "").strip().rstrip("/")
+        shop = shoprenter_shop(api_base)
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            token = await shoprenter_token(
+                client, shop,
+                str(tenant.api_client_id or "").strip(),
+                str(tenant.api_client_secret or "").strip(),
+            )
+            if not token:
+                return ""
+            r = await client.get(
+                f"{api_base}/orderProducts",
+                params={"orderId": shoprenter_resource_id("order", order_id), "full": "1", "limit": 50},
+                headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+            )
+            r.raise_for_status()
+            j = r.json()
+        items = j.get("items") if isinstance(j, dict) else None
+        if not isinstance(items, list):
+            return ""
+        counts: dict[int, int] = {}
+        skipped = 0
+        for it in items[:20]:
+            if not isinstance(it, dict):
+                continue
+            placed = False
+            for i in (1, 2, 3, 4):
+                try:
+                    q = float(it.get(f"stock{i}") or 0)
+                except (TypeError, ValueError):
+                    q = 0.0
+                if q > 0:
+                    if str(i) in ws:
+                        counts[i] = counts.get(i, 0) + 1
+                    else:
+                        skipped += 1
+                    placed = True
+                    break
+            if not placed:
+                skipped += 1
+        buckets = [
+            (str((ws.get(str(i)) or {}).get("name") or f"raktár {i}").strip(),
+             str((ws.get(str(i)) or {}).get("delivery") or "").strip(),
+             counts[i])
+            for i in sorted(counts)
+        ]
+        return _format_wh_note(buckets, skipped)
+    except Exception:  # noqa: BLE001 — bontas-hiba SOHA ne torje az order-flow-t
+        logger.exception("ORDER[%s] raktar-bontas hiba (id=%s)", tenant.client_id, order_id)
         return ""
 
 
@@ -300,7 +382,7 @@ _LOOKUPS = {
 }
 
 
-def _send_status_email(tenant: "Tenant", order: "OrderIntent", status: str) -> None:
+def _send_status_email(tenant: "Tenant", order: "OrderIntent", status: str, note: str = "") -> None:
     bot = str(tenant.bot_name or "").strip() or tenant.client_id
     subject = f"Rendelésed állapota – #{order.order_id}"
     if status and status != "ismeretlen":
@@ -311,6 +393,8 @@ def _send_status_email(tenant: "Tenant", order: "OrderIntent", status: str) -> N
             f"A(z) #{order.order_id} számú rendelésedet megtaláltuk a rendszerünkben. "
             "Az aktuális állapotról ügyfélszolgálatunk tud pontos tájékoztatást adni."
         )
+    if note:
+        body += f"\n\n{note}"
     text = (
         "Kedves Vásárlónk!\n\n"
         f"{body}\n\n"
@@ -342,8 +426,11 @@ async def handle_order_status(tenant: "Tenant", order: "OrderIntent") -> str:
         return ORDER_STATUS_REPLY
 
     if matched:
-        _send_status_email(tenant, order, status)
-        return _matched_reply(order.order_id, status)
+        note = ""
+        if platform == "shoprenter":
+            note = await _sr_order_warehouse_note(tenant, order.order_id)
+        _send_status_email(tenant, order, status, note)
+        return _matched_reply(order.order_id, status, note)
     logger.info(
         "ORDER[%s] nem matched id=%s (%s) — semleges válasz, nincs e-mail",
         tenant.client_id, order.order_id, platform,
