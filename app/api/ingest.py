@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import html
+import json
 import io
 import logging
 import re
@@ -31,6 +32,7 @@ from app.core.db import SessionLocal
 from app.core.embeddings import embed_texts
 from app.core.settings import get_settings
 from app.models.db_models import Tenant
+from app.services.events import log_event
 
 logger = logging.getLogger("cx.ingest")
 router = APIRouter()
@@ -195,8 +197,32 @@ async def sync(request: Request) -> Any:
         try:
             proc = await asyncio.create_subprocess_exec(
                 sys.executable, "-m", "app.sync", "--tenant", client_id,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
             )
-            rc = await proc.wait()
+            out, _ = await proc.communicate()
+            rc = proc.returncode
+            lines = (out or b"").decode(errors="replace").splitlines()
+            for ln in lines:
+                logger.info("SYNC-PANEL[%s] %s", client_id, ln)
+            # observability (m25): a futás eredménye tartós nyomot hagy az events táblában,
+            # mert az api-konténer logja recreate-nél elvész (FO pontszám-rejtély tanulsága).
+            meta: dict[str, Any] = {"rc": rc, "trigger": "admin_panel"}
+            for ln in reversed(lines):
+                ln = ln.strip()
+                if ln.startswith("{") and ln.endswith("}"):
+                    try:
+                        res = json.loads(ln)
+                    except ValueError:
+                        continue
+                    for k in ("source", "embed", "stale", "ps_update", "total", "failed", "error"):
+                        if k in res:
+                            meta[k] = res[k]
+                    break
+            try:
+                async with SessionLocal() as session:
+                    await log_event(session, client_id, "admin_panel", "sync_run", meta)
+            except Exception:  # noqa: BLE001
+                logger.exception("SYNC-PANEL[%s] event-írás hiba", client_id)
             logger.info("SYNC-PANEL[%s] kész rc=%s", client_id, rc)
         except Exception:  # noqa: BLE001
             logger.exception("SYNC-PANEL[%s] indítási hiba", client_id)
