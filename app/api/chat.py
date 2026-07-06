@@ -125,12 +125,23 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
         return ChatResponse(reply=HANDOFF_REPLY, action="collect_lead")
 
     # --- RAG + LLM ---
-    # embed-input: termékoldalon a termék neve + üzenet, különben csak az üzenet
+    # embed-input: termékoldalon a termék neve + üzenet, különben csak az üzenet.
+    # m24: rövid follow-upnál ("bojlik érdekelnek") a téma/márka kiesne a kereső-
+    # queryből -> az előző user-üzenetet prepend-eljük az embed-inputhoz. A rerank
+    # `message` paramétere VÁLTOZATLANUL az eredeti üzenet (parity).
     embed_input = (
         f"{ctx.page_product_name}. {message}"
         if ctx.page_is_product and ctx.page_product_name
         else message
     )
+    if len(message) <= 48 and not (ctx.page_is_product and ctx.page_product_name):
+        try:
+            prev_turns = await get_transcript(session, req.client_id, req.session_id)
+            prev_q = str(prev_turns[-1].question or "").strip() if prev_turns else ""
+            if prev_q and prev_q.lower() not in message.lower():
+                embed_input = f"{prev_q[:120]}. {message}"
+        except Exception:  # noqa: BLE001 — kontextus-dúsítás hibája ne törje a chatet
+            pass
     hits, top_score = await retrieve(
         embed_input, message, req.client_id, ctx.page_url, ctx.page_url_norm
     )

@@ -321,9 +321,32 @@ def build_system_prompt(
         "marka-bontas nelkul. Ha a latogato kifejezetten egy MARKAT vagy GYARTOT nevez meg, az AZONOS "
         "MARKA TERMEKEI listat reszesitsd elonyben. Roviden indokold, miert illik az ajanlas a "
         "kereshez, es linkeld a termekeket. Csak a fenti listakban szereplo termekeket ajanld, ne "
-        "talalj ki ujakat. Ha egyik listaban sincs megfelelo termek, mondd el oszinten, ajanld a "
-        "legkozelebbi alternativat, vagy kerd el az elerhetoseget, hogy egy kollega segithessen."
+        "talalj ki ujakat."
     )
+    # m24: "nem talalom" eszkalacio — ELOSZOR a webshop keresojere mutatunk, nem a
+    # vevoszolgalatra (ugyfel-keres: ne noveljuk a telefonhivasok szamat).
+    plat = str(tenant.platform or "").strip().lower()
+    pub = str(tenant.public_url or "").strip().rstrip("/")
+    search_url = ""
+    if pub and plat == "shoprenter":
+        search_url = pub + "/kereses?keyword="
+    elif pub and plat == "woocommerce":
+        search_url = pub + "/?s="
+    if search_url:
+        system += (
+            " Ha egyik listaban sincs megfelelo termek, mondd el oszinten, ajanld a legkozelebbi "
+            "alternativat, ES add meg a webaruhaz keresojenek linkjet a keresett kifejezessel, "
+            "markdown linkkent: [Keresés a webáruházban](" + search_url + "<kifejezes>) — a "
+            "<kifejezes> helyere a latogato altal keresett szavakat ird, szokozok helyett + jellel "
+            "(pl. bait+bait+bojli). Jelezd, hogy ott a teljes kinalat lathato. Az elerhetoseg "
+            "elkereset (collect_lead) csak akkor ajanld fel, ha a latogato kifejezetten kollegatol "
+            "ker segitseget, vagy a kereso-link sem segitett."
+        )
+    else:
+        system += (
+            " Ha egyik listaban sincs megfelelo termek, mondd el oszinten, ajanld a "
+            "legkozelebbi alternativat, vagy kerd el az elerhetoseget, hogy egy kollega segithessen."
+        )
 
     # 11) # AKTUALIS OLDAL
     if ctx.page_is_product and ctx.page_product_name:
