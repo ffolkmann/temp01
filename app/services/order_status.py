@@ -107,7 +107,31 @@ async def _sr_status_name(client, api_base: str, token: str, status_obj) -> str:
         )
         r.raise_for_status()
         j = r.json()
-        return _pick_status_name(j) if isinstance(j, dict) else ""
+        name = _pick_status_name(j) if isinstance(j, dict) else ""
+        if name:
+            return name
+        # api2: a full=1 sem agyazza be a leirasokat — az orderStatusDescriptions maga is
+        # href -> masodik hop: GET /orderStatusDescriptions?orderStatusId={b64}
+        o = j if isinstance(j, dict) else {}
+        if isinstance(o.get("orderStatus"), dict):
+            o = o["orderStatus"]
+        d = o.get("orderStatusDescriptions")
+        if isinstance(d, dict) and d.get("href"):
+            r2 = await client.get(
+                f"{api_base}/orderStatusDescriptions",
+                params={"orderStatusId": b64, "full": "1"},
+                headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+            )
+            r2.raise_for_status()
+            j2 = r2.json()
+            items = j2.get("items") if isinstance(j2, dict) else None
+            if isinstance(items, dict):
+                items = items.get("orderStatusDescription") or []
+            if isinstance(items, list):
+                for it in items:
+                    if isinstance(it, dict) and isinstance(it.get("name"), str) and it["name"].strip():
+                        return it["name"].strip()
+        return ""
     except Exception:  # noqa: BLE001 — nev-feloldasi hiba SOHA ne torje a lookupot
         return ""
 

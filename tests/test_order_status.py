@@ -42,6 +42,12 @@ def test_pick_status_name_shapes():
     assert _os._pick_status_name({}) == ""
 
 
+def test_pick_status_name_items_shape():
+    # a masodik hop (orderStatusDescriptions lista) valasz-alakja items alatt
+    assert _os._pick_status_name({"items": [{"name": "Csomagolható"}]}) == ""  # ez NEM a pick dolga
+    # (a lista-agat a _sr_status_name kezeli; itt csak dokumentaljuk a hatarvonalat)
+
+
 def test_matched_reply_with_status():
     r = _os._matched_reply("12345", "Csomagolható")
     assert "#12345" in r and "Csomagolható" in r and "e-mailben is" in r
