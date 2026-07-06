@@ -44,12 +44,72 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("cx.order")
 
-# semleges válasz — matched ÉS nem-matched esetben is (adat-szivárgás ellen)
+# semleges válasz — NEM-matched (és hiba) esetben (adat-szivárgás ellen)
 ORDER_STATUS_REPLY = (
     "Ha a megadott rendelésszámhoz és e-mail-címhez tartozik rendelés, a "
     "részleteket elküldtük arra az e-mail-címre. Kérlek, nézd meg a postafiókod "
     "(a spam mappát is)."
 )
+
+
+def _matched_reply(order_id: str, status: str) -> str:
+    """m24/A: matched esetén a chat is kimondja a státuszt (a vevő igazolta magát a
+    rendelésszám+e-mail párral). 'ismeretlen'/üres státusz SOHA nem megy ki."""
+    if status and status != "ismeretlen":
+        return (
+            f"A(z) #{order_id} rendelésed állapota: {status}. "
+            "A részleteket e-mailben is elküldtük a rendeléskor megadott címre."
+        )
+    return (
+        f"A(z) #{order_id} rendelésedet megtaláltuk, a részleteket e-mailben "
+        "elküldtük a rendeléskor megadott címre. Az aktuális állapotról "
+        "ügyfélszolgálatunk tud pontos tájékoztatást adni."
+    )
+
+
+def _pick_status_name(j: dict) -> str:
+    """A /orderStatuses/{id}?full=1 valaszabol a lokalizalt nev (pure, teszthelto).
+
+    Alakok: {"name": "..."} top-level; VAGY orderStatusDescriptions list;
+    VAGY {"orderStatusDescriptions": {"orderStatusDescription": [...]}} burkolt alak.
+    """
+    if not isinstance(j, dict):
+        return ""
+    o = j.get("orderStatus") if isinstance(j.get("orderStatus"), dict) else j
+    v = o.get("name")
+    if isinstance(v, str) and v.strip():
+        return v.strip()
+    descs = o.get("orderStatusDescriptions")
+    if isinstance(descs, dict):
+        descs = descs.get("orderStatusDescription") or descs.get("items") or []
+    if isinstance(descs, list):
+        for d in descs:
+            if isinstance(d, dict) and isinstance(d.get("name"), str) and d["name"].strip():
+                return d["name"].strip()
+    return ""
+
+
+async def _sr_status_name(client, api_base: str, token: str, status_obj) -> str:
+    """Shoprenter orderStatus href -> lokalizalt statusznev (api2 + Bearer). Hiba -> ''.
+
+    A href a regi api hostra mutat; csak az utolso path-szegmenst (b64 id) hasznaljuk
+    az api_base-szel (m24/B — az 'ismeretlen' kiirtasa az e-mailbol).
+    """
+    try:
+        href = str((status_obj or {}).get("href") or "") if isinstance(status_obj, dict) else ""
+        b64 = href.rstrip("/").split("/")[-1] if href else ""
+        if not b64:
+            return ""
+        r = await client.get(
+            f"{api_base}/orderStatuses/{b64}",
+            params={"full": "1"},
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+        )
+        r.raise_for_status()
+        j = r.json()
+        return _pick_status_name(j) if isinstance(j, dict) else ""
+    except Exception:  # noqa: BLE001 — nev-feloldasi hiba SOHA ne torje a lookupot
+        return ""
 
 
 def _safe_status(*candidates) -> str:
@@ -151,19 +211,20 @@ async def _shoprenter_lookup(tenant: "Tenant", order: "OrderIntent") -> tuple[bo
         )
         resp.raise_for_status()
         data = resp.json()
-    if not isinstance(data, dict):
-        return False, "ismeretlen"
-    # az api2 single GET csupasz top-level objektumot ad (nincs response/order burkoló),
-    # az email top-level mező — a match-logika HELYES, ne nyúlj hozzá.
-    o = data.get("order") if isinstance(data.get("order"), dict) else data
-    if not o or not (o.get("id") or o.get("innerId") or o.get("orderNumber")):
-        return False, "ismeretlen"
-    # GUARD: a valós orderStatus egy href-dict ({'href': '.../orderStatuses/<b64>'}, full=1-gyel
-    # is) -> NEM stringeljük; csak str státuszt fogadunk el, különben generikus.
-    # (Opcionális, Fecó-visszaigazolásra váró ág a valódi HU névhez: orderStatus['href']
-    #  host-rewrite *.api.myshoprenter.hu -> *.api2.myshoprenter.hu/api + Bearer ->
-    #  GET /orderStatuses/{b64}?full=1 -> lokalizált név az orderStatusDescriptions-ön. Addig generikus.)
-    status = _safe_status(o.get("statusName"), o.get("orderStatus"), o.get("status"))
+        if not isinstance(data, dict):
+            return False, "ismeretlen"
+        # az api2 single GET csupasz top-level objektumot ad (nincs response/order burkoló),
+        # az email top-level mező — a match-logika HELYES, ne nyúlj hozzá.
+        o = data.get("order") if isinstance(data.get("order"), dict) else data
+        if not o or not (o.get("id") or o.get("innerId") or o.get("orderNumber")):
+            return False, "ismeretlen"
+        # a valós orderStatus href-dict ({'href': '.../orderStatuses/<b64>'}) -> NEM stringeljük;
+        # str státusz híján a nevet a /orderStatuses végpontról oldjuk fel (m24/B).
+        status = _safe_status(o.get("statusName"), o.get("orderStatus"), o.get("status"))
+        if status == "ismeretlen":
+            name = await _sr_status_name(client, api_base, token, o.get("orderStatus"))
+            if name:
+                status = name
     email = norm_email(o.get("email") or o.get("customerEmail"))
     if not email or email != norm_email(order.order_email):
         return False, status
@@ -218,9 +279,17 @@ _LOOKUPS = {
 def _send_status_email(tenant: "Tenant", order: "OrderIntent", status: str) -> None:
     bot = str(tenant.bot_name or "").strip() or tenant.client_id
     subject = f"Rendelésed állapota – #{order.order_id}"
+    if status and status != "ismeretlen":
+        body = f"A(z) #{order.order_id} számú rendelésed állapota: {status}"
+    else:
+        # m24/B: 'ismeretlen' SOHA nem megy ki — generikus, de korrekt szöveg
+        body = (
+            f"A(z) #{order.order_id} számú rendelésedet megtaláltuk a rendszerünkben. "
+            "Az aktuális állapotról ügyfélszolgálatunk tud pontos tájékoztatást adni."
+        )
     text = (
         "Kedves Vásárlónk!\n\n"
-        f"A(z) #{order.order_id} számú rendelésed állapota: {status}\n\n"
+        f"{body}\n\n"
         f"Üdvözlettel,\n{bot}"
     )
     logger.info(
@@ -230,8 +299,8 @@ def _send_status_email(tenant: "Tenant", order: "OrderIntent", status: str) -> N
 
 
 async def handle_order_status(tenant: "Tenant", order: "OrderIntent") -> str:
-    """Platform szerinti order-lekérés. MINDIG a semleges választ adja vissza; matched
-    esetén háttérben e-mailt ütemez a vevőnek. Hiba/timeout/ismeretlen platform ->
+    """Platform szerinti order-lekérés. Matched esetén a státuszt a chatben is kimondja
+    (m24/A) és háttérben e-mailt ütemez; nem-matched/hiba -> semleges válasz. Hiba/timeout/ismeretlen platform ->
     semleges válasz, e-mail nélkül; logol, nem dob.
     """
     platform = str(tenant.platform or "").strip().lower()
@@ -250,9 +319,9 @@ async def handle_order_status(tenant: "Tenant", order: "OrderIntent") -> str:
 
     if matched:
         _send_status_email(tenant, order, status)
-    else:
-        logger.info(
-            "ORDER[%s] nem matched id=%s (%s) — semleges válasz, nincs e-mail",
-            tenant.client_id, order.order_id, platform,
-        )
+        return _matched_reply(order.order_id, status)
+    logger.info(
+        "ORDER[%s] nem matched id=%s (%s) — semleges válasz, nincs e-mail",
+        tenant.client_id, order.order_id, platform,
+    )
     return ORDER_STATUS_REPLY
