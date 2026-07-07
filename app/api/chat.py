@@ -35,6 +35,7 @@ from app.services.order_status import handle_order_status
 from app.services.parse_reply import parse_reply
 from app.services.prompt import PromptContext, build_system_prompt
 from app.services.retrieval import retrieve
+from app.services.shop_search import SEARCH_FB_THRESHOLD, shop_front_search
 from app.services.unanswered import log_unanswered
 from app.services.usage import record_usage
 
@@ -57,6 +58,15 @@ async def _plan_live_api(session: AsyncSession, plan: str | None) -> bool:
         await session.execute(select(Plan).where(Plan.plan == plan))
     ).scalar_one_or_none()
     return bool(row and row.live_api)
+
+
+async def _plan_search_fallback(session: AsyncSession, plan: str | None) -> bool:
+    if not plan:
+        return False
+    row = (
+        await session.execute(select(Plan).where(Plan.plan == plan))
+    ).scalar_one_or_none()
+    return bool(row and getattr(row, "search_fallback", False))
 
 
 async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatResponse:
@@ -151,8 +161,20 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
     live = None
     if ctx.page_is_product and live_api and current is not None:
         live = await fetch_live_price_stock(tenant, current)
+    # webshop-kereso fallback (m25): gyenge score-nal a bolt sajat keresoje ad jelolteket
+    shop_hits: list[dict] | None = None
+    if top_score < SEARCH_FB_THRESHOLD and bool(getattr(tenant, "search_fallback", False)):
+        try:
+            if await _plan_search_fallback(session, tenant.plan):
+                shop_hits = await shop_front_search(tenant, message)
+                if shop_hits:
+                    await log_event(session, req.client_id, req.session_id, "search_fallback",
+                                    {"q": message[:80], "n": len(shop_hits)})
+        except Exception:  # noqa: BLE001 — a fallback hibaja ne torje a chatet
+            logger.exception("search_fallback hiba")
+            shop_hits = None
     coupons = await active_coupons(session, req.client_id)
-    system_prompt = build_system_prompt(tenant, hits, current, coupons, ctx, live=live)
+    system_prompt = build_system_prompt(tenant, hits, current, coupons, ctx, live=live, shop_search=shop_hits)
 
     try:
         raw = await generate_reply(system_prompt, req.history, message)

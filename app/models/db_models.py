@@ -57,6 +57,7 @@ class Tenant(Base):
     domain: Mapped[str | None] = mapped_column(String)                      # 24
     launcher_anim: Mapped[str | None] = mapped_column(String)               # 28 (none/ring/float/glow/ring_float)
     use_fastapi: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")  # routing (PG-only)
+    search_fallback: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")  # webshop-kereso fallback (m25)
     warehouse_config: Mapped[dict | None] = mapped_column(JSONB)  # m24: SR raktár-szemantika ({own, external, own_delivery, external_delivery})
 
 
@@ -66,6 +67,7 @@ class Plan(Base):
     plan: Mapped[str] = mapped_column(String, primary_key=True)
     live_api: Mapped[bool] = mapped_column(Boolean, default=False)
     white_label: Mapped[bool] = mapped_column(Boolean, default=False)
+    search_fallback: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     monthly_limit: Mapped[float | None] = mapped_column(Float)
 
 
