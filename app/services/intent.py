@@ -45,11 +45,12 @@ def detect_order_intent(message: str, tenant: Tenant, live_api: bool) -> OrderIn
     msg = str(message or "")
     low = msg.lower()
     plat = str(tenant.platform or "")
-    live_ok = (
-        plat in _LIVE_PLATFORMS
-        and bool(str(tenant.api_base or "").strip())
-        and live_api is True
-    )
+    # Unasnal nincs tenant-szintu api_base (fix UNAS_BASE + kulcs a secretben)
+    if plat == "unas":
+        _has_cred = bool(str(tenant.api_client_secret or "").strip())
+    else:
+        _has_cred = bool(str(tenant.api_base or "").strip())
+    live_ok = plat in _LIVE_PLATFORMS and _has_cred and live_api is True
 
     m = _EMAIL_RE.search(msg)
     email = m.group(0).strip() if m else ""
