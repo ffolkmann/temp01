@@ -347,7 +347,14 @@ def build_system_prompt(
     if pub and plat == "shoprenter":
         search_url = pub + "/kereses?keyword="
     elif pub and plat == "woocommerce":
-        search_url = pub + "/?s="
+        # post_type=product nelkul a WP a (sok temanal stilusozatlan) blog-keresore vinne
+        search_url = pub + "/?post_type=product&s="
+    elif pub and plat == "unas":
+        search_url = pub + "/shop_search.php?search="
+    elif pub and plat == "webdoc":
+        search_url = pub + "/termek-kereses?k="
+    elif pub and plat == "sellvio":
+        search_url = pub + "/hu/kereses?keyword="
     if search_url:
         system += (
             " Ha egyik listaban sincs megfelelo termek, mondd el oszinten, ajanld a legkozelebbi "
