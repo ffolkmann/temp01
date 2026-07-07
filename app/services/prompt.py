@@ -208,6 +208,21 @@ def _live_block(live: LivePriceStock, name: str) -> str:
     )
 
 
+def _shop_search_url(tenant) -> str:
+    """A bolt frontend-keresojenek link-sablonja platformonkent (m25)."""
+    pub = str(getattr(tenant, "public_url", "") or "").rstrip("/")
+    plat = (getattr(tenant, "platform", "") or "")
+    if not pub:
+        return ""
+    return {
+        "shoprenter": pub + "/kereses?keyword=",
+        "woocommerce": pub + "/?post_type=product&s=",
+        "unas": pub + "/shop_search.php?search=",
+        "webdoc": pub + "/termek-kereses?k=",
+        "sellvio": pub + "/hu/kereses?keyword=",
+    }.get(plat, "")
+
+
 def build_system_prompt(
     tenant: Tenant,
     hits: list[dict[str, Any]],
@@ -251,6 +266,14 @@ def build_system_prompt(
             "(nev + kattinthato link), es jelezd, hogy a webshop keresoje alapjan ajanlod. "
             "Ha egyik sem illik a kerdeshez, ne eroltesd.\n" + sslines
         )
+        _su = _shop_search_url(tenant)
+        if _su:
+            system += (
+                "\nA valasz VEGEN mindig add meg a bolt keresojenek linkjet is a tovabbi "
+                "talalatokhoz, markdown linkkent: [További találatok a webáruházban](" + _su
+                + "<kifejezes>) — a <kifejezes> helyere a kereses kulcsszavat ird, "
+                "szokozok helyett + jellel."
+            )
 
     # 4) # ELO, FRISS AR, KESZLET — élő API ár/készlet (csak ha a hívó lekérte; a synced helyett)
     if live is not None:
