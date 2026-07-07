@@ -251,3 +251,80 @@ async def stats_conversation(
             "action": r["action"] or "", "ts": _iso(r["created_at"]),
         } for r in rows],
     }
+
+
+@router.get("/admin/overview")
+async def admin_overview(
+    token: str = Query(...),
+    days: int = Query(7),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Osszes tenant forgalmi osszesito az admin panel Attekintes kartyajahoz."""
+    import os
+    if not token or token != os.environ.get("ADMIN_PANEL_TOKEN", ""):
+        raise HTTPException(status_code=403, detail="forbidden")
+    days = max(1, min(int(days or 7), 90))
+    P = {"d": str(days)}
+
+    trows = (await session.execute(text(
+        "SELECT client_id, COALESCE(bot_name,'') bot_name, COALESCE(stat_key,'') stat_key, active "
+        "FROM tenants ORDER BY client_id"
+    ))).mappings().all()
+    mrows = (await session.execute(text(
+        "SELECT client_id, COUNT(*) q, COUNT(DISTINCT session_id) conv, MAX(created_at) last_act "
+        "FROM messages WHERE created_at > now() - (:d || ' days')::interval GROUP BY client_id"
+    ), P)).mappings().all()
+    erows = (await session.execute(text(
+        "SELECT client_id, kind, COUNT(*) n, COALESCE(SUM(NULLIF(meta->>'count','')::int),0) s "
+        "FROM events WHERE created_at > now() - (:d || ' days')::interval GROUP BY 1,2"
+    ), P)).mappings().all()
+    frows = (await session.execute(text(
+        "SELECT client_id, rating, COUNT(*) n FROM feedback "
+        "WHERE created_at > now() - (:d || ' days')::interval GROUP BY 1,2"
+    ), P)).mappings().all()
+    urows = (await session.execute(text(
+        "SELECT client_id, COUNT(*) n FROM unanswered "
+        "WHERE created_at > now() - (:d || ' days')::interval GROUP BY 1"
+    ), P)).mappings().all()
+
+    msg = {r["client_id"]: r for r in mrows}
+    ev: dict[str, dict[str, int]] = {}
+    for r in erows:
+        val = _int(r["s"]) if r["kind"] == "product_rec" else _int(r["n"])
+        ev.setdefault(r["client_id"], {})[r["kind"]] = val
+    fb_up: dict[str, int] = {}
+    fb_down: dict[str, int] = {}
+    for r in frows:
+        key = str(r["rating"]).strip().lower()
+        if key in ("up", "1", "true", "+1", "thumbs_up"):
+            fb_up[r["client_id"]] = fb_up.get(r["client_id"], 0) + _int(r["n"])
+        else:
+            fb_down[r["client_id"]] = fb_down.get(r["client_id"], 0) + _int(r["n"])
+    un = {r["client_id"]: _int(r["n"]) for r in urows}
+
+    rows = []
+    tot = {"conversations": 0, "questions": 0, "unanswered": 0, "fb_up": 0, "fb_down": 0,
+           "product_rec": 0, "order_lookup": 0, "link_click": 0}
+    for t in trows:
+        cid = t["client_id"]
+        m = msg.get(cid)
+        e = ev.get(cid, {})
+        row = {
+            "client_id": cid,
+            "bot_name": t["bot_name"],
+            "stat_key": t["stat_key"],
+            "active": bool(t["active"]),
+            "conversations": _int(m["conv"]) if m else 0,
+            "questions": _int(m["q"]) if m else 0,
+            "unanswered": un.get(cid, 0),
+            "fb_up": fb_up.get(cid, 0),
+            "fb_down": fb_down.get(cid, 0),
+            "product_rec": e.get("product_rec", 0),
+            "order_lookup": e.get("order_lookup", 0),
+            "link_click": e.get("link_click", 0),
+            "last_activity": _iso(m["last_act"]) if m and m["last_act"] else "",
+        }
+        rows.append(row)
+        for k in tot:
+            tot[k] += row[k]
+    return {"days": days, "rows": rows, "totals": tot}

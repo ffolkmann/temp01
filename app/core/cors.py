@@ -119,6 +119,7 @@ class TenantCORSMiddleware(BaseHTTPMiddleware):
             _path.startswith("/stats")
             or _path.startswith("/chat-config")
             or _path.startswith("/chat-popup")
+            or _path.startswith("/admin/overview")
         )
         allowed = bool(origin) and (reflect_any or _is_allowed(origin, await _get_allowset()))
 
