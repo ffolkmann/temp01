@@ -55,7 +55,7 @@ def detect_order_intent(message: str, tenant: Tenant, live_api: bool) -> OrderIn
     email = m.group(0).strip() if m else ""
 
     order_id = ""
-    m = re.search(r"#\s*(\d{1,7})", msg)
+    m = re.search(r"#\s*(\d{3,6}-\d{4,9}|\d{1,7})", msg)
     if m:
         order_id = m.group(1)
     if not order_id:
