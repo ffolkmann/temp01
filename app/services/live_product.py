@@ -228,6 +228,78 @@ def _unas_qty(prod) -> int | None:
     return _to_int(xml_first_text(prod, "Qty"))
 
 
+_UNAS_WH_CACHE: dict[str, tuple[float, dict[str, tuple[str, str]]]] = {}
+_UNAS_WH_TTL = 3600.0
+
+
+async def _unas_warehouses(client, token: str, api_key: str) -> dict[str, tuple[str, str]]:
+    """Aktiv Unas raktarak: {id: (public_name, info)} — 1 oras cache-sel."""
+    import time as _t
+    hit = _UNAS_WH_CACHE.get(api_key)
+    if hit and _t.monotonic() - hit[0] < _UNAS_WH_TTL:
+        return hit[1]
+    out: dict[str, tuple[str, str]] = {}
+    try:
+        resp = await client.post(
+            f"{UNAS_BASE}/getWarehouse",
+            content='<?xml version="1.0" encoding="UTF-8"?><Params></Params>'.encode("utf-8"),
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/xml"},
+        )
+        resp.raise_for_status()
+        root = xml_root(resp.text)
+        for wh in (root.findall(".//Warehouse") if root is not None else []):
+            if (wh.findtext("Active") or "").strip().lower() != "yes":
+                continue
+            wid = (wh.findtext("Id") or "").strip()
+            if not wid:
+                continue
+            name = (wh.findtext("PublicName") or "").strip() or (wh.findtext("Name") or "").strip()
+            info = (wh.findtext("Info") or "").strip()
+            out[wid] = (name or f"raktár {wid}", info)
+    except Exception:  # noqa: BLE001 — a raktarlista hibaja ne torje a live-t
+        out = {}
+    _UNAS_WH_CACHE[api_key] = (_t.monotonic(), out)
+    return out
+
+
+def _unas_wh_note(prod, whmap: dict[str, tuple[str, str]], warehouse_config) -> str:
+    """Raktarankenti keszlet-note a getProduct <Stocks>-bol.
+
+    Csak IsActive=yes stock, csak aktiv (whmap-ban levo) raktar, csak Qty>0.
+    A tenants.warehouse_config opcionalis felulirot ad: {wh_id: {"name":..,"delivery":..}} vagy {wh_id: "nev"}.
+    """
+    stocks = prod.find(".//Stocks")
+    if stocks is None:
+        return ""
+    wc = warehouse_config if isinstance(warehouse_config, dict) else {}
+    parts: list[str] = []
+    for st in stocks.findall("Stock"):
+        wid = (st.findtext("WarehouseId") or "").strip()
+        if not wid:
+            continue  # fej-keszlet — a qty mezoben mar szerepel
+        if (st.findtext("IsActive") or "").strip().lower() == "no":
+            continue
+        if wid not in whmap:
+            continue  # inaktiv/ismeretlen raktar
+        q = _to_int(st.findtext("Qty"))
+        if not q or q <= 0:
+            continue
+        name, info = whmap[wid]
+        ov = wc.get(wid) or wc.get(str(wid))
+        if isinstance(ov, dict):
+            name = str(ov.get("name") or name)
+            info = str(ov.get("delivery") or info)
+        elif isinstance(ov, str) and ov.strip():
+            name = ov.strip()
+        seg = f"{name}: {q} db"
+        if info and info.lower() not in name.lower():
+            seg += f" ({info})"
+        parts.append(seg)
+    if not parts:
+        return ""
+    return "Raktáranként: " + "; ".join(parts) + ". A szállítási idő a raktártól függ."
+
+
 async def _unas_live(tenant: "Tenant", sku: str) -> LivePriceStock | None:
     if not sku:
         return None
@@ -247,10 +319,15 @@ async def _unas_live(tenant: "Tenant", sku: str) -> LivePriceStock | None:
         )
         resp.raise_for_status()
         root = xml_root(resp.text)
-    if root is None:
-        return None
-    prod = root.find(".//Product")
-    if prod is None:
+        prod = root.find(".//Product") if root is not None else None
+        _wh_note = ""
+        if prod is not None:
+            try:
+                _whmap = await _unas_warehouses(client, token, api_key)
+                _wh_note = _unas_wh_note(prod, _whmap, getattr(tenant, "warehouse_config", None))
+            except Exception:  # noqa: BLE001 — raktar-note hibaja ne torje a live-t
+                _wh_note = ""
+    if root is None or prod is None:
         return None
     qty = _unas_qty(prod)                             # fej-<Stock>/Qty (sorrend-független)
     return LivePriceStock(
@@ -258,6 +335,7 @@ async def _unas_live(tenant: "Tenant", sku: str) -> LivePriceStock | None:
         available=_avail_from(None, qty),
         qty=qty,
         name=xml_first_text(prod, "Name"),
+        note=_wh_note,
     )
 
 
