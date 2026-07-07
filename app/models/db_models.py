@@ -59,6 +59,7 @@ class Tenant(Base):
     use_fastapi: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")  # routing (PG-only)
     search_fallback: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")  # webshop-kereso fallback (m25)
     warehouse_config: Mapped[dict | None] = mapped_column(JSONB)  # m24: SR raktár-szemantika ({own, external, own_delivery, external_delivery})
+    launcher_config: Mapped[dict | None] = mapped_column(JSONB)  # chat-gomb (launcher) beallitasok (m26)
 
 
 class Plan(Base):

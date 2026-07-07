@@ -99,6 +99,7 @@ def _config_body(t: Tenant | None) -> dict[str, Any]:
     return {
         "chat_api_base": CHAT_API_BASE if (t and bool(t.use_fastapi)) else "",
         "search_fallback": bool(t.search_fallback) if t else False,
+        "launcher": (t.launcher_config or {}) if t else {},
         "bot_name": t.bot_name if t else None,
         "header_color": t.header_color if t else None,
         "bubble_color": t.bubble_color if t else None,
@@ -248,6 +249,11 @@ async def _save_config(session: AsyncSession, row_in: dict[str, Any]) -> dict[st
                 row["popup_config"] = {}
 
     # warehouse_config: string-JSON -> dict (JSONB) — popup_config mintájára (m24)
+    if "launcher_config" in row and isinstance(row["launcher_config"], str):
+        try:
+            row["launcher_config"] = json.loads(row["launcher_config"]) if row["launcher_config"].strip() else None
+        except Exception:  # noqa: BLE001
+            row.pop("launcher_config", None)
     if "search_fallback" in row:
         row["search_fallback"] = _as_bool(row["search_fallback"])
     if "warehouse_config" in row:
