@@ -249,7 +249,7 @@ async def _save_config(session: AsyncSession, row_in: dict[str, Any]) -> dict[st
 
     # warehouse_config: string-JSON -> dict (JSONB) — popup_config mintájára (m24)
     if "search_fallback" in row:
-        row["search_fallback"] = bool(row["search_fallback"])
+        row["search_fallback"] = _as_bool(row["search_fallback"])
     if "warehouse_config" in row:
         wcv = row["warehouse_config"]
         if isinstance(wcv, str):
