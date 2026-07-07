@@ -24,7 +24,7 @@ logger = logging.getLogger("cx.shop_search")
 # Szandekosan magasabb az unanswered THRESHOLD-nal (0.45): a "gyenge, de nem
 # kritikus" savban is erdemes a bolti keresot megkerdezni.
 SEARCH_FB_THRESHOLD = 0.55
-_TIMEOUT = 6.0
+_TIMEOUT = 10.0
 _MAX_LINKS = 12
 _LIMIT = 5
 
@@ -43,7 +43,7 @@ _STOPWORDS = {
 
 
 def _stem(w: str) -> str:
-    """Minimal magyar targyrag-vagas a bolti LIKE-kereso kedveert (botot -> bot)."""
+    """Minimal magyar targyrag-vagas a bolti LIKE-kereso kedveert (botot -> bot, halot -> halo)."""
     if len(w) > 4:
         for suf in ("okat", "eket", "akat", "öket"):
             if w.endswith(suf):
@@ -51,7 +51,9 @@ def _stem(w: str) -> str:
         for suf in ("ot", "et", "at", "öt"):
             if w.endswith(suf):
                 return w[: -len(suf)]
-        if w.endswith("t") and w[-2] not in "aeiouáéíóöőúüű":
+        # mgh+t es msh+t targyrag is (hálót -> háló, halat mar fent);
+        # dupla-t (szett, watt) NEM rag, marad
+        if w.endswith("t") and not w.endswith("tt"):
             return w[:-1]
     return w
 
@@ -59,16 +61,20 @@ def _stem(w: str) -> str:
 def _build_queries(message: str) -> list[str]:
     words = re.findall(r"[\w\-]+", (message or "").lower())
     content = [w for w in words if w not in _STOPWORDS and len(w) > 2 and not w.isdigit()]
+    # szammal kezdodo tagok ("45-ös", "8-as") gyilkos AND-feltetelek a bolti keresoben
+    # -> a fo query-kbol kihagyjuk, csak a szoveges torzs megy
+    core = [w for w in content if not w[0].isdigit()]
+    base = core or content
     out: list[str] = []
-    if content:
-        q1 = " ".join(_stem(w) for w in content[:4])
+    if base:
+        q1 = " ".join(_stem(w) for w in base[:4])
         out.append(q1)
-        q2 = " ".join(content[:4])
+        q2 = " ".join(base[:4])
         if q2 not in out:
             out.append(q2)
-        if len(content) > 2:
-            q3 = " ".join(_stem(w) for w in sorted(content, key=len, reverse=True)[:2])
-            if q3 not in out:
+        if len(base) > 1:
+            q3 = _stem(sorted(base, key=len, reverse=True)[0])
+            if q3 and q3 not in out:
                 out.append(q3)
     if not out:
         out.append((message or "").strip()[:120])
