@@ -10,11 +10,18 @@ rendeléskor használt címre, háttérben (schedule_email). Bármely hiba -> se
 válasz + log, SOHA nem dob a widget felé.
 
 API-kontraktusok (VPS-en igazolt / web):
- - Sellvio:     OAuth, GET /api/v2/orders/{id} (302->follow), data.* (élő).
+ - Sellvio:     OAuth, GET /api/v2/orders/ (locale=hu, lapozva a legfrissebbtől); nincs
+                igazolt szerver-oldali id/email szűrő -> kliens-oldali match (id ÉS email),
+                order_items + delivery_type/deliveries a tétel/szállítás jegyzethez.
  - WooCommerce: GET {base}/wp-json/wc/v3/orders/{id}, Basic (ck/cs), billing.email + status.
  - Shoprenter:  OAuth2, GET {api_base}/orders/{base64('order-order_id=<N>')}; az api2 csupasz
                 top-level objektumot ad (email top-level); a status href-dict -> guard + generikus.
- - Unas:        login(ApiKey)->Token, POST /getOrder XML Bearer, Order <Status> + <Email>.
+ - Unas:        login(ApiKey)->Token, POST /getOrder XML Bearer, Order <Status> + <Email> +
+                Items/Item (Name/Quantity) + Delivery (tétel/szállítás jegyzethez).
+
+A lookupok (bool matched, str status, str note) hármast adnak: a note a matched
+chat-válaszba ÉS az e-mailbe kerül (Sellvio/Unas: tételek + szállítási mód; Shoprenter:
+raktár-bontás külön; Woo: nincs). Raktár-bontás CSAK Shoprenternél van.
 """
 
 from __future__ import annotations
@@ -230,53 +237,166 @@ def _safe_status(*candidates) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# Sellvio
+# Közös: tétel + szállítási mód jegyzet (pure, teszthelto) — Sellvio + Unas
+# Raktár-bontás NINCS (az CSAK Shoprenter, lásd _sr_order_warehouse_note).
 # --------------------------------------------------------------------------- #
-async def _sellvio_get_order(
-    client: httpx.AsyncClient, api_base: str, order_id: str, token: str
-) -> dict:
-    resp = await client.get(
-        f"{api_base}/api/v2/orders/{order_id}",
-        headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
-    )
-    resp.raise_for_status()
-    body = resp.json()
-    return body if isinstance(body, dict) else {}
+def _first_str(d: dict, *keys) -> str:
+    """Az első nem-üres str/szám mező a kulcsok közül (str-re konvertálva)."""
+    if not isinstance(d, dict):
+        return ""
+    for k in keys:
+        v = d.get(k)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+        if isinstance(v, bool):
+            continue
+        if isinstance(v, (int, float)):
+            return str(v)
+    return ""
 
 
-def _verify_order(payload: dict, order_email: str) -> tuple[bool, str]:
-    """Verify Order: status=="success" + data.id + data.email == megadott email -> matched."""
-    if not isinstance(payload, dict) or payload.get("status") != "success":
-        return False, "ismeretlen"
-    data = payload.get("data") or {}
-    if not isinstance(data, dict) or not data.get("id"):
-        return False, "ismeretlen"
-    status_obj = data.get("status") or {}
-    status_name = status_obj.get("name") if isinstance(status_obj, dict) else None
-    status = str(status_name or "ismeretlen")
-    if not norm_email(data.get("email")) or norm_email(data.get("email")) != norm_email(order_email):
-        return False, status
-    return True, status
+def _fmt_qty(q) -> str:
+    """Mennyiség megjelenítés: '2.0'/'2,0' -> '2'; nem-szám -> nyers str; üres -> ''."""
+    s = str(q if q is not None else "").strip()
+    if not s:
+        return ""
+    try:
+        f = float(s.replace(",", "."))
+    except (TypeError, ValueError):
+        return s
+    return str(int(f)) if f == int(f) else str(f)
 
 
-async def _sellvio_lookup(tenant: "Tenant", order: "OrderIntent") -> tuple[bool, str]:
+def _format_order_note(items: list[tuple[str, str]], delivery: str) -> str:
+    """Tétel + szállítás jegyzet (pure). 'Tételek: 2× X; Y.' [+ ' Szállítási mód: Z.']."""
+    parts = []
+    for name, qty in (items or [])[:20]:
+        name = str(name or "").strip()
+        if not name:
+            continue
+        q = _fmt_qty(qty)
+        parts.append(f"{q}× {name}" if q else name)
+    note = ("Tételek: " + "; ".join(parts) + ".") if parts else ""
+    delivery = str(delivery or "").strip()
+    if delivery:
+        note += (" " if note else "") + f"Szállítási mód: {delivery}."
+    return note
+
+
+# --------------------------------------------------------------------------- #
+# Sellvio — GET /api/v2/orders/ (list), kliens-oldali id+email match
+# --------------------------------------------------------------------------- #
+_SELLVIO_MAX_PAGES = 5  # a legfrissebb ~500 rendelésig scannelünk (limit=100)
+
+
+def _sellvio_status(o: dict) -> str:
+    """Rendelés-állapot: status{name}|status(str)|status_name|state; különben 'ismeretlen'.
+
+    A payment_status SZÁNDÉKOSAN kimarad (az a fizetés, nem a teljesítés állapota).
+    """
+    st = o.get("status") if isinstance(o, dict) else None
+    if isinstance(st, dict):
+        n = st.get("name")
+        if isinstance(n, str) and n.strip():
+            return n.strip()
+    if isinstance(st, str) and st.strip():
+        return st.strip()
+    return _first_str(o, "status_name", "state") or "ismeretlen"
+
+
+def _sellvio_items(o: dict) -> list[tuple[str, str]]:
+    """order_items -> [(név, mennyiség)]."""
+    out: list[tuple[str, str]] = []
+    for it in (o.get("order_items") or []) if isinstance(o, dict) else []:
+        if isinstance(it, dict):
+            out.append(
+                (_first_str(it, "name", "product_name", "title"),
+                 _first_str(it, "quantity", "qty", "amount"))
+            )
+    return out
+
+
+def _sellvio_delivery(o: dict) -> str:
+    """delivery_type (str vagy {name}) -> szállítási mód; fallback: deliveries[].name."""
+    if not isinstance(o, dict):
+        return ""
+    dt = o.get("delivery_type")
+    if isinstance(dt, dict):
+        n = _first_str(dt, "name", "title", "type")
+        if n:
+            return n
+    elif isinstance(dt, str) and dt.strip():
+        return dt.strip()
+    for d in (o.get("deliveries") or []):
+        if isinstance(d, dict):
+            n = _first_str(d, "name", "title", "type")
+            if n:
+                return n
+    return ""
+
+
+def _sellvio_match(items: list, order_id: str, order_email: str) -> tuple[bool, dict | None]:
+    """Adatvédelmi guard (a _verify_order mintát követi): CSAK ha az id ÉS az e-mail is egyezik.
+
+    - id nem található az oldalon -> (False, None): lapozz tovább.
+    - id egyezik, e-mail is egyezik -> (True, order).
+    - id egyezik, e-mail NEM egyezik -> (False, order): NEM matched, és megállunk (az id egyedi).
+    """
+    want_id = str(order_id or "").strip()
+    want_email = norm_email(order_email)
+    for o in items or []:
+        if not isinstance(o, dict):
+            continue
+        oid = o.get("id")
+        if str(oid if oid is not None else "").strip() != want_id:
+            continue
+        oe = norm_email(o.get("email"))
+        if oe and oe == want_email:
+            return True, o
+        return False, o  # id egyezik, e-mail nem -> adatvédelmi guard
+    return False, None
+
+
+async def _sellvio_lookup(tenant: "Tenant", order: "OrderIntent") -> tuple[bool, str, str]:
     api_base = str(tenant.api_base or "").strip().rstrip("/")
     cid = str(tenant.api_client_id or "").strip()
     secret = str(tenant.api_client_secret or "").strip()
-    # follow_redirects: a Sellvio /api/v2/orders/{id} 302-t ad (Accept: json + redirect -> 200).
     async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
         token = await sellvio_token(client, api_base, cid, secret)
         if not token:
             logger.warning("ORDER[%s] nincs Sellvio token", tenant.client_id)
-            return False, "ismeretlen"
-        payload = await _sellvio_get_order(client, api_base, order.order_id, token)
-    return _verify_order(payload, order.order_email)
+            return False, "ismeretlen", ""
+        headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+        page = 1
+        for _ in range(_SELLVIO_MAX_PAGES):
+            resp = await client.get(
+                f"{api_base}/api/v2/orders/",
+                params={"locale": "hu", "page": page, "limit": 100},
+                headers=headers,
+            )
+            resp.raise_for_status()
+            body = resp.json()
+            data = (body or {}).get("data") or {} if isinstance(body, dict) else {}
+            items = [o for o in (data.get("items") or []) if isinstance(o, dict)]
+            matched, o = _sellvio_match(items, order.order_id, order.order_email)
+            if o is not None:  # id megvan ezen az oldalon (matched vagy e-mail-eltérés)
+                if matched:
+                    note = _format_order_note(_sellvio_items(o), _sellvio_delivery(o))
+                    return True, _sellvio_status(o), note
+                return False, _sellvio_status(o), ""
+            last_page = data.get("last_page") or page
+            if data.get("next_page_url") is None or page >= int(last_page):
+                break
+            page += 1
+    logger.info("ORDER[%s] Sellvio: id=%s nem található az első %s oldalon",
+                tenant.client_id, order.order_id, _SELLVIO_MAX_PAGES)
+    return False, "ismeretlen", ""
 
 
 # --------------------------------------------------------------------------- #
 # WooCommerce — GET /wp-json/wc/v3/orders/{id}, Basic auth (consumer key/secret)
 # --------------------------------------------------------------------------- #
-async def _woo_lookup(tenant: "Tenant", order: "OrderIntent") -> tuple[bool, str]:
+async def _woo_lookup(tenant: "Tenant", order: "OrderIntent") -> tuple[bool, str, str]:
     base = str(tenant.api_base or "").strip().rstrip("/")
     ck = str(tenant.api_client_id or "").strip()        # ck_...
     cs = str(tenant.api_client_secret or "").strip()    # cs_...
@@ -289,19 +409,19 @@ async def _woo_lookup(tenant: "Tenant", order: "OrderIntent") -> tuple[bool, str
         resp.raise_for_status()
         data = resp.json()
     if not isinstance(data, dict) or not data.get("id"):
-        return False, "ismeretlen"
+        return False, "ismeretlen", ""
     status = str(data.get("status") or "ismeretlen")
     billing = data.get("billing") if isinstance(data.get("billing"), dict) else {}
     email = norm_email((billing or {}).get("email"))
     if not email or email != norm_email(order.order_email):
-        return False, status
-    return True, status
+        return False, status, ""
+    return True, status, ""
 
 
 # --------------------------------------------------------------------------- #
 # Shoprenter — OAuth2 (Basic deprecated->403); base64 order id
 # --------------------------------------------------------------------------- #
-async def _shoprenter_lookup(tenant: "Tenant", order: "OrderIntent") -> tuple[bool, str]:
+async def _shoprenter_lookup(tenant: "Tenant", order: "OrderIntent") -> tuple[bool, str, str]:
     api_base = str(tenant.api_base or "").strip().rstrip("/")
     cid = str(tenant.api_client_id or "").strip()
     secret = str(tenant.api_client_secret or "").strip()
@@ -310,7 +430,7 @@ async def _shoprenter_lookup(tenant: "Tenant", order: "OrderIntent") -> tuple[bo
         token = await shoprenter_token(client, shop, cid, secret)
         if not token:
             logger.warning("ORDER[%s] nincs Shoprenter token", tenant.client_id)
-            return False, "ismeretlen"
+            return False, "ismeretlen", ""
         resp = await client.get(
             f"{api_base}/orders/{shoprenter_resource_id('order', order.order_id)}",
             headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
@@ -318,12 +438,12 @@ async def _shoprenter_lookup(tenant: "Tenant", order: "OrderIntent") -> tuple[bo
         resp.raise_for_status()
         data = resp.json()
         if not isinstance(data, dict):
-            return False, "ismeretlen"
+            return False, "ismeretlen", ""
         # az api2 single GET csupasz top-level objektumot ad (nincs response/order burkoló),
         # az email top-level mező — a match-logika HELYES, ne nyúlj hozzá.
         o = data.get("order") if isinstance(data.get("order"), dict) else data
         if not o or not (o.get("id") or o.get("innerId") or o.get("orderNumber")):
-            return False, "ismeretlen"
+            return False, "ismeretlen", ""
         # a valós orderStatus href-dict ({'href': '.../orderStatuses/<b64>'}) -> NEM stringeljük;
         # str státusz híján a nevet a /orderStatuses végpontról oldjuk fel (m24/B).
         status = _safe_status(o.get("statusName"), o.get("orderStatus"), o.get("status"))
@@ -333,20 +453,71 @@ async def _shoprenter_lookup(tenant: "Tenant", order: "OrderIntent") -> tuple[bo
                 status = name
     email = norm_email(o.get("email") or o.get("customerEmail"))
     if not email or email != norm_email(order.order_email):
-        return False, status
-    return True, status
+        return False, status, ""
+    # a raktár-bontás jegyzet a handle_order_status-ban készül (külön orderProducts-hívás).
+    return True, status, ""
 
 
 # --------------------------------------------------------------------------- #
 # Unas — login(ApiKey)->Token, POST /getOrder XML, Bearer
 # --------------------------------------------------------------------------- #
-async def _unas_lookup(tenant: "Tenant", order: "OrderIntent") -> tuple[bool, str]:
+def _local_tag(el) -> str:
+    """namespace-független, kisbetűs helyi tagnév (a xml_first_text mintáját követi)."""
+    return el.tag.split("}")[-1].lower()
+
+
+def _iter_local(el, name: str) -> list:
+    """Az összes leszármazott elem, aminek a helyi tagje illik (namespace nélkül)."""
+    low = name.lower()
+    return [sub for sub in el.iter() if _local_tag(sub) == low]
+
+
+def _unas_order_status(order_el) -> str:
+    """Rendelés-SZINTŰ státusz: az Order KÖZVETLEN <Status>/<StatusName> gyereke.
+
+    A közvetlen-gyerek szűrés SZÁNDÉKOS: az Items/Item-en belül is van <Status> (tétel-státusz),
+    azt a xml_first_text descendant-bejárása tévesen elkapná. Ha a <Status> nem szöveges, hanem
+    burkolt (<Status><Name>..</Name></Status>), a Name-et olvassuk.
+    """
+    for ch in list(order_el):
+        if _local_tag(ch) in ("status", "statusname"):
+            if ch.text and ch.text.strip():
+                return ch.text.strip()
+            n = xml_first_text(ch, "Name", "Text")
+            if n:
+                return n
+    return "ismeretlen"
+
+
+def _unas_items(order_el) -> list[tuple[str, str]]:
+    """Items/Item -> [(Name, Quantity)]."""
+    return [
+        (xml_first_text(item, "Name"), xml_first_text(item, "Quantity"))
+        for item in _iter_local(order_el, "Item")
+    ]
+
+
+def _unas_delivery(order_el) -> str:
+    """A <Delivery> blokk szállítási módja, PRIORITÁS-sorrendben: Mode -> Name -> Type.
+
+    A xml_first_text a DOKUMENTUM-sorrend szerinti első illeszkedőt adja (nem a paraméter-
+    sorrend szerintit), ezért tag-enként, prioritással kell kérdezni.
+    """
+    for d in _iter_local(order_el, "Delivery"):
+        for tag in ("Mode", "Name", "Type"):
+            v = xml_first_text(d, tag)
+            if v:
+                return v
+    return ""
+
+
+async def _unas_lookup(tenant: "Tenant", order: "OrderIntent") -> tuple[bool, str, str]:
     api_key = str(tenant.api_client_secret or "").strip() or str(tenant.api_client_id or "").strip()
     async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
         token = await unas_login(client, api_key)
         if not token:
             logger.warning("ORDER[%s] nincs Unas token", tenant.client_id)
-            return False, "ismeretlen"
+            return False, "ismeretlen", ""
         # Contents nélkül is teljes a válasz (smartzillán élesben igazolva); a full param nem igazolt.
         body = (
             '<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -355,20 +526,22 @@ async def _unas_lookup(tenant: "Tenant", order: "OrderIntent") -> tuple[bool, st
         resp = await client.post(
             f"{UNAS_BASE}/getOrder",
             content=body.encode("utf-8"),
-            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/xml"},
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "text/xml"},
         )
         resp.raise_for_status()
         root = xml_root(resp.text)
     if root is None:
-        return False, "ismeretlen"
+        return False, "ismeretlen", ""
     order_el = root.find(".//Order")
     if order_el is None:
-        return False, "ismeretlen"
-    status = xml_first_text(order_el, "Status", "StatusName") or "ismeretlen"
+        return False, "ismeretlen", ""
+    status = _unas_order_status(order_el)
+    # adatvédelmi guard: a válaszban lévő e-mailnek egyeznie kell a megadottal (id+email együtt).
     email = norm_email(xml_first_text(order_el, "Email"))
     if not email or email != norm_email(order.order_email):
-        return False, status
-    return True, status
+        return False, status, ""
+    note = _format_order_note(_unas_items(order_el), _unas_delivery(order_el))
+    return True, status, note
 
 
 # --------------------------------------------------------------------------- #
@@ -418,7 +591,7 @@ async def handle_order_status(tenant: "Tenant", order: "OrderIntent") -> str:
         return ORDER_STATUS_REPLY
 
     try:
-        matched, status = await lookup(tenant, order)
+        matched, status, note = await lookup(tenant, order)
     except Exception:  # noqa: BLE001 — platform-hiba SOHA ne törje meg a /chat-et
         logger.exception(
             "ORDER[%s] %s hívás hiba (id=%s)", tenant.client_id, platform, order.order_id
@@ -426,7 +599,8 @@ async def handle_order_status(tenant: "Tenant", order: "OrderIntent") -> str:
         return ORDER_STATUS_REPLY
 
     if matched:
-        note = ""
+        # Sellvio/Unas: a note = tételek + szállítási mód (a lookup adja).
+        # Shoprenter: raktár-bontás (külön orderProducts-hívás). Raktár-bontás CSAK itt.
         if platform == "shoprenter":
             note = await _sr_order_warehouse_note(tenant, order.order_id)
         _send_status_email(tenant, order, status, note)
