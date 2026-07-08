@@ -13,7 +13,7 @@ A widget kompatibilitás miatt a route a /webhook/chat útvonalon IS elérhető.
 
 import logging
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -30,6 +30,13 @@ from app.services.feedback import store_feedback
 from app.services.handoff import HANDOFF_REPLY, send_handoff_email
 from app.services.intent import detect_configurator, detect_handoff, detect_order_intent
 from app.services.leads import store_lead
+from app.services.live_agent import (
+    LIVE_AGENT_WAIT_REPLY,
+    add_message as la_add_message,
+    get_session_state,
+    poll_messages,
+    request_operator,
+)
 from app.services.live_product import fetch_live_price_stock
 from app.services.order_status import handle_order_status
 from app.services.parse_reply import parse_reply
@@ -82,6 +89,23 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
     if not message:
         return ChatResponse(reply=tenant.welcome_message or _FALLBACK)
 
+    # --- Élő operátor-átvétel (m28): ha a session már requested/operator, a bot
+    #     elnémul (handoff_bot_silent), a látogató üzenete a chat_messages-be kerül,
+    #     a widget a válaszokat /chat/poll-lal olvassa. Fail-safe: hiba -> normál bot.
+    if getattr(tenant, "live_agent_enabled", False) and req.session_id:
+        try:
+            la_state = await get_session_state(session, req.client_id, req.session_id)
+        except Exception:  # noqa: BLE001
+            la_state = "bot"
+        if la_state in ("requested", "operator"):
+            try:
+                await la_add_message(session, req.client_id, req.session_id, "user", message)
+            except Exception:  # noqa: BLE001
+                logger.exception("live-agent: user-üzenet mentés hiba")
+            if la_state == "operator" or bool(getattr(tenant, "handoff_bot_silent", True)):
+                return ChatResponse(reply="", action="operator_wait")
+            # requested + handoff_bot_silent=False -> a bot tovább válaszol (fall through)
+
     # usage-accounting: minden bejövő USER üzenet (message +1; conversation ha új session/period)
     await record_usage(session, get_redis(), req.client_id, req.session_id)
 
@@ -127,6 +151,40 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
     # 3) handoff
     ho = detect_handoff(message, tenant, req.history, ctx.page_url)
     if ho.is_handoff:
+        # m28: élő operátor-átvétel (ha be van kapcsolva ÉS van session) -> várólistára;
+        #      a bot elnémul, a látogató a /chat/poll-on kapja az operátor válaszait.
+        #      Fail-safe: bármi hiba -> a régi e-mailes handoff ág (lentebb).
+        if getattr(tenant, "live_agent_enabled", False) and req.session_id:
+            try:
+                # az eddigi (bot-)átirat mint kontextus az operátornak (system-üzenet)
+                turns = await get_transcript(session, req.client_id, req.session_id)
+                if turns:
+                    ctx_txt = format_transcript(turns, tenant.bot_name or "Bot")
+                    await la_add_message(
+                        session, req.client_id, req.session_id, "system",
+                        f"[Beszélgetés előzménye]\n{ctx_txt}",
+                    )
+                await request_operator(session, req.client_id, req.session_id)
+                await la_add_message(session, req.client_id, req.session_id, "user", message)
+                await log_turn(
+                    session, req.client_id, req.session_id, message,
+                    LIVE_AGENT_WAIT_REPLY, "operator_wait",
+                )
+                await log_event(
+                    session, req.client_id, req.session_id, "handoff",
+                    {"page": ho.page, "mode": "live"},
+                )
+                # TODO(m28-fázis5): Telegram-ping requested-en (per-tenant chat_id).
+                # TODO(m28-fázis6): nyitvatartás-gating + no-operator -> e-mail fallback.
+                return ChatResponse(reply=LIVE_AGENT_WAIT_REPLY, action="operator_wait")
+            except Exception:  # noqa: BLE001 — élő átvétel hiba -> essünk vissza e-mailre
+                logger.exception("live-agent: átvétel-kérés hiba, e-mail handoff fallback")
+                try:
+                    await session.rollback()
+                except Exception:  # noqa: BLE001
+                    pass
+
+        # e-mailes handoff (eredeti viselkedés / fallback)
         # előbb logolunk, hogy az aktuális kérés IS benne legyen a teljes átiratban
         await log_turn(
             session, req.client_id, req.session_id, message, HANDOFF_REPLY, "collect_lead"
@@ -232,3 +290,20 @@ async def chat(req: ChatRequest, session: AsyncSession = Depends(get_session)):
 
     # nincs type -> üzenet
     return await _handle_message(req, session)
+
+
+@router.get("/chat/poll")
+async def chat_poll(
+    client_id: str = Query(...),
+    session_id: str = Query(...),
+    after: int = Query(0),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Widget-polling (m28): operátor-mód üzenetei.
+
+    Vissza: {state, messages:[{id,sender,text,ts}]}. Csak az OPERÁTOR-üzeneteket adja
+    (a látogató a sajátjait már látja); `after` = a widget által utoljára látott id.
+    """
+    state = await get_session_state(session, client_id, session_id)
+    messages = await poll_messages(session, session_id, after, senders=("operator",))
+    return {"state": state, "messages": messages}

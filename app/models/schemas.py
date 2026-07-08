@@ -65,7 +65,10 @@ class ChatResponse(BaseModel):
     """A widget EZT várja (C.3)."""
 
     reply: str
-    action: Literal["collect_lead", "order_status_form", "quote_configurator"] | None = None
+    action: (
+        Literal["collect_lead", "order_status_form", "quote_configurator", "operator_wait"]
+        | None
+    ) = None
     configurator: ConfiguratorRef | None = None
 
 
