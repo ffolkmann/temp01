@@ -1,3 +1,19 @@
+"""
+Application settings loaded from environment variables.
+
+Provides centralized configuration for:
+- Database (PostgreSQL) and queue (Redis) URLs
+- Qdrant vector DB endpoints and collection names
+- LLM (Anthropic Claude Haiku) and embedding (OpenAI text-embedding-3-small) API keys and model names
+- Admin authentication tokens
+- Mailgun email service configuration for lead/handoff/order-status notifications
+- Retrieval tuning parameters (top-k, context size)
+- Sync engine settings (embedding batch size, Qdrant upsert batch, platform concurrency, rate limits)
+
+Settings are loaded from a `.env` file via pydantic_settings, with sensible dev defaults.
+Use `get_settings()` to obtain a cached Settings instance.
+"""
+
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
