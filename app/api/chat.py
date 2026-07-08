@@ -38,6 +38,7 @@ from app.services.live_agent import (
     request_operator,
 )
 from app.services.live_product import fetch_live_price_stock
+from app.services.operator_hours import operators_available
 from app.services.operator_notify import notify_operators
 from app.services.order_status import handle_order_status
 from app.services.parse_reply import parse_reply
@@ -155,7 +156,11 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
         # m28: élő operátor-átvétel (ha be van kapcsolva ÉS van session) -> várólistára;
         #      a bot elnémul, a látogató a /chat/poll-on kapja az operátor válaszait.
         #      Fail-safe: bármi hiba -> a régi e-mailes handoff ág (lentebb).
-        if getattr(tenant, "live_agent_enabled", False) and req.session_id:
+        if (
+            getattr(tenant, "live_agent_enabled", False)
+            and req.session_id
+            and operators_available(tenant)  # m28 fázis6: van Telegram-címzett ÉS nyitvatartás
+        ):
             try:
                 # az eddigi (bot-)átirat mint kontextus az operátornak (system-üzenet)
                 turns = await get_transcript(session, req.client_id, req.session_id)
@@ -181,7 +186,6 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
                     await notify_operators(tenant, message)
                 except Exception:  # noqa: BLE001
                     logger.exception("live-agent: Telegram-ping hiba (nem kritikus)")
-                # TODO(m28-fázis6): nyitvatartás-gating + no-operator -> e-mail fallback.
                 return ChatResponse(reply=LIVE_AGENT_WAIT_REPLY, action="operator_wait")
             except Exception:  # noqa: BLE001 — élő átvétel hiba -> essünk vissza e-mailre
                 logger.exception("live-agent: átvétel-kérés hiba, e-mail handoff fallback")
