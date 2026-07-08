@@ -18,7 +18,7 @@ import random
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import select
@@ -338,6 +338,68 @@ async def _qdrant_delete_doc(client_id: str, filename: str) -> dict[str, Any]:
         )
         r.raise_for_status()
     return {"ok": True}
+
+
+@router.get("/admin/warehouses")
+async def admin_warehouses(
+    client_id: str = Query(...),
+    token: str = Query(...),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Unas raktar-lista az admin panel raktar-felulirojahoz.
+
+    Vissza: {platform, warehouses:[{id,name,info,active}]}. Csak Unasnal ad listat;
+    mas platformnal ures (a Shoprenter admin-blokk fix 1-4 slotos, nem ide tartozik).
+    """
+    import os
+    import re as _re
+
+    import httpx
+
+    if not token or token != os.environ.get("ADMIN_PANEL_TOKEN", ""):
+        raise HTTPException(status_code=403, detail="forbidden")
+    cid = str(client_id or "").strip().lower()
+    t = await _get_tenant(session, cid)
+    if t is None:
+        return {"error": "not_found", "warehouses": []}
+    plat = str(getattr(t, "platform", "") or "")
+    if plat != "unas":
+        return {"platform": plat, "warehouses": []}
+
+    from app.services.platform_api import UNAS_BASE, unas_login
+
+    api_key = str(getattr(t, "api_client_secret", "") or "").strip()
+    if not api_key:
+        return {"platform": plat, "warehouses": [], "error": "no_api_key"}
+    out: list[dict] = []
+    try:
+        async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as c:
+            tok = await unas_login(c, api_key)
+            if not tok:
+                return {"platform": plat, "warehouses": [], "error": "login_failed"}
+            r = await c.post(
+                f"{UNAS_BASE}/getWarehouse",
+                content=b'<?xml version="1.0" encoding="UTF-8"?><Params></Params>',
+                headers={"Authorization": f"Bearer {tok}", "Content-Type": "application/xml"},
+            )
+            r.raise_for_status()
+            xml = r.text
+        for blk in _re.findall(r"<Warehouse>.*?</Warehouse>", xml, _re.S):
+            def _g(tag: str, _b: str = blk) -> str:
+                m = _re.search(rf"<{tag}>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</{tag}>", _b, _re.S)
+                return (m.group(1).strip() if m else "")
+            wid = _g("Id")
+            if not wid:
+                continue
+            out.append({
+                "id": wid,
+                "name": _g("PublicName") or _g("Name"),
+                "info": _g("Info"),
+                "active": (_g("Active").lower() == "yes"),
+            })
+    except Exception as e:  # noqa: BLE001 — a raktar-lekeres hibaja ne dobjon 500-at
+        return {"platform": plat, "warehouses": [], "error": str(e)[:140]}
+    return {"platform": plat, "warehouses": out}
 
 
 @router.post("/admin")

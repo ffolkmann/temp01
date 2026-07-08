@@ -261,3 +261,13 @@ def test_whn_feluliro_nev():
 def test_whn_info_nem_duplazodik_ha_nevben():
     note = lp._unas_wh_note(_whn_prod(), {"5865434": ("Központi raktár (feladás 2 munkanap)", "feladás 2 munkanap")}, None)
     assert note.count("feladás 2 munkanap") == 1
+
+
+def test_whn_hide_kizar():
+    note = lp._unas_wh_note(_whn_prod(), _WHN_MAP, {"5865434": {"hide": True}})
+    assert "Központi" not in note
+
+
+def test_whn_hide_false_megjelenik():
+    note = lp._unas_wh_note(_whn_prod(), _WHN_MAP, {"5865434": {"name": "Saját", "hide": False}})
+    assert "Saját: 7 db" in note

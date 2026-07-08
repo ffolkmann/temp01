@@ -286,6 +286,8 @@ def _unas_wh_note(prod, whmap: dict[str, tuple[str, str]], warehouse_config) -> 
             continue
         name, info = whmap[wid]
         ov = wc.get(wid) or wc.get(str(wid))
+        if isinstance(ov, dict) and ov.get("hide"):
+            continue  # az adminban kizart raktar — nem kerul a bot ajanlasaba
         if isinstance(ov, dict):
             name = str(ov.get("name") or name)
             info = str(ov.get("delivery") or info)
