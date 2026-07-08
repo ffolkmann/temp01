@@ -113,6 +113,7 @@ class TenantCORSMiddleware(BaseHTTPMiddleware):
             or _path.startswith("/admin")
             or _path.startswith("/ingest")
             or _path.startswith("/sync")
+            or _path.startswith("/operator")  # m28: token-vedett operator UI (codexpress.cloud origin)
         )
         # GET-vegpontok (preflight metodushoz): /stats, /chat-config, /chat-popup
         is_get_ep = (
