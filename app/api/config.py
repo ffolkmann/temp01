@@ -212,6 +212,10 @@ def _tenant_to_dict(t: Tenant) -> dict[str, Any]:
     d["warehouse_config"] = (
         json.dumps(wcv, ensure_ascii=False) if isinstance(wcv, (dict, list)) else (wcv or "")
     )
+    ohv = d.get("operator_hours")  # m28: admin JS JSON.parse-t vár -> stringként
+    d["operator_hours"] = (
+        json.dumps(ohv, ensure_ascii=False) if isinstance(ohv, (dict, list)) else (ohv or "")
+    )
     return d
 
 
@@ -256,6 +260,15 @@ async def _save_config(session: AsyncSession, row_in: dict[str, Any]) -> dict[st
             row.pop("launcher_config", None)
     if "search_fallback" in row:
         row["search_fallback"] = _as_bool(row["search_fallback"])
+    # m28 élő operátor: bool-kapcsolók + operator_hours JSONB (launcher_config mintájára)
+    for _laf in ("live_agent_enabled", "handoff_bot_silent"):
+        if _laf in row:
+            row[_laf] = _as_bool(row[_laf])
+    if "operator_hours" in row and isinstance(row["operator_hours"], str):
+        try:
+            row["operator_hours"] = json.loads(row["operator_hours"]) if row["operator_hours"].strip() else None
+        except Exception:  # noqa: BLE001
+            row.pop("operator_hours", None)
     if "warehouse_config" in row:
         wcv = row["warehouse_config"]
         if isinstance(wcv, str):
@@ -509,3 +522,4 @@ async def admin(request: Request, session: AsyncSession = Depends(get_session)) 
         return await _qdrant_delete_doc(cid, filename)
 
     return JSONResponse({"error": "unknown_action", "action": action}, status_code=400)
+

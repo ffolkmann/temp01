@@ -60,6 +60,10 @@ class Tenant(Base):
     search_fallback: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")  # webshop-kereso fallback (m25)
     warehouse_config: Mapped[dict | None] = mapped_column(JSONB)  # m24: SR raktár-szemantika ({own, external, own_delivery, external_delivery})
     launcher_config: Mapped[dict | None] = mapped_column(JSONB)  # chat-gomb (launcher) beallitasok (m26)
+    live_agent_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")   # m28: élő operátor-átvétel funkció be/ki
+    handoff_bot_silent: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")      # m28: requested-ben a bot elnémul (adminból kapcsolható)
+    operator_hours: Mapped[dict | None] = mapped_column(JSONB)                                          # m28: nyitvatartás {"tz","days":{"mon":[["9:00","17:00"]]}}
+    operator_telegram_chat_id: Mapped[str | None] = mapped_column(String)                               # m28: tenant-specifikus Telegram-ping cél
 
 
 class Plan(Base):
@@ -176,3 +180,41 @@ class SyncJob(Base):
     changed: Mapped[int | None] = mapped_column(Integer)
     total: Mapped[int | None] = mapped_column(Integer)
     error: Mapped[str | None] = mapped_column(Text)
+
+
+class ChatSession(Base):
+    """Élő operátor-átvétel session-állapot (m28).
+
+    state: bot -> requested -> operator -> closed -> (vissza bot). A widget és az
+    operátor-felület ebből tudja, kihez megy az üzenet. Egy session_id = egy chat-ablak.
+    """
+
+    __tablename__ = "chat_sessions"
+
+    session_id: Mapped[str] = mapped_column(String, primary_key=True)
+    client_id: Mapped[str] = mapped_column(String, index=True)
+    state: Mapped[str] = mapped_column(String, default="bot", server_default="bot")  # bot|requested|operator|closed
+    claimed_by: Mapped[str | None] = mapped_column(String)                            # melyik operátor vette át
+    requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_user_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_op_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ChatMessage(Base):
+    """Élő operátor-átvétel üzenet-napló (m28), sender-bontással.
+
+    A meglévő `messages` napló turn-alapú (question+answer) -> operátor-chatre nem elég;
+    ez sender szerint tárol (user|bot|operator|system), a widget és az operátor-felület
+    polling-ja ezt olvassa `after` id fölött.
+    """
+
+    __tablename__ = "chat_messages"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    client_id: Mapped[str] = mapped_column(String, index=True)
+    session_id: Mapped[str | None] = mapped_column(String)
+    sender: Mapped[str] = mapped_column(String)               # user|bot|operator|system
+    text: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
