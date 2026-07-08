@@ -254,7 +254,7 @@ def test_whn_ismeretlen_raktar_szurve():
 
 
 def test_whn_feluliro_nev():
-    note = lp._unas_wh_note(_whn_prod(), _WHN_MAP, {"5865434": {"name": "Saját raktár", "delivery": "1 munkanap"}})
+    note = lp._unas_wh_note(_whn_prod(), _WHN_MAP, {"warehouses": {"5865434": {"name": "Saját raktár", "delivery": "1 munkanap"}}})
     assert "Saját raktár: 7 db (1 munkanap)" in note
 
 
@@ -264,10 +264,16 @@ def test_whn_info_nem_duplazodik_ha_nevben():
 
 
 def test_whn_hide_kizar():
-    note = lp._unas_wh_note(_whn_prod(), _WHN_MAP, {"5865434": {"hide": True}})
+    note = lp._unas_wh_note(_whn_prod(), _WHN_MAP, {"warehouses": {"5865434": {"hide": True}}})
     assert "Központi" not in note
 
 
 def test_whn_hide_false_megjelenik():
-    note = lp._unas_wh_note(_whn_prod(), _WHN_MAP, {"5865434": {"name": "Saját", "hide": False}})
+    note = lp._unas_wh_note(_whn_prod(), _WHN_MAP, {"warehouses": {"5865434": {"name": "Saját", "hide": False}}})
     assert "Saját: 7 db" in note
+
+
+def test_whn_lapos_feluliro_is_mukodik():
+    # visszafele-kompat: ha valaki wrapper nelkul, laposan adja a felulirot
+    note = lp._unas_wh_note(_whn_prod(), _WHN_MAP, {"5865434": {"name": "Lapos"}})
+    assert "Lapos: 7 db" in note

@@ -272,6 +272,8 @@ def _unas_wh_note(prod, whmap: dict[str, tuple[str, str]], warehouse_config) -> 
     if stocks is None:
         return ""
     wc = warehouse_config if isinstance(warehouse_config, dict) else {}
+    _wover = wc.get("warehouses")
+    over = _wover if isinstance(_wover, dict) else wc  # {"warehouses":{id:..}} vagy lapos {id:..}
     parts: list[str] = []
     for st in stocks.findall("Stock"):
         wid = (st.findtext("WarehouseId") or "").strip()
@@ -285,7 +287,7 @@ def _unas_wh_note(prod, whmap: dict[str, tuple[str, str]], warehouse_config) -> 
         if not q or q <= 0:
             continue
         name, info = whmap[wid]
-        ov = wc.get(wid) or wc.get(str(wid))
+        ov = over.get(wid) or over.get(str(wid))
         if isinstance(ov, dict) and ov.get("hide"):
             continue  # az adminban kizart raktar — nem kerul a bot ajanlasaba
         if isinstance(ov, dict):
