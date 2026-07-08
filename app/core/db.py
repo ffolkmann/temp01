@@ -1,3 +1,14 @@
+"""
+SQLAlchemy async engine and session management for multi-tenant Postgres connectivity.
+
+Provides:
+  - Async engine creation with connection pooling (pool_pre_ping for stale connection detection)
+  - AsyncSession factory for database operations
+  - get_session() dependency for FastAPI routes (yields AsyncSession instances)
+
+Database URL is read from settings (DATABASE_URL env var).
+"""
+
 from collections.abc import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import (
