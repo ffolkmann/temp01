@@ -38,6 +38,7 @@ from app.services.live_agent import (
     request_operator,
 )
 from app.services.live_product import fetch_live_price_stock
+from app.services.operator_notify import notify_operators
 from app.services.order_status import handle_order_status
 from app.services.parse_reply import parse_reply
 from app.services.prompt import PromptContext, build_system_prompt
@@ -174,7 +175,12 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
                     session, req.client_id, req.session_id, "handoff",
                     {"page": ho.page, "mode": "live"},
                 )
-                # TODO(m28-fázis5): Telegram-ping requested-en (per-tenant chat_id).
+                # m28 fázis5: Telegram-ping az operátor(ok)nak — fail-safe (a Telegram-
+                #   hiba NE okozzon e-mail-fallbacket, ezért külön try/except).
+                try:
+                    await notify_operators(tenant, message)
+                except Exception:  # noqa: BLE001
+                    logger.exception("live-agent: Telegram-ping hiba (nem kritikus)")
                 # TODO(m28-fázis6): nyitvatartás-gating + no-operator -> e-mail fallback.
                 return ChatResponse(reply=LIVE_AGENT_WAIT_REPLY, action="operator_wait")
             except Exception:  # noqa: BLE001 — élő átvétel hiba -> essünk vissza e-mailre
