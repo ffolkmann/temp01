@@ -61,7 +61,8 @@ from app.services.prompt import PromptContext, build_system_prompt
 from app.services.retrieval import retrieve
 from urllib.parse import quote_plus
 
-from app.services.shop_search import SEARCH_FB_THRESHOLD, _build_queries, shop_front_search
+from app.services.search_query import build_queries
+from app.services.shop_search import SEARCH_FB_THRESHOLD, shop_front_search
 from app.services.prompt import _shop_search_url
 from app.services.unanswered import log_unanswered
 from app.services.usage import record_usage
@@ -290,7 +291,7 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
     if shop_hits:
         _su = _shop_search_url(tenant)
         if _su and _su not in parsed.reply and "További találatok a webáruházban" not in parsed.reply:
-            _q = quote_plus((_build_queries(message) or [message[:60]])[0])
+            _q = quote_plus((build_queries(message) or [message[:60]])[0])
             _newreply = parsed.reply.rstrip() + "\n\n[További találatok a webáruházban](" + _su + _q + ")"
             try:
                 parsed.reply = _newreply

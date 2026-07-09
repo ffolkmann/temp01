@@ -30,6 +30,7 @@ from html import unescape as html_unescape
 from app.core.qdrant import get_qdrant
 from app.services.current_product import normalize_url
 from app.services.platform_api import sellvio_token
+from app.services.search_query import search_queries
 
 logger = logging.getLogger("cx.shop_search")
 
@@ -81,56 +82,6 @@ def _extract_links(platform: str, html: str, base: str) -> list[str]:
         if len(out) >= _MAX_LINKS:
             break
     return out
-
-_STOPWORDS = {
-    "a", "az", "egy", "es", "és", "de", "hogy", "ha", "el", "is", "mar", "már", "meg", "még",
-    "szeretnek", "szeretnék", "szeretnem", "szeretném", "keresek", "kerdeznem", "kérdeznem",
-    "venni", "vennék", "vennek", "vasarolni", "vásárolni", "erdekelne", "érdekelne", "erdekel", "érdekel",
-    "ajanlasz", "ajánlasz", "ajanl", "ajánl", "ajanlani", "mit", "mi", "milyen", "melyik", "hol",
-    "van", "vane", "van-e", "lenne", "kellene", "kene", "kéne", "kell", "tudsz", "tudnal", "tudnál",
-    "kezdo", "kezdő", "kezdokent", "kezdőként", "kezdoknek", "kezdőknek", "vagyok", "vagyunk",
-    "nekem", "nekunk", "nekünk", "hozzam", "hozzám", "valami", "valamit", "olcso", "olcsó",
-    "jo", "jó", "legjobb", "szerintetek", "szerinted", "koszi", "köszi", "koszonom", "köszönöm",
-}
-
-
-def _stem(w: str) -> str:
-    """Minimal magyar targyrag-vagas a bolti LIKE-kereso kedveert (botot -> bot, halot -> halo)."""
-    if len(w) > 4:
-        for suf in ("okat", "eket", "akat", "öket"):
-            if w.endswith(suf):
-                return w[: -len(suf)]
-        for suf in ("ot", "et", "at", "öt"):
-            if w.endswith(suf):
-                return w[: -len(suf)]
-        # mgh+t es msh+t targyrag is (hálót -> háló, halat mar fent);
-        # dupla-t (szett, watt) NEM rag, marad
-        if w.endswith("t") and not w.endswith("tt"):
-            return w[:-1]
-    return w
-
-
-def _build_queries(message: str) -> list[str]:
-    words = re.findall(r"[\w\-]+", (message or "").lower())
-    content = [w for w in words if w not in _STOPWORDS and len(w) > 2 and not w.isdigit()]
-    # szammal kezdodo tagok ("45-ös", "8-as") gyilkos AND-feltetelek a bolti keresoben
-    # -> a fo query-kbol kihagyjuk, csak a szoveges torzs megy
-    core = [w for w in content if not w[0].isdigit()]
-    base = core or content
-    out: list[str] = []
-    if base:
-        q1 = " ".join(_stem(w) for w in base[:4])
-        out.append(q1)
-        q2 = " ".join(base[:4])
-        if q2 not in out:
-            out.append(q2)
-        if len(base) > 1:
-            q3 = _stem(sorted(base, key=len, reverse=True)[0])
-            if q3 and q3 not in out:
-                out.append(q3)
-    if not out:
-        out.append((message or "").strip()[:120])
-    return out[:3]
 
 
 async def _fetch_links(client: httpx.AsyncClient, platform: str, base: str, query: str) -> list[str]:
@@ -187,7 +138,7 @@ async def shop_front_search(tenant, query: str, limit: int = _LIMIT) -> list[dic
 
     if platform == "sellvio":
         try:
-            for q in _build_queries(query):
+            for q in search_queries(platform, query):
                 out = await _sellvio_api_search(tenant, q, limit)
                 if out:
                     return out
@@ -205,7 +156,7 @@ async def shop_front_search(tenant, query: str, limit: int = _LIMIT) -> list[dic
             follow_redirects=True,
             headers={"User-Agent": "Mozilla/5.0 (compatible; CX-Chatbot/1.0)"},
         ) as client:
-            for q in _build_queries(query):
+            for q in search_queries(platform, query):
                 links = await _fetch_links(client, platform, base, q)
                 if links:
                     break
