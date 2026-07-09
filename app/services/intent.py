@@ -14,7 +14,7 @@ from app.models.db_models import Tenant
 # konfigurátor webhook bázis (a prod Detect Configurator-ból)
 _CONFIG_BASE = "https://n8n.codexpress.cloud/webhook/"
 
-_LIVE_PLATFORMS = {"sellvio", "shoprenter", "unas", "woocommerce"}
+_LIVE_PLATFORMS = {"sellvio", "shoprenter", "unas", "woocommerce", "webdoc"}
 
 
 def _ascii_fold(s: str) -> str:
@@ -37,8 +37,53 @@ class OrderIntent:
     is_order_status: bool
     order_email: str = ""
     order_id: str = ""
+    order_zip: str = ""          # m29 (webdoc): az e-mail helyett ez a masodlagos titok
     live_ok: bool = False
     platform: str = ""
+
+
+# --- Webdoc: rendelesszam + iranyitoszam (az API nem ad e-mailt) -------------
+_WD_NUMBER_RE = re.compile(r"(\d{4}\s*/\s*\d{3,9})")
+_WD_HASH_RE = re.compile(r"#\s*(\d{4,9})\b")
+_WD_ZIP_LABEL_RE = re.compile(
+    r"(?:ir[a\u00e1]ny[i\u00ed]t[o\u00f3]sz[a\u00e1]m|irsz|isz)\s*[:=]?\s*(\d{4})\b",
+    re.IGNORECASE,
+)
+_WD_ZIP_RE = re.compile(r"\b(\d{4})\b")
+
+
+def _detect_webdoc_order(msg: str, live_ok: bool, plat: str) -> OrderIntent:
+    """Webdoc: rendelesszam (`2026/0047322` vagy `#47322`) + 4 jegyu iranyitoszam.
+
+    A rendelesszamot ELOBB kivagjuk a szovegbol, es csak a maradekban keresunk
+    iranyitoszamot -- kulonben a `2026` ev-szegmens vagy a sorszam 4 jegye
+    iranyitoszamnak latszana. Cimke nelkul csak akkor fogadjuk el a 4 jegyu
+    szamot, ha egyertelmu (pontosan egy van a maradekban).
+    """
+    number = ""
+    rest = msg
+    m = _WD_NUMBER_RE.search(msg) or _WD_HASH_RE.search(msg)
+    if m:
+        number = re.sub(r"\s+", "", m.group(1))
+        rest = msg[: m.start()] + " " + msg[m.end():]
+
+    zipc = ""
+    mz = _WD_ZIP_LABEL_RE.search(rest)
+    if mz:
+        zipc = mz.group(1)
+    else:
+        nums = _WD_ZIP_RE.findall(rest)
+        if len(nums) == 1:
+            zipc = nums[0]
+
+    return OrderIntent(
+        is_order_status=bool(live_ok and number and zipc),
+        order_email="",
+        order_id=number,
+        order_zip=zipc,
+        live_ok=live_ok,
+        platform=plat,
+    )
 
 
 def detect_order_intent(message: str, tenant: Tenant, live_api: bool) -> OrderIntent:
@@ -48,9 +93,18 @@ def detect_order_intent(message: str, tenant: Tenant, live_api: bool) -> OrderIn
     # Unasnal nincs tenant-szintu api_base (fix UNAS_BASE + kulcs a secretben)
     if plat == "unas":
         _has_cred = bool(str(tenant.api_client_secret or "").strip())
+    elif plat == "webdoc":
+        # a webdoc api_base a publikus termek-feed URL-je (auth nelkul); a rendeles-API
+        # Basic auth kulcsa a client_id/secret parban all.
+        _has_cred = bool(str(tenant.api_client_id or "").strip()) and bool(
+            str(tenant.api_client_secret or "").strip()
+        )
     else:
         _has_cred = bool(str(tenant.api_base or "").strip())
     live_ok = plat in _LIVE_PLATFORMS and _has_cred and live_api is True
+
+    if plat == "webdoc":
+        return _detect_webdoc_order(msg, live_ok, plat)
 
     m = _EMAIL_RE.search(msg)
     email = m.group(0).strip() if m else ""

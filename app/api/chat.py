@@ -41,7 +41,15 @@ from app.services.live_product import fetch_live_price_stock
 from app.services.operator_hours import operators_available
 from app.services.operator_presence import is_operator_online
 from app.services.operator_notify import notify_operators
-from app.services.order_status import handle_order_status
+from app.services.rate_limit import (
+    ORDER_LOOKUP_LIMIT,
+    ORDER_LOOKUP_WINDOW,
+    clear as rl_clear,
+    is_blocked as rl_is_blocked,
+    order_lookup_key as rl_key_for,
+    register_failure as rl_register_failure,
+)
+from app.services.order_status import ORDER_LOOKUP_BLOCKED_REPLY, handle_order_status_ex
 from app.services.parse_reply import parse_reply
 from app.services.prompt import PromptContext, build_system_prompt
 from app.services.retrieval import retrieve
@@ -128,10 +136,24 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
     #    Platform szerinti dispatch (Sellvio/Shoprenter/Unas/WooCommerce) a service-ben.
     order = detect_order_intent(message, tenant, live_api)
     if order.is_order_status:
-        reply = await handle_order_status(tenant, order)
+        # m29: rate limit — a Webdocnál a rendelés id-je a rendelésszámból számolható,
+        # és a szolgáltatónál nincs szerver-oldali korlát; a masodlagos titok az irsz.
+        rl_key = rl_key_for(req.client_id, req.session_id)
+        if await rl_is_blocked(rl_key, ORDER_LOOKUP_LIMIT):
+            await log_turn(session, req.client_id, req.session_id, message,
+                           ORDER_LOOKUP_BLOCKED_REPLY)
+            await log_event(session, req.client_id, req.session_id, "order_lookup_blocked",
+                            {"order_id": order.order_id})
+            return ChatResponse(reply=ORDER_LOOKUP_BLOCKED_REPLY, action=None)
+
+        reply, matched = await handle_order_status_ex(tenant, order)
+        if matched:
+            await rl_clear(rl_key)          # a johiszemu vevot ne buntessuk
+        else:
+            await rl_register_failure(rl_key, ORDER_LOOKUP_WINDOW)
         await log_turn(session, req.client_id, req.session_id, message, reply)
         await log_event(session, req.client_id, req.session_id, "order_lookup",
-                        {"order_id": order.order_id})
+                        {"order_id": order.order_id, "matched": matched})
         return ChatResponse(reply=reply, action=None)
 
     # 2) configurator (csak configurator_shop tenantnál)

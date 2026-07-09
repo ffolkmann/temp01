@@ -26,13 +26,25 @@ raktár-bontás külön; Woo: nincs). Raktár-bontás CSAK Shoprenternél van.
 
 from __future__ import annotations
 
+import json
 import logging
+import re
 from typing import TYPE_CHECKING
 from xml.sax.saxutils import escape
 
 import httpx
 
 from app.core.mailer import schedule_email
+from app.services.webdoc_status import (
+    first_order as _wd_first_order,
+    parse_order_number as _wd_parse_number,
+    pick_items as _wd_items,
+    pick_payment as _wd_payment,
+    pick_shipping as _wd_shipping,
+    pick_status as _wd_status,
+    status_maps as _wd_maps,
+    zip_matches as _wd_zip_matches,
+)
 from app.services.platform_api import (
     UNAS_BASE,
     norm_email,
@@ -59,18 +71,41 @@ ORDER_STATUS_REPLY = (
 )
 
 
-def _matched_reply(order_id: str, status: str, note: str = "") -> str:
-    """m24/A: matched esetén a chat is kimondja a státuszt (a vevő igazolta magát a
-    rendelésszám+e-mail párral). 'ismeretlen'/üres státusz SOHA nem megy ki."""
+# Webdoc: a rendelés-API nem ad e-mail-címet, így levelet sem tudunk küldeni —
+# a semleges válasz sem ígérhet e-mailt (m29).
+ORDER_STATUS_REPLY_NO_EMAIL = (
+    "Nem találtam a megadott rendelésszámhoz és irányítószámhoz tartozó rendelést. "
+    "Kérlek, ellenőrizd az adatokat — az irányítószám a rendeléskor megadott szállítási "
+    "vagy számlázási cím irányítószáma. Ha nem boldogulsz, ügyfélszolgálatunk segít."
+)
+
+# rate limit (m29): a Webdocnál a rendelés id-je a rendelésszámból kiszámolható,
+# ezért a próbálkozásokat korlátozzuk (a hívó könyveli, lásd app/services/rate_limit.py)
+ORDER_LOOKUP_BLOCKED_REPLY = (
+    "Túl sok sikertelen próbálkozás történt. Biztonsági okból egy ideig nem tudok "
+    "rendelést keresni ebben a beszélgetésben. Kérlek, fordulj ügyfélszolgálatunkhoz."
+)
+
+
+def _matched_reply(order_id: str, status: str, note: str = "", emailed: bool = True) -> str:
+    """matched esetén a chat is kimondja a státuszt — a vevő igazolta magát
+    (rendelésszám + e-mail; Webdocnál rendelésszám + irányítószám).
+    'ismeretlen'/üres státusz SOHA nem megy ki.
+
+    emailed=False (Webdoc): az API nem ad e-mail-címet, ne ígérjünk levelet.
+    """
+    mail = " A részleteket e-mailben is elküldtük a rendeléskor megadott címre." if emailed else ""
     if status and status != "ismeretlen":
-        base = (
-            f"A(z) #{order_id} rendelésed állapota: {status}. "
-            "A részleteket e-mailben is elküldtük a rendeléskor megadott címre."
-        )
-    else:
+        base = f"A(z) #{order_id} rendelésed állapota: {status}." + mail
+    elif emailed:
         base = (
             f"A(z) #{order_id} rendelésedet megtaláltuk, a részleteket e-mailben "
             "elküldtük a rendeléskor megadott címre. Az aktuális állapotról "
+            "ügyfélszolgálatunk tud pontos tájékoztatást adni."
+        )
+    else:
+        base = (
+            f"A(z) #{order_id} rendelésedet megtaláltuk. Az aktuális állapotról "
             "ügyfélszolgálatunk tud pontos tájékoztatást adni."
         )
     return base + (f" {note}" if note else "")
@@ -545,6 +580,62 @@ async def _unas_lookup(tenant: "Tenant", order: "OrderIntent") -> tuple[bool, st
 
 
 # --------------------------------------------------------------------------- #
+# Webdoc — GET {public_url}/services/api/orders?id=<id>, Basic auth (m29)
+# Azonositas: rendelesszam + iranyitoszam (az API a customer.email-t uresen adja).
+# Adat-minimalizalas: nev/cim/telefon/adoszam SOHA nem hagyja el ezt a fuggvenyt.
+# --------------------------------------------------------------------------- #
+_WEBDOC_API_PATH = "/services/api/orders"
+
+
+def _webdoc_json(text: str):
+    """A szallito helyenkent trailing commat ad (a sajat OpenAPI leiroja is hibas) — toleraljuk."""
+    try:
+        return json.loads(text)
+    except ValueError:
+        return json.loads(re.sub(r",(\s*[}\]])", r"\1", text))
+
+
+async def _webdoc_lookup(tenant: "Tenant", order: "OrderIntent") -> tuple[bool, str, str]:
+    oid = _wd_parse_number(order.order_id)
+    if oid is None:
+        return False, "", ""
+    base = str(tenant.public_url or "").strip().rstrip("/")
+    user = str(tenant.api_client_id or "").strip()
+    pw = str(tenant.api_client_secret or "").strip()
+    if not base or not user or not pw:
+        logger.warning("ORDER[%s] hianyzo Webdoc API cred / public_url", tenant.client_id)
+        return False, "", ""
+
+    async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+        resp = await client.get(
+            f"{base}{_WEBDOC_API_PATH}",
+            params={"id": oid},
+            auth=(user, pw),
+            headers={"Accept": "application/json", "User-Agent": "curl/8.5.0"},
+        )
+        resp.raise_for_status()
+        payload = _webdoc_json(resp.text)
+
+    o = _wd_first_order(payload)
+    if not o:
+        return False, "", ""
+    # adatvedelmi guard: a rendelesszam mellett az iranyitoszamnak is egyeznie kell
+    # (szallitasi VAGY szamlazasi) — kulonben semleges valasz, enumeracio-vedelem.
+    if not _wd_zip_matches(o, order.order_zip):
+        logger.info("ORDER[%s] Webdoc: id=%s megvan, irsz nem egyezik", tenant.client_id, oid)
+        return False, "", ""
+
+    maps = _wd_maps(tenant)
+    name, dt = _wd_status(o, maps)
+    status = f"{name} ({dt[:16]})" if (name and dt) else name
+    note = _format_order_note(_wd_items(o), _wd_shipping(o, maps))
+    pay = _wd_payment(o, maps)
+    if pay:
+        note = (note + " " if note else "") + f"Fizetés: {pay}."
+    return True, status, note
+
+
+# --------------------------------------------------------------------------- #
 # Dispatch + e-mail
 # --------------------------------------------------------------------------- #
 _LOOKUPS = {
@@ -552,6 +643,7 @@ _LOOKUPS = {
     "woocommerce": _woo_lookup,
     "shoprenter": _shoprenter_lookup,
     "unas": _unas_lookup,
+    "webdoc": _webdoc_lookup,
 }
 
 
@@ -579,16 +671,23 @@ def _send_status_email(tenant: "Tenant", order: "OrderIntent", status: str, note
     schedule_email(order.order_email, subject, text)
 
 
-async def handle_order_status(tenant: "Tenant", order: "OrderIntent") -> str:
-    """Platform szerinti order-lekérés. Matched esetén a státuszt a chatben is kimondja
-    (m24/A) és háttérben e-mailt ütemez; nem-matched/hiba -> semleges válasz. Hiba/timeout/ismeretlen platform ->
-    semleges válasz, e-mail nélkül; logol, nem dob.
+def _neutral_reply(platform: str) -> str:
+    """Semleges válasz — Webdocnál nem ígérhetünk e-mailt (nincs cím az API-ban)."""
+    return ORDER_STATUS_REPLY_NO_EMAIL if platform == "webdoc" else ORDER_STATUS_REPLY
+
+
+async def handle_order_status_ex(tenant: "Tenant", order: "OrderIntent") -> tuple[str, bool]:
+    """(válasz, matched). Platform szerinti order-lekérés. Matched esetén a státuszt a
+    chatben is kimondja (m24/A), és — ha ismerjük a vevő e-mail-címét — háttérben levelet
+    ütemez. Nem-matched / hiba / ismeretlen platform -> semleges válasz; logol, nem dob.
+
+    A `matched` flag a hívónak kell a rate-limit könyveléshez (m29).
     """
     platform = str(tenant.platform or "").strip().lower()
     lookup = _LOOKUPS.get(platform)
     if lookup is None:
         logger.info("ORDER[%s] platform=%s nincs portolva — semleges válasz", tenant.client_id, platform)
-        return ORDER_STATUS_REPLY
+        return _neutral_reply(platform), False
 
     try:
         matched, status, note = await lookup(tenant, order)
@@ -596,17 +695,26 @@ async def handle_order_status(tenant: "Tenant", order: "OrderIntent") -> str:
         logger.exception(
             "ORDER[%s] %s hívás hiba (id=%s)", tenant.client_id, platform, order.order_id
         )
-        return ORDER_STATUS_REPLY
+        return _neutral_reply(platform), False
 
     if matched:
         # Sellvio/Unas: a note = tételek + szállítási mód (a lookup adja).
         # Shoprenter: raktár-bontás (külön orderProducts-hívás). Raktár-bontás CSAK itt.
+        # Webdoc: tételek + szállítási mód + fizetés (a lookup adja).
         if platform == "shoprenter":
             note = await _sr_order_warehouse_note(tenant, order.order_id)
-        _send_status_email(tenant, order, status, note)
-        return _matched_reply(order.order_id, status, note)
+        emailed = bool(str(getattr(order, "order_email", "") or "").strip())
+        if emailed:
+            _send_status_email(tenant, order, status, note)
+        return _matched_reply(order.order_id, status, note, emailed=emailed), True
     logger.info(
         "ORDER[%s] nem matched id=%s (%s) — semleges válasz, nincs e-mail",
         tenant.client_id, order.order_id, platform,
     )
-    return ORDER_STATUS_REPLY
+    return _neutral_reply(platform), False
+
+
+async def handle_order_status(tenant: "Tenant", order: "OrderIntent") -> str:
+    """Visszafelé kompatibilis burkoló (a régi hívók/tesztek str-t várnak)."""
+    reply, _matched = await handle_order_status_ex(tenant, order)
+    return reply

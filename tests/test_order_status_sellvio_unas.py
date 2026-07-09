@@ -33,6 +33,13 @@ _pa = importlib.util.module_from_spec(_pa_spec)
 sys.modules["app.services.platform_api"] = _pa
 _pa_spec.loader.exec_module(_pa)
 
+# --- VALODI webdoc_status (pure helperek; az order_status importalja) --------
+_wd_path = ROOT / "app" / "services" / "webdoc_status.py"
+_wd_spec = importlib.util.spec_from_file_location("app.services.webdoc_status", _wd_path)
+_wd = importlib.util.module_from_spec(_wd_spec)
+sys.modules["app.services.webdoc_status"] = _wd
+_wd_spec.loader.exec_module(_wd)
+
 # --- order_status under test ------------------------------------------------
 _p = ROOT / "app" / "services" / "order_status.py"
 _spec = importlib.util.spec_from_file_location("order_status_under_test", _p)

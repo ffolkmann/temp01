@@ -64,6 +64,7 @@ class Tenant(Base):
     handoff_bot_silent: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")      # m28: requested-ben a bot elnémul (adminból kapcsolható)
     operator_hours: Mapped[dict | None] = mapped_column(JSONB)                                          # m28: nyitvatartás {"tz","days":{"mon":[["9:00","17:00"]]}}
     operator_telegram_chat_id: Mapped[str | None] = mapped_column(String)                               # m28: tenant-specifikus Telegram-ping cél
+    order_status_map: Mapped[dict | None] = mapped_column(JSONB)                                        # m29: platform-kód -> magyar megnevezés (Webdoc)
 
 
 class Plan(Base):

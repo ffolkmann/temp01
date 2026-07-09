@@ -25,6 +25,13 @@ for fn in ("norm_email", "sellvio_token", "shoprenter_resource_id", "shoprenter_
 _pa.UNAS_BASE = "https://api.unas.eu/shop"
 sys.modules["app.services.platform_api"] = _pa
 
+# --- VALODI webdoc_status (pure helperek; az order_status importalja) --------
+_wd_path = ROOT / "app" / "services" / "webdoc_status.py"
+_wd_spec = importlib.util.spec_from_file_location("app.services.webdoc_status", _wd_path)
+_wd = importlib.util.module_from_spec(_wd_spec)
+sys.modules["app.services.webdoc_status"] = _wd
+_wd_spec.loader.exec_module(_wd)
+
 _p = ROOT / "app" / "services" / "order_status.py"
 _spec = importlib.util.spec_from_file_location("order_status_under_test", _p)
 _os = importlib.util.module_from_spec(_spec)
