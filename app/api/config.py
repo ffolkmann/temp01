@@ -296,6 +296,21 @@ async def _save_config(session: AsyncSession, row_in: dict[str, Any]) -> dict[st
         sk = existing.stat_key if (existing and existing.stat_key) else _gen_stat_key()
     row["stat_key"] = sk
 
+    # m30: operator_token — per-tenant operátor-konzol token (a gatherForm NEM küldi).
+    # Megőrizzük; ha az élő átvétel be van kapcsolva és még nincs token, generálunk.
+    ot = str(row.get("operator_token") or "") or (
+        existing.operator_token if (existing and existing.operator_token) else ""
+    )
+    lae = row.get("live_agent_enabled")
+    if lae is None:
+        lae = bool(existing.live_agent_enabled) if existing else False
+    if not ot and bool(lae):
+        ot = _gen_stat_key()
+    if ot:
+        row["operator_token"] = ot
+    else:
+        row.pop("operator_token", None)
+
     # típus-koerció
     if "active" in row:
         row["active"] = _as_bool(row["active"])

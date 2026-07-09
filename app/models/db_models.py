@@ -65,6 +65,7 @@ class Tenant(Base):
     operator_hours: Mapped[dict | None] = mapped_column(JSONB)                                          # m28: nyitvatartás {"tz","days":{"mon":[["9:00","17:00"]]}}
     operator_telegram_chat_id: Mapped[str | None] = mapped_column(String)                               # m28: tenant-specifikus Telegram-ping cél
     order_status_map: Mapped[dict | None] = mapped_column(JSONB)                                        # m29: platform-kód -> magyar megnevezés (Webdoc)
+    operator_token: Mapped[str | None] = mapped_column(String)                                          # m30: per-tenant operátor-konzol token
 
 
 class Plan(Base):

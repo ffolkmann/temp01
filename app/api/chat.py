@@ -191,7 +191,7 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
             getattr(tenant, "live_agent_enabled", False)
             and req.session_id
             and operators_available(tenant)  # m28 fázis6: van Telegram-címzett ÉS nyitvatartás
-            and await is_operator_online()   # m28+: operátor ONLINE (operator.html kapcsoló)
+            and await is_operator_online(tenant.client_id)  # m30: EHHEZ a tenanthoz online pult
         ):
             try:
                 # az eddigi (bot-)átirat mint kontextus az operátornak (system-üzenet)
