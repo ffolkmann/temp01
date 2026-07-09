@@ -212,6 +212,10 @@ def _tenant_to_dict(t: Tenant) -> dict[str, Any]:
     d["warehouse_config"] = (
         json.dumps(wcv, ensure_ascii=False) if isinstance(wcv, (dict, list)) else (wcv or "")
     )
+    osm = d.get("order_status_map")  # m29: Webdoc kod -> megnevezes
+    d["order_status_map"] = (
+        json.dumps(osm, ensure_ascii=False) if isinstance(osm, (dict, list)) else (osm or "")
+    )
     ohv = d.get("operator_hours")  # m28: admin JS JSON.parse-t vár -> stringként
     d["operator_hours"] = (
         json.dumps(ohv, ensure_ascii=False) if isinstance(ohv, (dict, list)) else (ohv or "")
@@ -276,6 +280,15 @@ async def _save_config(session: AsyncSession, row_in: dict[str, Any]) -> dict[st
                 row["warehouse_config"] = json.loads(wcv) if wcv.strip() else {}
             except Exception:  # noqa: BLE001
                 row["warehouse_config"] = {}
+
+    # order_status_map: string-JSON -> dict (JSONB) — warehouse_config mintajara (m29)
+    if "order_status_map" in row:
+        osv = row["order_status_map"]
+        if isinstance(osv, str):
+            try:
+                row["order_status_map"] = json.loads(osv) if osv.strip() else {}
+            except Exception:  # noqa: BLE001
+                row["order_status_map"] = {}
 
     # stat_key: megőriz vagy generál (a gatherForm NEM küldi)
     sk = str(row.get("stat_key") or "")
