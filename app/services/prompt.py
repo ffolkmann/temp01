@@ -17,6 +17,7 @@ from typing import Any
 from app.models.db_models import Coupon, Tenant
 from app.services.current_product import CurrentProduct
 from app.services.handoff_offer import prompt_block as _handoff_offer_block
+from app.services.factuality import factuality_block as _factuality_block
 from app.services.live_product import LivePriceStock
 
 _DEFAULT_BASE = (
@@ -252,7 +253,9 @@ def build_system_prompt(
     operator_online: bool = False,
 ) -> str:
     base = (tenant.system_prompt or "").strip() or _DEFAULT_BASE
-    system = base
+    # m33: platform-szintu teny-korlat MINDEN tenantnak. A base utan, a dinamikus
+    # blokkok elott -> a statikus prefix tenantonkent allando marad (prompt-cache).
+    system = base + _factuality_block()
 
     # 2) # AKTUALIS TERMEK
     current_text = current.text if current else ""
