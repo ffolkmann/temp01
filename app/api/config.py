@@ -28,6 +28,7 @@ from app.core.db import get_session
 from app.core.settings import get_settings
 from app.models.db_models import Coupon, Lead, Plan, Tenant
 from app.services.current_product import get_current_product, normalize_url
+from app.services.operator_notify import notify_operators_ex
 
 logger = logging.getLogger("cx.config")
 router = APIRouter()
@@ -296,6 +297,11 @@ async def _save_config(session: AsyncSession, row_in: dict[str, Any]) -> dict[st
         sk = existing.stat_key if (existing and existing.stat_key) else _gen_stat_key()
     row["stat_key"] = sk
 
+    # m31: üres bot token -> NULL (a küldés a központi botra esik vissza)
+    if "operator_bot_token" in row:
+        _bt = str(row["operator_bot_token"] or "").strip()
+        row["operator_bot_token"] = _bt or None
+
     # m30: operator_token — per-tenant operátor-konzol token (a gatherForm NEM küldi).
     # Megőrizzük; ha az élő átvétel be van kapcsolva és még nincs token, generálunk.
     ot = str(row.get("operator_token") or "") or (
@@ -548,6 +554,16 @@ async def admin(request: Request, session: AsyncSession = Depends(get_session)) 
 
     if action == "delete_doc":
         return await _qdrant_delete_doc(cid, filename)
+
+    if action == "test_telegram":
+        # m31: próbaüzenet a tenant chatId-jeire (saját bot, vagy a központi)
+        cid = str(b.get("client_id") or "").strip().lower()
+        t = await _get_tenant(session, cid)
+        if not t:
+            return JSONResponse({"error": "unknown_client"}, status_code=404)
+        return await notify_operators_ex(
+            t, "Ha ezt látod, az operátor-értesítés működik.", test=True
+        )
 
     return JSONResponse({"error": "unknown_action", "action": action}, status_code=400)
 
