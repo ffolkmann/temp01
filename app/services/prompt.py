@@ -16,6 +16,7 @@ from typing import Any
 
 from app.models.db_models import Coupon, Tenant
 from app.services.current_product import CurrentProduct
+from app.services.handoff_offer import prompt_block as _handoff_offer_block
 from app.services.live_product import LivePriceStock
 
 _DEFAULT_BASE = (
@@ -248,6 +249,7 @@ def build_system_prompt(
     ctx: PromptContext,
     live: LivePriceStock | None = None,
     shop_search: list[dict[str, Any]] | None = None,
+    operator_online: bool = False,
 ) -> str:
     base = (tenant.system_prompt or "").strip() or _DEFAULT_BASE
     system = base
@@ -479,5 +481,10 @@ def build_system_prompt(
         + order_form_hint(tenant.platform)
         + "Konkret rendelesi adatot (allapot, cim, tetel) SOHA ne irj a chatbe."
     )
+
+    # m32: elo atadas felajanlasa — CSAK ha eppen van online ugyintezo.
+    # A prompt VEGERE megy: dinamikus, igy a statikus prefix cache-elheto marad.
+    if operator_online:
+        system += _handoff_offer_block()
 
     return system

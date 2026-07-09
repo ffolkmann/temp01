@@ -181,18 +181,19 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
             configurator=ConfiguratorRef(**cfg.cfg),
         )
 
+    # m32: van-e EPPEN online ugyintezo ehhez a tenanthoz? (a handoff-ag es a prompt is
+    # hasznalja; a Redist csak akkor kerdezzuk, ha az elo atvetel be van kapcsolva)
+    op_online = False
+    if getattr(tenant, "live_agent_enabled", False) and operators_available(tenant):
+        op_online = await is_operator_online(tenant.client_id)
+
     # 3) handoff
     ho = detect_handoff(message, tenant, req.history, ctx.page_url)
     if ho.is_handoff:
         # m28: élő operátor-átvétel (ha be van kapcsolva ÉS van session) -> várólistára;
         #      a bot elnémul, a látogató a /chat/poll-on kapja az operátor válaszait.
         #      Fail-safe: bármi hiba -> a régi e-mailes handoff ág (lentebb).
-        if (
-            getattr(tenant, "live_agent_enabled", False)
-            and req.session_id
-            and operators_available(tenant)  # m28 fázis6: van Telegram-címzett ÉS nyitvatartás
-            and await is_operator_online(tenant.client_id)  # m30: EHHEZ a tenanthoz online pult
-        ):
+        if op_online and req.session_id:  # m28/m30/m32: bekapcsolva + nyitva + online pult
             try:
                 # az eddigi (bot-)átirat mint kontextus az operátornak (system-üzenet)
                 turns = await get_transcript(session, req.client_id, req.session_id)
@@ -277,7 +278,10 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
             logger.exception("search_fallback hiba")
             shop_hits = None
     coupons = await active_coupons(session, req.client_id)
-    system_prompt = build_system_prompt(tenant, hits, current, coupons, ctx, live=live, shop_search=shop_hits)
+    system_prompt = build_system_prompt(
+        tenant, hits, current, coupons, ctx, live=live, shop_search=shop_hits,
+        operator_online=op_online,
+    )
 
     try:
         raw = await generate_reply(system_prompt, req.history, message)

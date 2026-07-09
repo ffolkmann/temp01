@@ -180,6 +180,8 @@ _HANDOFF_VERB = re.compile(
     r"(beszel|kapcsol|hiv|keres|kerem|kerek|kerne|szeretnek|akarok|valthatnek)"
 )
 _HANDOFF_FALLBACK_EMAIL = "folkmann.ferenc@gmail.com"
+# m32: a bot altal felajanlott atadas elfogadasa (pure modul)
+from app.services.handoff_offer import accepted_offer  # noqa: E402
 
 
 @dataclass
@@ -201,6 +203,10 @@ def detect_handoff(
     is_handoff = bool(_HANDOFF_STRONG.search(a)) or bool(
         _HANDOFF_PERSON.search(a) and _HANDOFF_VERB.search(a)
     )
+    # m32: ha a BOT ajanlotta fel az elo atadast, a puszta "igen" is atadas
+    # (a regi mintak csak akkor kapcsoltak, ha a latogato maga kerte az embert)
+    if not is_handoff and accepted_offer(msg, history):
+        is_handoff = True
     hist = (history or [])[-10:]
     lines = [
         ("BOT: " if getattr(h, "role", "") == "assistant" else "LATOGATO: ")
