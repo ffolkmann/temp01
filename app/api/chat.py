@@ -39,6 +39,7 @@ from app.services.live_agent import (
 )
 from app.services.live_product import fetch_live_price_stock
 from app.services.operator_hours import operators_available
+from app.services.operator_presence import is_operator_online
 from app.services.operator_notify import notify_operators
 from app.services.order_status import handle_order_status
 from app.services.parse_reply import parse_reply
@@ -160,6 +161,7 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
             getattr(tenant, "live_agent_enabled", False)
             and req.session_id
             and operators_available(tenant)  # m28 fázis6: van Telegram-címzett ÉS nyitvatartás
+            and await is_operator_online()   # m28+: operátor ONLINE (operator.html kapcsoló)
         ):
             try:
                 # az eddigi (bot-)átirat mint kontextus az operátornak (system-üzenet)

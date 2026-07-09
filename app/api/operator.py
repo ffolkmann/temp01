@@ -9,6 +9,8 @@ Végpontok:
   POST /operator/claim         -> ATOMI átvétel (requested -> operator)
   POST /operator/send          -> operátor-üzenet a látogatónak
   POST /operator/close         -> session lezárása
+  GET  /operator/status        -> globális online-állapot (presence) lekérése
+  POST /operator/status        -> online kapcsoló + heartbeat (operator.html)
 """
 
 import os
@@ -25,6 +27,11 @@ from app.services.live_agent import (
     get_conversation,
     list_queue,
     operator_send,
+)
+from app.services.operator_presence import (
+    set_offline,
+    set_online,
+    status as presence_status,
 )
 
 router = APIRouter()
@@ -87,3 +94,28 @@ async def operator_close(request: Request, session: AsyncSession = Depends(get_s
     _auth(str(b.get("token") or ""))
     await close_session(session, str(b.get("session_id") or ""))
     return {"ok": True}
+
+
+@router.get("/operator/status")
+async def operator_status(token: str = Query(...)) -> dict:
+    """Globális operátor-jelenlét lekérése (a konzol a kapcsoló állapotát ehhez igazítja)."""
+    _auth(token)
+    return await presence_status()
+
+
+@router.post("/operator/status")
+async def operator_status_set(request: Request) -> Any:
+    """Online/offline kapcsoló + heartbeat. Body: {token, online: bool, operator?: str}.
+
+    online=true  -> presence-kulcs beállítása/frissítése (TTL 60s);
+    online=false -> azonnali offline (kulcs törlése).
+    Presence-only (nincs DB), fail-safe a service-ben.
+    """
+    b = await request.json()
+    _auth(str(b.get("token") or ""))
+    online = bool(b.get("online"))
+    if online:
+        await set_online(str(b.get("operator") or "operator"))
+    else:
+        await set_offline()
+    return {"ok": True, "online": online}
