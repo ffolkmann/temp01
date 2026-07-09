@@ -7,3 +7,9 @@ pgdata/
 qdrant_data/
 .venv/
 .pytest_cache/
+*.bak
+*.bak-*
+*.bak.*
+*.bak_*
+backups/
+logs/
