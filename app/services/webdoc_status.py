@@ -67,6 +67,17 @@ _NUMBER_RE = re.compile(r"^\s*#?\s*(?:\d{4}\s*/\s*)?(\d{1,9})\s*$")
 _ZIP_RE = re.compile(r"^\d{4}$")
 
 
+def order_form_fields(platform: str | None) -> list[str]:
+    """m29: a widget rendelés-űrlapjának mezői.
+
+    Webdoc: a `/orders` válasz `customer.email` mezője MINDIG üres, e-mailre nem
+    lehet párosítani -> az irányítószám a másodlagos titok. Minden más platformon
+    (Shoprenter / Unas / Sellvio live API) marad az e-mail.
+    """
+    plat = (platform or "").strip().lower()
+    return ["number", "zip"] if plat == "webdoc" else ["number", "email"]
+
+
 def status_maps(tenant: "Tenant | None") -> dict[str, dict[str, str]]:
     """A tenant felülírásai a DEFAULT fölé (szekciónként merge-elve, nem cserélve).
 

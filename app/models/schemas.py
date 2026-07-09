@@ -61,6 +61,12 @@ class ConfiguratorRef(BaseModel):
     email_url: str | None = None
 
 
+class OrderFormRef(BaseModel):
+    """m29: a rendelés-lekérdező űrlap mezői — a widget ez alapján rendereli."""
+
+    fields: list[str]
+
+
 class ChatResponse(BaseModel):
     """A widget EZT várja (C.3)."""
 
@@ -70,6 +76,7 @@ class ChatResponse(BaseModel):
         | None
     ) = None
     configurator: ConfiguratorRef | None = None
+    order_form: OrderFormRef | None = None
 
 
 class EventAck(BaseModel):

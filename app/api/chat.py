@@ -21,7 +21,13 @@ from app.core.db import get_session
 from app.core.llm import generate_reply
 from app.core.redis import get_redis
 from app.models.db_models import Plan, Tenant
-from app.models.schemas import ChatRequest, ChatResponse, ConfiguratorRef, EventAck
+from app.models.schemas import (
+    ChatRequest,
+    ChatResponse,
+    ConfiguratorRef,
+    EventAck,
+    OrderFormRef,
+)
 from app.services.conversations import format_transcript, get_transcript, log_turn
 from app.services.events import WIDGET_KINDS, count_product_links, log_event
 from app.services.coupons import active_coupons
@@ -59,6 +65,7 @@ from app.services.shop_search import SEARCH_FB_THRESHOLD, _build_queries, shop_f
 from app.services.prompt import _shop_search_url
 from app.services.unanswered import log_unanswered
 from app.services.usage import record_usage
+from app.services.webdoc_status import order_form_fields
 
 logger = logging.getLogger("cx.chat")
 router = APIRouter()
@@ -298,7 +305,15 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
     rec_n = count_product_links(parsed.reply, tenant)
     if rec_n:
         await log_event(session, req.client_id, req.session_id, "product_rec", {"count": rec_n})
-    return ChatResponse(reply=parsed.reply, action=parsed.action, configurator=None)
+    # m29: az order-urlap mezoi platformfuggoek (webdoc -> irsz, egyebkent e-mail)
+    _of = (
+        OrderFormRef(fields=order_form_fields(tenant.platform))
+        if parsed.action == "order_status_form"
+        else None
+    )
+    return ChatResponse(
+        reply=parsed.reply, action=parsed.action, configurator=None, order_form=_of
+    )
 
 
 @router.post("/chat", response_model=None)

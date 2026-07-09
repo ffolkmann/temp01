@@ -223,6 +223,23 @@ def _shop_search_url(tenant) -> str:
     }.get(plat, "")
 
 
+# m29: a masodik azonosito mezo platformfuggo. A WebDoc API a customer.email-t
+# mindig uresen adja vissza -> ott iranyitoszamot kerunk, es NEM igerunk e-mailt.
+_ORDER_HINT_EMAIL = (
+    "rendeleskor hasznalt e-mail-cimet, es jelezd, hogy a reszleteket e-mailben kuldjuk. "
+)
+_ORDER_HINT_ZIP = (
+    "szallitasi vagy szamlazasi cim negy jegyu iranyitoszamat. SOHA ne igerj e-mailt vagy "
+    "visszahivast: a rendeles allapotat itt, a chatben mutatjuk meg. "
+)
+
+
+def order_form_hint(platform: str | None) -> str:
+    """A VALASZ FORMATUM blokk order_form-mondatanak platformfuggo resze."""
+    plat = (platform or "").strip().lower()
+    return _ORDER_HINT_ZIP if plat == "webdoc" else _ORDER_HINT_EMAIL
+
+
 def build_system_prompt(
     tenant: Tenant,
     hits: list[dict[str, Any]],
@@ -459,8 +476,8 @@ def build_system_prompt(
         "csomagjarol erdeklodik (pl. hol tart a rendelesem, megerkezett-e a csomagom), akkor NE a "
         "collect_lead-et hasznald: ilyenkor az order_form legyen true es a collect_lead false, a "
         "reply-ban pedig roviden kerd meg, hogy a megjeleno urlapon adja meg a rendelesszamat es a "
-        "rendeleskor hasznalt e-mail-cimet, es jelezd, hogy a reszleteket e-mailben kuldjuk. Konkret "
-        "rendelesi adatot (allapot, cim, tetel) SOHA ne irj a chatbe."
+        + order_form_hint(tenant.platform)
+        + "Konkret rendelesi adatot (allapot, cim, tetel) SOHA ne irj a chatbe."
     )
 
     return system

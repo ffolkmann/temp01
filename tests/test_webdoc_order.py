@@ -12,6 +12,7 @@ from app.services.webdoc_status import (
     DEFAULT_STATUS_MAP,
     first_order,
     normalize_zip,
+    order_form_fields,
     order_zips,
     parse_order_number,
     pick_items,
@@ -213,3 +214,22 @@ def test_first_order_from_wrapper():
 @pytest.mark.parametrize("payload", [[], {}, None, "x", [{"nincs_id": 1}], {"orders": []}])
 def test_first_order_empty(payload):
     assert first_order(payload) is None
+
+
+# --- order_form_fields (m29 fazis 2) -----------------------------------------
+@pytest.mark.parametrize(
+    "plat,want",
+    [
+        ("webdoc", ["number", "zip"]),
+        ("WebDoc", ["number", "zip"]),
+        ("  webdoc  ", ["number", "zip"]),
+        ("shoprenter", ["number", "email"]),
+        ("unas", ["number", "email"]),
+        ("sellvio", ["number", "email"]),
+        ("", ["number", "email"]),
+        (None, ["number", "email"]),
+    ],
+)
+def test_order_form_fields(plat, want):
+    """A widget urlapja platformfuggo: webdoc -> irsz, minden mas -> e-mail."""
+    assert order_form_fields(plat) == want
