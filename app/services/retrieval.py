@@ -29,8 +29,11 @@ async def retrieve(
     - `message`: a rerank token-számításhoz az EREDETI kérdés kell (nem az embed-input)
     """
     from app.services.rerank import rerank  # késleltetett import a körkörösség elkerülésére
+    from app.services.policy_filter import filter_for_policy, policy_embed_input  # m34
 
-    vector = await embed_query(embed_input)
+    # m34: policy-kerdesnel a beagyazando query-t policy-kulcsszavakkal dusitjuk, hogy a dense
+    # kereses a KB-doksi (ASZF/garancia/elallas) fele billenjen, ne a termeknevek fele.
+    vector = await embed_query(policy_embed_input(message, embed_input))
     qdrant = get_qdrant()
     hits = await qdrant.search(
         vector=vector,
@@ -40,6 +43,11 @@ async def retrieve(
     )
     # a prod `Eval Unanswered` a SEARCH KB top dense score-ját nézi (rerank ELŐTT)
     top_score = float(hits[0].get("score") or 0.0) if hits else 0.0
+    # m34: policy-temaju kerdesnel (garancia/szallitas/elallas...) a termek-chunkokat a NYERS
+    # 24-es listabol dobjuk ki, MEG a rerank elott — kulonben a lexikai atfedes a termeknevekben
+    # ('...3 ev garancia...') kiszoritja a KB-doksit a top-8-bol. A top_score a szures ELOTTI
+    # (a megvalaszolatlan-kuszob valtozatlan marad).
+    hits = filter_for_policy(message, hits)
     reranked = rerank(
         message,
         hits,
@@ -47,4 +55,9 @@ async def retrieve(
         page_url_norm=page_url_norm,
         top_n=_settings.context_top_n,
     )
+    # m34: a rerank lexikai pontja a termeknevekben ('...3 ev garancia...') kiszorithatja a
+    # KB-doksit a top_n-bol. Policy-kerdesnel a rerank UTAN ujra kiszurjuk a termekeket, hogy
+    # a modell csak a hivatalos KB-szoveget lassa. (A hits mar szurt volt, de a rerank a teljes
+    # bemenetbol valogat -> itt a vegleges top_n-en ervenyesitjuk.)
+    reranked = filter_for_policy(message, reranked)
     return reranked, top_score

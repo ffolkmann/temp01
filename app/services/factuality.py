@@ -38,6 +38,11 @@ BLOCK = (
     "adatok kozott. Se becslest, se savot, se \"kb.\"-t.\n"
     "Garancia-tipust, ugyintezesi hataridot, szervizfolyamatot es javitasi vallalast soha ne "
     "talalj ki.\n"
+    # termeknev-garancia: a termeknevekben szereplo "3 ev garancia" NEM bolt-szintu teny
+    "Ha egy termek NEVEBEN vagy adataiban ott van a garancia (pl. \"3 ev garancia\"), az KIZAROLAG "
+    "arra a termekre igaz. Ne vond ossze tobb termek garanciajat, ne mondd markara (\"a Dell-gepek\") "
+    "vagy kategoriara. Garancia-kerdesnel, ha a TUDASBAZIS nem ad konkret bolt-szintu garancia-adatot, "
+    "mondd, hogy a garancia idotartama termekenkent elteru, es a pontos ertek az adott termek oldalan szerepel — ne sorolj fel becsult ertekeket es garancia-tipusokat.\n"
     "Jogi, adozasi es penzugyi tanacsot nem adsz."
 )
 
