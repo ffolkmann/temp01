@@ -6,9 +6,19 @@ A CX chatbot **minden funkcióját** végigméri egy tenanton élesítés előtt
 
 ## Futtatás
 
+**Admin-panelről (ajánlott):** partner szerkesztése → „Go-live teszt" kártya →
+*Go-live teszt indítása* gomb. A futás végén letöltő link jelenik meg (2–3 perc).
+
+**Parancssorból:**
+
 ```bash
 bash /docker/chatbot-prod/tools/run_smoketest.sh <client_id>
 ```
+
+**API-ból:** `POST /smoketest?client_id=<cid>&token=<ADMIN_PANEL_TOKEN>` →
+`{"started":true,"url":...}`; állapot: `GET /smoketest/reports?client_id=&token=`.
+A futtató kód: `app/smoketest.py` (`python -m app.smoketest`), a tesztsor:
+`app/services/smoketest_battery.py`.
 
 Példa:
 

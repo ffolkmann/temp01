@@ -42,6 +42,9 @@ _CHUNK = 1000          # v1 paritás (n8n ingest ~1000 char szeletek)
 _MAX_BYTES = 15 * 1024 * 1024
 
 _sync_running: set[str] = set()   # per-tenant dupla-indítás elleni zár
+_smoketest_running: set[str] = set()  # m35: go-live teszt dupla-inditas elleni zar
+_REPORTS_DIR = "/reports"             # compose volume -> /root/weboldal_fajlok/chatbot/reports
+_REPORTS_URL = "https://codexpress.cloud/chatbot/reports"
 
 
 def _auth_fail(token: str) -> JSONResponse | None:
@@ -231,3 +234,89 @@ async def sync(request: Request) -> Any:
 
     asyncio.create_task(_run())
     return {"started": True}
+
+
+@router.post("/smoketest")
+async def smoketest(request: Request) -> Any:
+    """m35: go-live chat-tesztsor inditasa hatterben (a /sync mintajara).
+
+    A runner (`python -m app.smoketest`) kulon processzben fut, a /chat-et a sajat
+    API-n hivja, es XLSX riportot ir a /reports-ba (webroot -> letoltheto link).
+    Valasz: {"started": true, "report": nev, "url": publikus link}.
+    """
+    qp = request.query_params
+    fail = _auth_fail(str(qp.get("token") or ""))
+    if fail:
+        return fail
+    client_id = str(qp.get("client_id") or "").strip().lower()
+    if not client_id:
+        return JSONResponse({"error": "missing_params"}, status_code=400)
+    if not re.fullmatch(r"[a-z0-9_-]{1,64}", client_id):
+        return JSONResponse({"error": "bad_client_id"}, status_code=400)
+    if not await _tenant_exists(client_id):
+        return JSONResponse({"error": "unknown_client"}, status_code=404)
+    if client_id in _smoketest_running:
+        return {"started": True, "note": "már fut"}
+
+    import datetime as _dt
+    name = f"chat-teszt-{client_id}-{_dt.datetime.now().strftime('%Y%m%d-%H%M')}.xlsx"
+    outfile = f"{_REPORTS_DIR}/{name}"
+    _smoketest_running.add(client_id)
+
+    async def _run() -> None:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "app.smoketest", client_id,
+                "--base", "http://localhost:8000", "--outfile", outfile,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+            )
+            out, _ = await proc.communicate()
+            rc = proc.returncode
+            lines = (out or b"").decode(errors="replace").splitlines()
+            for ln in lines:
+                logger.info("SMOKETEST[%s] %s", client_id, ln)
+            meta: dict[str, Any] = {"rc": rc, "trigger": "admin_panel", "report": name}
+            for ln in reversed(lines):
+                ln = ln.strip()
+                if ln.startswith("{") and ln.endswith("}"):
+                    try:
+                        res = json.loads(ln)
+                    except ValueError:
+                        continue
+                    for k in ("total", "ok", "warn", "err", "manual"):
+                        if k in res:
+                            meta[k] = res[k]
+                    break
+            try:
+                async with SessionLocal() as session:
+                    await log_event(session, client_id, "admin_panel", "smoketest_run", meta)
+            except Exception:  # noqa: BLE001
+                logger.exception("SMOKETEST[%s] event-írás hiba", client_id)
+            logger.info("SMOKETEST[%s] kész rc=%s", client_id, rc)
+        except Exception:  # noqa: BLE001
+            logger.exception("SMOKETEST[%s] indítási hiba", client_id)
+        finally:
+            _smoketest_running.discard(client_id)
+
+    asyncio.create_task(_run())
+    return {"started": True, "report": name, "url": f"{_REPORTS_URL}/{name}"}
+
+
+@router.get("/smoketest/reports")
+async def smoketest_reports(request: Request) -> Any:
+    """m35: a tenant kesz riportjai (legujabb elol, max 10) + fut-e eppen a teszt."""
+    qp = request.query_params
+    fail = _auth_fail(str(qp.get("token") or ""))
+    if fail:
+        return fail
+    client_id = str(qp.get("client_id") or "").strip().lower()
+    if not client_id or not re.fullmatch(r"[a-z0-9_-]{1,64}", client_id):
+        return JSONResponse({"error": "missing_params"}, status_code=400)
+    import glob as _glob
+    import os as _os
+    files = sorted(_glob.glob(f"{_REPORTS_DIR}/chat-teszt-{client_id}-*.xlsx"),
+                   key=lambda fp: _os.path.getmtime(fp), reverse=True)[:10]
+    return {"running": client_id in _smoketest_running,
+            "reports": [{"name": _os.path.basename(fp),
+                         "url": f"{_REPORTS_URL}/{_os.path.basename(fp)}",
+                         "mtime": int(_os.path.getmtime(fp))} for fp in files]}
