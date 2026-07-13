@@ -30,10 +30,13 @@ async def retrieve(
     """
     from app.services.rerank import rerank  # késleltetett import a körkörösség elkerülésére
     from app.services.policy_filter import filter_for_policy, policy_embed_input  # m34
+    from app.services.query_cleanup import product_query_cleanup  # m36: zaj-tisztitas
 
     # m34: policy-kerdesnel a beagyazando query-t policy-kulcsszavakkal dusitjuk, hogy a dense
     # kereses a KB-doksi (ASZF/garancia/elallas) fele billenjen, ne a termeknevek fele.
-    vector = await embed_query(policy_embed_input(message, embed_input))
+    # m36: koszones/toltelek-zaj ('Szia , ... keresek') eltavolitasa a BEAGYAZANDO
+    # szovegbol — a latogato uzenete valtozatlanul megy az LLM-nek es a reranknak.
+    vector = await embed_query(policy_embed_input(message, product_query_cleanup(embed_input)))
     qdrant = get_qdrant()
     hits = await qdrant.search(
         vector=vector,

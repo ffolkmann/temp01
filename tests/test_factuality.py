@@ -53,3 +53,16 @@ def test_nincs_benne_ekezet_a_szabalyszovegben():
 
 def test_idempotens():
     assert _f.factuality_block() == _f.factuality_block() == _f.BLOCK
+
+
+def test_tiltja_a_nemleges_allitast():
+    """fishingoutlet-eset: "a Shimano nem gyart bojlit" — a talalat hianya nem bizonyitek."""
+    b = _f.factuality_block()
+    assert "nem gyart valamit" in b
+    assert "NEM bizonyitek" in b
+
+
+def test_link_integritas():
+    """m36: nev+ar+URL ugyanabbol a talalatbol — a Strawberry-nevhez ne keruljon squid-URL."""
+    b = _f.factuality_block()
+    assert "UGYANABBOL a talalatbol" in b
