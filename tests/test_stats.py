@@ -120,6 +120,11 @@ class FakeSession:
             return _Res([{"kind": "link_click", "period": CP, "n": 4, "s": 0},
                          {"kind": "product_rec", "period": CP, "n": 2, "s": 5},
                          {"kind": "order_lookup", "period": "2020-01", "n": 3, "s": 0}])
+        if "AS impressions" in s:   # m38 (parhuzamos) engagement-SQL — a link_click ag ELOTT,
+            # mert az engagement-query is tartalmazza a kind='link_click' szoveget
+            return _Res([{"impressions": 30, "chatted": 12, "clicked": 6}])
+        if "MIN(created_at) FROM events" in s:
+            return _Res(scalar=None)
         if "kind='link_click'" in s:
             return _Res([{"url": "https://x/p1", "title": "P1", "n": 4}])
         if "COUNT(DISTINCT session_id)" in s:

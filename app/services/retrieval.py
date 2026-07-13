@@ -31,17 +31,27 @@ async def retrieve(
     from app.services.rerank import rerank  # késleltetett import a körkörösség elkerülésére
     from app.services.policy_filter import filter_for_policy, policy_embed_input  # m34
     from app.services.query_cleanup import product_query_cleanup  # m36: zaj-tisztitas
+    from app.services.superlative import WIDE_LIMIT, detect_price_superlative, sort_by_price, topic_of  # m38/m39
 
     # m34: policy-kerdesnel a beagyazando query-t policy-kulcsszavakkal dusitjuk, hogy a dense
     # kereses a KB-doksi (ASZF/garancia/elallas) fele billenjen, ne a termeknevek fele.
     # m36: koszones/toltelek-zaj ('Szia , ... keresek') eltavolitasa a BEAGYAZANDO
     # szovegbol — a latogato uzenete valtozatlanul megy az LLM-nek es a reranknak.
-    vector = await embed_query(policy_embed_input(message, product_query_cleanup(embed_input)))
+    # m38/m39: ar-szuperlativusz ("legolcsobb/legdragabb") -> szelesebb topikalis pool,
+    # es KOR-FUGGETLEN tema-embed ('legolcsobb laptop' -> 'laptop'): igy az elso es a
+    # folytato kerdes ugyanazt a poolt kapja -> konzisztens valasz. A rendezes lent
+    # determinisztikus (ar szerint), a dense csak a temat szuri.
+    superlative = detect_price_superlative(message)
+    _topic = topic_of(message) if superlative else ""
+    if superlative and len(_topic) >= 3:
+        vector = await embed_query(_topic)
+    else:
+        vector = await embed_query(policy_embed_input(message, product_query_cleanup(embed_input)))
     qdrant = get_qdrant()
     hits = await qdrant.search(
         vector=vector,
         client_id=client_id,
-        limit=_settings.retrieval_top_k,
+        limit=(max(WIDE_LIMIT, _settings.retrieval_top_k) if superlative else _settings.retrieval_top_k),
         product_only=False,  # parity: NINCS type=product szűrő a fő keresésben
     )
     # a prod `Eval Unanswered` a SEARCH KB top dense score-ját nézi (rerank ELŐTT)
@@ -51,6 +61,13 @@ async def retrieve(
     # ('...3 ev garancia...') kiszoritja a KB-doksit a top-8-bol. A top_score a szures ELOTTI
     # (a megvalaszolatlan-kuszob valtozatlan marad).
     hits = filter_for_policy(message, hits)
+    # m38: szuperlativusznal a rerank relevancia-sorrendje okozta az onellentmondast
+    # (koronkent mas top-8 'legolcsobbja'). Determinisztikus ar-rendezes a szeles poolon:
+    # igy a valasz korrol korre AZONOS, es tenyleg a legkedvezobb aru relevans termek.
+    if superlative:
+        by_price = sort_by_price(hits, superlative, _settings.context_top_n)
+        if by_price:
+            return by_price, top_score
     reranked = rerank(
         message,
         hits,
