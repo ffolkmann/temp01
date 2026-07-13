@@ -122,6 +122,42 @@ async def stats(k: str = Query(...), session: AsyncSession = Depends(get_session
         if 0 <= h <= 23:
             hourly[h] = _int(r["n"])
 
+    # --- engagement / konverzio (m30): egyedi munkamenet-alapu ratak, kozos 30 napos ablak ---
+    # nevezo: impression event (a widget boot-kor munkamenetenkent EGYSZER kuldi)
+    # szamlalo: ahany kulon session_id-ben volt legalabb 1 uzenet ill. 1 link_click
+    # Mind a harom SESSION-t szamol, nem esemenyt; a 30 nap a messages-retencio miatt kozos.
+    ENGAGE_WINDOW = 30
+    eng = (await session.execute(text(
+        "SELECT "
+        " (SELECT COUNT(DISTINCT session_id) FROM events "
+        "    WHERE client_id=:c AND kind='impression' "
+        "      AND created_at > now() - (:d || ' days')::interval) AS impressions, "
+        " (SELECT COUNT(DISTINCT session_id) FROM messages "
+        "    WHERE client_id=:c "
+        "      AND created_at > now() - (:d || ' days')::interval) AS chatted, "
+        " (SELECT COUNT(DISTINCT session_id) FROM events "
+        "    WHERE client_id=:c AND kind='link_click' "
+        "      AND created_at > now() - (:d || ' days')::interval) AS clicked"
+    ), {"c": cid, "d": str(ENGAGE_WINDOW)})).mappings().first()
+    eng_impr = _int(eng["impressions"]) if eng else 0
+    eng_chat = _int(eng["chatted"]) if eng else 0
+    eng_click = _int(eng["clicked"]) if eng else 0
+    # a legelso impression datuma -> a stat.html "meres kezdete" jelzeshez
+    eng_since = (await session.execute(text(
+        "SELECT MIN(created_at) FROM events WHERE client_id=:c AND kind='impression'"
+    ), P)).scalar()
+    engagement = {
+        "window_days": ENGAGE_WINDOW,
+        "impressions": eng_impr,
+        "chatted": eng_chat,
+        "clicked": eng_click,
+        # ratak: a nevezo a chatet latott egyedi munkamenetek szama
+        "chat_rate": round(eng_chat / eng_impr * 100, 1) if eng_impr else 0.0,
+        "click_rate": round(eng_click / eng_impr * 100, 1) if eng_impr else 0.0,
+        "since": _iso(eng_since),
+        "tracking_active": bool(eng_impr),   # false, amig nem gyult impression (pl. regi widget)
+    }
+
     # --- feedback ---
     fb_counts = {r["rating"]: _int(r["n"]) for r in (await session.execute(text(
         "SELECT rating, COUNT(*) n FROM feedback WHERE client_id=:c GROUP BY rating"
@@ -214,6 +250,7 @@ async def stats(k: str = Query(...), session: AsyncSession = Depends(get_session
             "avg_messages": float(avg_msgs) if avg_msgs is not None else 0.0,
             "hourly": hourly, "window_days": 30,
         },
+        "engagement": engagement,
         "leads": leads,
         "feedback": feedback,
         "unanswered": {
