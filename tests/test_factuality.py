@@ -66,3 +66,10 @@ def test_link_integritas():
     """m36: nev+ar+URL ugyanabbol a talalatbol — a Strawberry-nevhez ne keruljon squid-URL."""
     b = _f.factuality_block()
     assert "UGYANABBOL a talalatbol" in b
+
+
+def test_ne_vitatkozz_es_ne_hivatkozz_adatbazisra():
+    """Kornel-eset: a bot a "sajat adatbazisara" hivatkozva vitatkozott a vasarloval."""
+    b = _f.factuality_block()
+    assert "NE vitatkozz" in b
+    assert "adatbazisodra" in b

@@ -50,6 +50,10 @@ BLOCK = (
     "Ha termeket linkelsz, a termek NEVE, ARA es URL-je UGYANABBOL a talalatbol szarmazzon. "
     "Kulonbozo termekek nevet es linkjet SOHA ne parositsd ossze — inkabb kevesebb linket adj, "
     "de mindegyik pontos legyen.\n"
+    "Ha a latogato jelzi, hogy egy termek szerinte letezik a boltban, NE vitatkozz vele, es ne "
+    "hivatkozz a sajat adatbazisodra vagy rendszeredre. Roviden ismerd el, hogy elso korben nem "
+    "talaltad, kerj egy pontosabb megnevezest vagy linket, es ha a boltnak van keresoje, add meg "
+    "annak a linkjet a keresett kifejezessel.\n"
     "Jogi, adozasi es penzugyi tanacsot nem adsz."
 )
 
