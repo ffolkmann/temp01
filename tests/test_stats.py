@@ -40,6 +40,10 @@ ff.Query = lambda *a, **k: (a[0] if a else None)
 class HTTPException(Exception):
     def __init__(self, status_code=500, detail=""): self.status_code = status_code; self.detail = detail
 ff.HTTPException = HTTPException
+class _Response:  # m44: stats.py mar importalja a fastapi.Response-t
+    def __init__(self, content=None, media_type=None, headers=None):
+        self.content = content; self.media_type = media_type; self.headers = headers or {}
+ff.Response = _Response
 sys.modules["fastapi"] = ff
 
 # --- fake sqlalchemy.text + ext.asyncio + dialects.postgresql.insert ---
@@ -72,6 +76,11 @@ class Unanswered:
     def __init__(self, **kw): self.kw = kw
 fm.Usage = Usage; fm.Unanswered = Unanswered
 sys.modules["app.models.db_models"] = fm
+
+# m44: a stats.py uj importja - fake stub, hogy dev-gepen openpyxl nelkul is fusson
+ue = types.ModuleType("app.services.unanswered_export")
+ue.build_unanswered_xlsx = lambda rows: b"PK-fake"
+sys.modules["app.services.unanswered_export"] = ue
 
 usage = _load("app.services.usage", f"{ROOT}/app/services/usage.py")
 unans = _load("app.services.unanswered", f"{ROOT}/app/services/unanswered.py")

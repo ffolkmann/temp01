@@ -10,11 +10,12 @@ import logging
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_session
+from app.services.unanswered_export import build_unanswered_xlsx
 
 logger = logging.getLogger("cx.stats")
 router = APIRouter()
@@ -268,6 +269,30 @@ async def stats(k: str = Query(...), session: AsyncSession = Depends(get_session
             "current_week_label": cw, "weekly": weekly, "questions": questions,
         },
     }
+
+
+@router.get("/stats/unanswered/export")
+async def stats_unanswered_export(
+    k: str = Query(...), session: AsyncSession = Depends(get_session),
+) -> Response:
+    """XLSX-letoltes: a tenant osszes megvalaszolatlan kerdese (m44, stat.html gomb)."""
+    tenant = (await session.execute(text(
+        "SELECT client_id FROM tenants WHERE stat_key = :k"
+    ), {"k": k})).mappings().first()
+    if tenant is None:
+        raise HTTPException(status_code=404, detail="ismeretlen stat_key")
+    cid = tenant["client_id"]
+    rows = (await session.execute(text(
+        "SELECT question, score, reasons, session_id, created_at FROM unanswered "
+        "WHERE client_id=:c ORDER BY created_at DESC"
+    ), {"c": cid})).mappings().all()
+    data = build_unanswered_xlsx([dict(r) for r in rows])
+    fname = "megvalaszolatlan-%s-%s.xlsx" % (cid, datetime.now(BUDAPEST).strftime("%Y%m%d-%H%M"))
+    return Response(
+        content=data,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="%s"' % fname},
+    )
 
 
 @router.get("/stats/conversation")
