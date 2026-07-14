@@ -31,7 +31,7 @@ async def retrieve(
     from app.services.rerank import rerank  # késleltetett import a körkörösség elkerülésére
     from app.services.policy_filter import filter_for_policy, policy_embed_input  # m34
     from app.services.query_cleanup import product_query_cleanup  # m36: zaj-tisztitas
-    from app.services.superlative import WIDE_LIMIT, detect_price_superlative, sort_by_price, topic_of  # m38/m39
+    from app.services.superlative import WIDE_LIMIT, detect_price_superlative, price_context, topic_of  # m38/m39/m40
 
     # m34: policy-kerdesnel a beagyazando query-t policy-kulcsszavakkal dusitjuk, hogy a dense
     # kereses a KB-doksi (ASZF/garancia/elallas) fele billenjen, ne a termeknevek fele.
@@ -65,7 +65,8 @@ async def retrieve(
     # (koronkent mas top-8 'legolcsobbja'). Determinisztikus ar-rendezes a szeles poolon:
     # igy a valasz korrol korre AZONOS, es tenyleg a legkedvezobb aru relevans termek.
     if superlative:
-        by_price = sort_by_price(hits, superlative, _settings.context_top_n)
+        # m40: fele ar-veg + fele tema-relevancia -- kiegeszito-beszivargas ellen (copygo eles eset)
+        by_price = price_context(hits, superlative, _settings.context_top_n)
         if by_price:
             return by_price, top_score
     reranked = rerank(

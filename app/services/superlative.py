@@ -82,6 +82,69 @@ def sort_by_price(hits: list[dict], direction: str, top_n: int) -> list[dict]:
     priced.sort(key=lambda t: t[0], reverse=(direction == "desc"))
     return [h for _, h in priced[:top_n]]
 
+def price_context(hits: list[dict], direction: str, top_n: int) -> list[dict]:
+    """m40: ar-szuperlativusz kontextus -- fele ar-veg, fele tema-relevancia.
+
+    A tiszta ar-rendezes (sort_by_price) a topikalisan SZELES poolon a legolcsobb
+    KIEGESZITOKET hozza (copygo eles eset, 2026-07-14: a "legolcsobb fotonyomtato"
+    top-8-a 8/8 utangyartott tintapatron volt, egyetlen fotonyomtato sem -- a modell
+    factuality-helyesen "nem tudom"-ot mondott). Score-floor nem valaszt szet
+    (meres: Selphy CP1500 0.444 < MINOLTA toner 0.453), ezert a kontextus ket
+    determinisztikus felbol all:
+      1) az ar szerinti veg (asc/desc) -- a "legolcsobb/legdragabb" horgony,
+      2) a tema legerosebb (score szerinti) termekei -- a valodi jeloltek.
+    A modell a kerdezett termektipusra valaszol, a kiegeszitoket atugorja
+    (m39 eles tapasztalat), HA a valodi jeloltek is a kontextusban vannak.
+
+    3-nal kevesebb arazott termeknel tovabbra is ures lista -- a hivo a normal
+    rerank-agra esik vissza.
+    """
+    priced: list[tuple[float, dict]] = []
+    for h in hits:
+        if not _is_product(h):
+            continue
+        p = _price(h)
+        if p is not None:
+            priced.append((p, h))
+    if len(priced) < 3:
+        return []
+    by_price = [h for _, h in sorted(priced, key=lambda t: t[0], reverse=(direction == "desc"))]
+    by_score = sorted(
+        (h for _, h in priced), key=lambda h: float(h.get("score") or 0.0), reverse=True
+    )
+
+    def _key(h: dict):
+        k = h.get("id")
+        if k is not None:
+            return ("id", str(k))
+        pl = h.get("payload", {}) or {}
+        return ("nu", str(pl.get("name") or ""), str(pl.get("url") or ""))
+
+    n_price = max(1, (top_n + 1) // 2)
+    out: list[dict] = []
+    seen: set = set()
+    for h in by_price[:n_price]:
+        k = _key(h)
+        if k not in seen:
+            seen.add(k)
+            out.append(h)
+    for h in by_score:
+        if len(out) >= top_n:
+            break
+        k = _key(h)
+        if k not in seen:
+            seen.add(k)
+            out.append(h)
+    for h in by_price[n_price:]:
+        if len(out) >= top_n:
+            break
+        k = _key(h)
+        if k not in seen:
+            seen.add(k)
+            out.append(h)
+    return out
+
+
 _TOPIC_STOP = {
     "mennyi", "mennyibe", "melyik", "mi", "mik", "mit", "es", "a", "az", "ti",
     "nalatok", "nalunk", "most", "jelenleg", "van", "vane", "kaphato", "kerul",
