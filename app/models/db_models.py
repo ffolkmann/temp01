@@ -67,6 +67,7 @@ class Tenant(Base):
     order_status_map: Mapped[dict | None] = mapped_column(JSONB)                                        # m29: platform-kód -> magyar megnevezés (Webdoc)
     operator_token: Mapped[str | None] = mapped_column(String)                                          # m30: per-tenant operátor-konzol token
     operator_bot_token: Mapped[str | None] = mapped_column(String)                                      # m31: per-tenant Telegram bot token (BotFather)
+    sync_instock_only: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")    # m35: csak raktáron lévő termékek szinkronja
 
 
 class Plan(Base):

@@ -486,7 +486,7 @@ def sr_warehouse_note(p: dict, cfg: dict | None) -> tuple[str, str]:
 
 class ShoprenterBuilder:
     def __init__(self, client_id: str, public_url: str = "", include_inactive: bool = False,
-                 warehouse_config: dict | None = None) -> None:
+                 warehouse_config: dict | None = None, instock_only: bool = False) -> None:
         self.client_id = client_id
         pub = _s(public_url)
         if pub and not pub.endswith("/"):
@@ -495,6 +495,7 @@ class ShoprenterBuilder:
         self.by_id = {}
         self.include_inactive = include_inactive
         self.whcfg = warehouse_config if isinstance(warehouse_config, dict) else None
+        self.instock_only = instock_only  # m35: csak raktáron lévő termék kerül a szinkronba (per-tenant)
 
     def index(self, page: list[dict]) -> None:
         for p in page:
@@ -556,6 +557,9 @@ class ShoprenterBuilder:
             price_orig = (prices[0].get("grossOriginal") or gross) if prices else None
             # m24: keszlet = a NEGY raktar OSSZEGE + tenant raktár-szemantika (sr_warehouse_note)
             stock, wh_note = sr_warehouse_note(p, self.whcfg)
+            # m35: per-tenant "csak raktáron" szűrő — stock=="" (nincs raktár-mező) és <=0 egyaránt kiesik
+            if self.instock_only and (stock == "" or float(stock or 0) <= 0):
+                continue
             orderable = _s(p.get("orderable")) == "1"
             url = _sr_url(p, self.pub)
             sku = _s(p.get("sku") or p.get("modelNumber"))
@@ -606,9 +610,9 @@ class ShoprenterBuilder:
 
 
 def build_shoprenter(items: list[dict], client_id: str, public_url: str, include_inactive: bool = False,
-                     warehouse_config: dict | None = None) -> list[SourceProduct]:
+                     warehouse_config: dict | None = None, instock_only: bool = False) -> list[SourceProduct]:
     b = ShoprenterBuilder(client_id, public_url, include_inactive=include_inactive,
-                          warehouse_config=warehouse_config)
+                          warehouse_config=warehouse_config, instock_only=instock_only)
     b.index(items)
     return b.build(items)
 
