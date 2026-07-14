@@ -73,17 +73,12 @@ def is_open(operator_hours, now: datetime | None = None) -> bool:
     return o <= cur < c
 
 
-def _has_telegram(tenant) -> bool:
-    raw = getattr(tenant, "operator_telegram_chat_id", None)
-    return bool(raw and str(raw).strip())
-
-
 def operators_available(tenant, now: datetime | None = None) -> bool:
-    """Élő átvétel felkínálható-e MOST: van Telegram-címzett ÉS nyitvatartásban vagyunk.
+    """Elo atvetel felkinalhato-e MOST: nyitvatartasban vagyunk-e.
 
-    0 címzett -> False (senki sem kapna értesítést -> ne nyeljük el a vevőt élőben).
-    Fail-safe: kivételt nem dob.
+    m42: a Telegram-cimzett NEM feltetel -- a presence (is_operator_online) mar
+    bizonyitja, hogy operator nezi a pultot; a chat_id csak a ping cimzettje
+    (a notify_operators ures chat_id-nal amugy sem pingel). Az admin-felulet is
+    ezt igeri: "Uresen hagyva nem kuld ertesitest." Fail-safe: kivetelt nem dob.
     """
-    if not _has_telegram(tenant):
-        return False
     return is_open(getattr(tenant, "operator_hours", None), now)

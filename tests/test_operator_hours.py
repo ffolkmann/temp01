@@ -78,9 +78,16 @@ def test_boundary_open_close():
 # --------------------------------------------------------------------------- #
 # operators_available (Telegram-címzett + nyitvatartás)
 # --------------------------------------------------------------------------- #
-def test_avail_no_telegram():
+def test_avail_no_telegram_still_available():
+    # m42: a Telegram-cimzett nem feltetel -- ures chat_id-val is elerheto az elo atvetel
     t = SimpleNamespace(operator_telegram_chat_id="", operator_hours=None)
-    assert oh.operators_available(t, WED_15) is False
+    assert oh.operators_available(t, WED_15) is True
+
+
+def test_avail_no_telegram_closed_hours_blocks():
+    # a nyitvatartas tovabbra is kapu marad
+    t = SimpleNamespace(operator_telegram_chat_id="", operator_hours=HOURS)
+    assert oh.operators_available(t, WED_20) is False
 
 
 def test_avail_telegram_open():
