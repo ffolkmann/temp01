@@ -286,7 +286,16 @@ async def stats_unanswered_export(
         "SELECT question, score, reasons, session_id, created_at FROM unanswered "
         "WHERE client_id=:c ORDER BY created_at DESC"
     ), {"c": cid})).mappings().all()
-    data = build_unanswered_xlsx([dict(r) for r in rows])
+    msg_rows = (await session.execute(text(
+        "SELECT session_id, question, answer, created_at FROM messages "
+        "WHERE client_id=:c ORDER BY session_id, created_at, id"
+    ), {"c": cid})).mappings().all()
+    wanted = {r["session_id"] for r in rows if r["session_id"]}
+    transcripts: dict[str, list[dict]] = {}
+    for m in msg_rows:
+        if m["session_id"] in wanted:
+            transcripts.setdefault(m["session_id"], []).append(dict(m))
+    data = build_unanswered_xlsx([dict(r) for r in rows], transcripts)
     fname = "megvalaszolatlan-%s-%s.xlsx" % (cid, datetime.now(BUDAPEST).strftime("%Y%m%d-%H%M"))
     return Response(
         content=data,

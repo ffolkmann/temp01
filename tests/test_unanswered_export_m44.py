@@ -1,4 +1,4 @@
-"""m44 - build_unanswered_xlsx: fajlbol toltve (suite-konvencio).
+"""m44+m45 - build_unanswered_xlsx: fajlbol toltve (suite-konvencio).
 
 Vedekezes: ha korabbi teszt fake openpyxl-t ultetett a sys.modules-ba,
 save/restore-ral felretesszuk a betoltes idejere.
@@ -75,3 +75,53 @@ def test_empty():
     wb = openpyxl.load_workbook(io.BytesIO(data))
     g = wb[wb.sheetnames[0]]
     assert list(g.iter_rows(min_row=2, values_only=True)) == []
+
+
+def test_transcript_context():
+    mod = _load()
+    rows = [
+        {"question": "van garancia?", "score": 0.31, "reasons": ["low_score"],
+         "session_id": "s3", "created_at": _dt("2026-07-14T10:00:00")},
+        {"question": "hol a bolt?", "score": 0.2, "reasons": ["low_score"],
+         "session_id": None, "created_at": _dt("2026-07-13T09:00:00")},
+        {"question": "van garancia?", "score": 0.28, "reasons": ["low_score"],
+         "session_id": "s1", "created_at": _dt("2026-07-12T08:00:00")},
+    ]
+    transcripts = {
+        "s3": [
+            {"question": "milyen nyomtatok vannak?", "answer": "Tobbfele is.",
+             "created_at": _dt("2026-07-14T09:58:00")},
+            {"question": "van garancia?", "answer": "",
+             "created_at": _dt("2026-07-14T10:00:00")},
+        ],
+    }
+    data = mod.build_unanswered_xlsx(rows, transcripts)
+    import openpyxl
+    wb = openpyxl.load_workbook(io.BytesIO(data))
+    g = wb[wb.sheetnames[0]]
+    vals = list(g.iter_rows(min_row=2, values_only=True))
+    ctx = vals[0][6]  # "van garancia?" csoport -> s3 atirata
+    assert "U: milyen nyomtatok vannak?" in ctx
+    assert "B: Tobbfele is." in ctx
+    assert "[2026-07-14 11:58]" in ctx  # UTC 09:58 -> Bp 11:58
+    r = wb[wb.sheetnames[1]]
+    raws = list(r.iter_rows(min_row=2, values_only=True))
+    assert "U: milyen nyomtatok vannak?" in raws[0][5]          # s3
+    assert raws[1][5] in (None, "")                              # session nelkul
+    assert raws[2][5] == "nincs napl\u00f3 (30+ nap)"            # s1: nincs naplo
+
+
+def test_transcript_truncate():
+    mod = _load()
+    rows = [{"question": "q", "score": 0.1, "reasons": ["low_score"],
+             "session_id": "sX", "created_at": _dt("2026-07-14T10:00:00")}]
+    transcripts = {"sX": [{"question": "q", "answer": "x" * 25000,
+                           "created_at": _dt("2026-07-14T10:00:00")}]}
+    data = mod.build_unanswered_xlsx(rows, transcripts)
+    import openpyxl
+    wb = openpyxl.load_workbook(io.BytesIO(data))
+    r = wb[wb.sheetnames[1]]
+    raws = list(r.iter_rows(min_row=2, values_only=True))
+    cell = raws[0][5]
+    assert cell.endswith("[v\u00e1gva]")
+    assert len(cell) <= 20000 + 20

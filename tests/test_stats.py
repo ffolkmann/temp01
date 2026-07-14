@@ -79,7 +79,7 @@ sys.modules["app.models.db_models"] = fm
 
 # m44: a stats.py uj importja - fake stub, hogy dev-gepen openpyxl nelkul is fusson
 ue = types.ModuleType("app.services.unanswered_export")
-ue.build_unanswered_xlsx = lambda rows: b"PK-fake"
+ue.build_unanswered_xlsx = lambda rows, transcripts=None: b"PK-fake"
 sys.modules["app.services.unanswered_export"] = ue
 
 usage = _load("app.services.usage", f"{ROOT}/app/services/usage.py")
