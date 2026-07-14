@@ -37,7 +37,10 @@ logger = logging.getLogger("cx.shop_search")
 # Szandekosan magasabb az unanswered THRESHOLD-nal (0.45): a "gyenge, de nem
 # kritikus" savban is erdemes a bolti keresot megkerdezni.
 SEARCH_FB_THRESHOLD = 0.55
-_TIMEOUT = 10.0
+# m41: eles meres (2026-07-14): a copygo 'fotonyomtato' talalati oldal 11.4s,
+# a fishingoutlet 'bojli' 9.9s -- a 10s-es teljes timeout pont ezeket vagta el.
+# A connect marad feszes (5s), a read 15s.
+_TIMEOUT = httpx.Timeout(15.0, connect=5.0)
 _MAX_LINKS = 12
 _LIMIT = 5
 
@@ -62,6 +65,10 @@ def _extract_links(platform: str, html: str, base: str) -> list[str]:
     b = re.escape(base)
     if platform == "shoprenter":
         raw = _SR_HREF_RE.findall(html)
+        # m41: a kereso ONLINKJE es a lapozo linkjei (index.php?route=product/list&keyword=...)
+        # is keyword-esek -> kiszurjuk. Enelkul a 0-talalatos oldal onlinkje "talalatnak"
+        # latszik, a query-kaszkad megall, es a hidratacio utan megis 0 lesz (copygo eles eset).
+        raw = [u for u in raw if "index.php" not in u and "route=product" not in u]
         links = [normalize_url(unquote(html_unescape(u))) for u in raw]
     elif platform == "unas":
         links = [html_unescape(u) for u in re.findall(rf'href="({b}/termek/[^"]+)"', html)]
