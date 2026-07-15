@@ -221,6 +221,8 @@ def _tenant_to_dict(t: Tenant) -> dict[str, Any]:
     d["operator_hours"] = (
         json.dumps(ohv, ensure_ascii=False) if isinstance(ohv, (dict, list)) else (ohv or "")
     )
+    hk = d.get("handoff_keywords")  # m51: az admin vesszos szovegkent szerkeszti
+    d["handoff_keywords"] = ", ".join(str(x) for x in hk) if isinstance(hk, list) else (hk or "")
     return d
 
 
@@ -274,6 +276,27 @@ async def _save_config(session: AsyncSession, row_in: dict[str, Any]) -> dict[st
             row["operator_hours"] = json.loads(row["operator_hours"]) if row["operator_hours"].strip() else None
         except Exception:  # noqa: BLE001
             row.pop("operator_hours", None)
+    # m51: handoff_keywords — az admin vesszovel/soronkent elvalasztott szoveget kuld;
+    # JSON-tombot is elfogadunk. Ures -> NULL (csak a beepitett mintak elnek).
+    if "handoff_keywords" in row:
+        hk = row["handoff_keywords"]
+        if isinstance(hk, str):
+            t_ = hk.strip()
+            if t_.startswith("["):
+                try:
+                    parsed = json.loads(t_)
+                    hk = parsed if isinstance(parsed, list) else None
+                except Exception:  # noqa: BLE001
+                    hk = None
+            elif t_:
+                hk = [x.strip() for x in t_.replace("\n", ",").replace(";", ",").split(",") if x.strip()]
+            else:
+                hk = None
+        if not isinstance(hk, list):
+            hk = None
+        else:
+            hk = [str(x).strip()[:120] for x in hk if str(x).strip()][:100] or None
+        row["handoff_keywords"] = hk
     if "warehouse_config" in row:
         wcv = row["warehouse_config"]
         if isinstance(wcv, str):
