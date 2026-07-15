@@ -17,7 +17,7 @@ from app.models.db_models import Event, Tenant
 logger = logging.getLogger("cx.events")
 
 # a widgetből fogadható event-fajták (whitelist)
-WIDGET_KINDS = {"link_click", "impression"}  # m30: impression = widget-boot munkamenetenkent egyszer (konverzios nevezo)
+WIDGET_KINDS = {"link_click", "impression", "purchase"}  # m30: impression = widget-boot munkamenetenkent egyszer (konverzios nevezo)
 
 _MD_LINK = re.compile(r"\[[^\]]+\]\((https?://[^)\s]+)\)")
 

@@ -81,6 +81,9 @@ sys.modules["app.models.db_models"] = fm
 ue = types.ModuleType("app.services.unanswered_export")
 ue.build_unanswered_xlsx = lambda rows, transcripts=None: b"PK-fake"
 sys.modules["app.services.unanswered_export"] = ue
+ce = types.ModuleType("app.services.conversations_export")
+ce.build_conversations_xlsx = lambda rows: b"xlsx"
+sys.modules["app.services.conversations_export"] = ce
 
 usage = _load("app.services.usage", f"{ROOT}/app/services/usage.py")
 unans = _load("app.services.unanswered", f"{ROOT}/app/services/unanswered.py")

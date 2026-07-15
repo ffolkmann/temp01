@@ -339,8 +339,16 @@ async def chat(req: ChatRequest, session: AsyncSession = Depends(get_session)):
         # widget-esemény (m22): csak whitelistelt fajta; ismeretlen -> csendes ack
         kind = (req.event or "").strip().lower()
         if kind in WIDGET_KINDS:
-            await log_event(session, req.client_id, req.session_id, kind,
-                            {"url": (req.url or "")[:500], "title": (req.title or "")[:200]})
+            meta = {"url": (req.url or "")[:500], "title": (req.title or "")[:200]}
+            if kind == "purchase":
+                # m48: chat-asszisztalt vasarlas - order_id / ertek / devizanem a widgettol
+                meta["order_id"] = str(req.order_id or "")[:64]
+                try:
+                    meta["value"] = float(req.value) if req.value is not None else None
+                except (TypeError, ValueError):
+                    meta["value"] = None
+                meta["currency"] = str(req.currency or "")[:8]
+            await log_event(session, req.client_id, req.session_id, kind, meta)
         return EventAck(stored="event")
 
     # nincs type -> üzenet

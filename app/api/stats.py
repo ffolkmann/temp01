@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_session
 from app.services.unanswered_export import build_unanswered_xlsx
+from app.services.conversations_export import build_conversations_xlsx
 
 logger = logging.getLogger("cx.stats")
 router = APIRouter()
@@ -109,6 +110,13 @@ async def stats(k: str = Query(...), session: AsyncSession = Depends(get_session
                  ), P)).mappings().all()]
 
     # --- beszélgetés-statisztika (m22, messages napló — 30 napos ablak) ---
+    # --- chat-asszisztalt vasarlasok (m48): darabszam az ev_by_kind-bol, ertek kulon ---
+    pv = {r["period"]: float(r["v"] or 0) for r in (await session.execute(text(
+        "SELECT to_char(created_at AT TIME ZONE 'Europe/Budapest','YYYY-MM') period, "
+        "COALESCE(SUM(NULLIF(meta->>'value','')::numeric),0) v "
+        "FROM events WHERE client_id=:c AND kind='purchase' GROUP BY 1"
+    ), P)).mappings().all()}
+
     avg_msgs = (await session.execute(text(
         "SELECT ROUND((COUNT(*)::numeric / NULLIF(COUNT(DISTINCT session_id),0)), 1) "
         "FROM messages WHERE client_id=:c"
@@ -256,6 +264,9 @@ async def stats(k: str = Query(...), session: AsyncSession = Depends(get_session
                             "top": top_links},
             "handoffs": {"total": _ev("handoff"), "current": _ev("handoff", cp)},
             "configurator": {"total": _ev("configurator"), "current": _ev("configurator", cp)},
+            "purchases": {"total": _ev("purchase"), "current": _ev("purchase", cp),
+                          "value_total": round(sum(pv.values())),
+                          "value_current": round(pv.get(cp, 0.0))},
         },
         "conversation_stats": {
             "avg_messages": float(avg_msgs) if avg_msgs is not None else 0.0,
@@ -409,3 +420,28 @@ async def admin_overview(
         for k in tot:
             tot[k] += row[k]
     return {"days": days, "rows": rows, "totals": tot}
+@router.get("/stats/conversations/export")
+async def stats_conversations_export(
+    k: str = Query(...), session: AsyncSession = Depends(get_session),
+) -> Response:
+    """XLSX-letoltes: a tenant OSSZES naplozott beszelgetese (m48, stat.html gomb).
+
+    Forras: a `messages` naplo (30 nap retention). Ket lap: session-onkent
+    osszevonva (legfrissebb felul) + nyers turn-naplo."""
+    tenant = (await session.execute(text(
+        "SELECT client_id FROM tenants WHERE stat_key = :k"
+    ), {"k": k})).mappings().first()
+    if tenant is None:
+        raise HTTPException(status_code=404, detail="ismeretlen stat_key")
+    cid = tenant["client_id"]
+    rows = (await session.execute(text(
+        "SELECT session_id, question, answer, action, created_at FROM messages "
+        "WHERE client_id=:c ORDER BY session_id, created_at, id"
+    ), {"c": cid})).mappings().all()
+    data = build_conversations_xlsx([dict(r) for r in rows])
+    fname = "beszelgetesek-%s-%s.xlsx" % (cid, datetime.now(BUDAPEST).strftime("%Y%m%d-%H%M"))
+    return Response(
+        content=data,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="%s"' % fname},
+    )

@@ -52,6 +52,11 @@ class ChatRequest(BaseModel):
     url: str | None = None
     title: str | None = None
 
+    # m48: purchase-event mezok (chat-asszisztalt vasarlas)
+    order_id: str | None = None
+    value: float | None = None
+    currency: str | None = None
+
     model_config = {"extra": "ignore"}
 
 
