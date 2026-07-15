@@ -16,12 +16,12 @@ maga commitál (a services/conversations.log_turn mintájára). Az olvasók nem.
 A hívó felel a fail-safe-ért (a /chat SOHA nem törhet meg emiatt).
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.db_models import ChatMessage, ChatSession
+from app.models.db_models import ChatMessage, ChatSession, Message
 
 # A látogatónak adott "várj, jön az operátor" válasz (handoff -> requested).
 LIVE_AGENT_WAIT_REPLY = (
@@ -105,18 +105,144 @@ async def list_queue(db: AsyncSession, client_id: str | None = None) -> list[dic
     return out
 
 
-async def get_conversation(db: AsyncSession, session_id: str, after: int = 0) -> dict:
-    """Operátor-nézet: teljes üzenetlista (minden sender) + állapot."""
+async def get_conversation(
+    db: AsyncSession, session_id: str, after: int = 0, client_id: str | None = None
+) -> dict:
+    """Operátor-nézet: teljes üzenetlista (minden sender) + állapot.
+
+    m46: bot-only sessionnél (nincs live-agent előzmény: chat_sessions sor
+    nincs vagy 'bot', és nincs chat_messages sor) a `messages` naplóból adunk
+    szintetikus átiratot (id=0 sorok, log_fallback=True) — az élő-monitor
+    nézethez. A poll-kurzort (after>0) nem zavarja.
+    """
     s = (
         await db.execute(select(ChatSession).where(ChatSession.session_id == session_id))
     ).scalar_one_or_none()
     msgs = await poll_messages(db, session_id, after, senders=None)
+    state = s.state if s else "bot"
+    cid = (s.client_id if s else "") or (client_id or "")
+    log_fallback = False
+    if not msgs and int(after or 0) <= 0 and state == "bot" and cid:
+        msgs = await transcript_rows(db, cid, session_id)
+        log_fallback = bool(msgs)
     return {
-        "state": s.state if s else "bot",
+        "state": state,
         "claimed_by": s.claimed_by if s else None,
-        "client_id": s.client_id if s else "",
+        "client_id": cid,
         "messages": msgs,
+        "log_fallback": log_fallback,
     }
+
+
+async def resolve_client_id(db: AsyncSession, session_id: str) -> str | None:
+    """m46: session -> client_id. Előbb chat_sessions, különben a `messages`
+    napló (bot-only sessionnek nincs chat_sessions sora). Ismeretlen -> None."""
+    if not session_id:
+        return None
+    cid = (
+        await db.execute(
+            select(ChatSession.client_id).where(ChatSession.session_id == session_id)
+        )
+    ).scalar_one_or_none()
+    if cid:
+        return str(cid)
+    cid = (
+        await db.execute(
+            select(Message.client_id)
+            .where(Message.session_id == session_id)
+            .order_by(Message.id.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    return str(cid) if cid else None
+
+
+async def transcript_rows(
+    db: AsyncSession, client_id: str, session_id: str, cap: int = 200
+) -> list[dict]:
+    """m46: a `messages` (turn-)napló -> chat_messages-kompatibilis sorok (id=0)."""
+    rows = (
+        await db.execute(
+            select(Message.question, Message.answer, Message.created_at)
+            .where(Message.client_id == client_id, Message.session_id == session_id)
+            .order_by(Message.created_at, Message.id)
+            .limit(int(cap))
+        )
+    ).all()
+    out: list[dict] = []
+    for q, a, ts in rows:
+        iso = ts.isoformat() if ts else None
+        if q:
+            out.append({"id": 0, "sender": "user", "text": str(q), "ts": iso})
+        if a:
+            out.append({"id": 0, "sender": "bot", "text": str(a), "ts": iso})
+    return out
+
+
+async def list_live(
+    db: AsyncSession, client_id: str | None = None, minutes: int = 30, limit: int = 50
+) -> list[dict]:
+    """m46/A: élő lista — aktív sessionök az utolsó `minutes` percből a
+    `messages` naplóból (ott minden turn megvan; chat_sessions sor csak handoff
+    után létezik), a chat_sessions állapotával kiegészítve (LEFT JOIN
+    jelleg, Python-oldalon). Listanézet: metaadat + utolsó turn."""
+    cutoff = _now() - timedelta(minutes=int(minutes or 30))
+    conds = [Message.created_at >= cutoff, Message.session_id.is_not(None)]
+    if client_id:
+        conds.append(Message.client_id == client_id)
+    agg = (
+        await db.execute(
+            select(
+                Message.session_id,
+                Message.client_id,
+                func.count(Message.id),
+                func.max(Message.created_at),
+                func.max(Message.id),
+            )
+            .where(*conds)
+            .group_by(Message.session_id, Message.client_id)
+            .order_by(func.max(Message.created_at).desc())
+            .limit(int(limit))
+        )
+    ).all()
+    out: list[dict] = []
+    for sid, cid, turns, last_ts, last_id in agg:
+        last = (
+            await db.execute(
+                select(Message.question, Message.answer).where(Message.id == last_id)
+            )
+        ).first()
+        out.append(
+            {
+                "session_id": sid,
+                "client_id": cid,
+                "turns": int(turns or 0),
+                "last_ts": last_ts.isoformat() if last_ts else None,
+                "last_question": str((last[0] if last else "") or "")[:120],
+                "last_answer": str((last[1] if last else "") or "")[:160],
+                "state": "bot",
+                "claimed_by": None,
+            }
+        )
+    if out:
+        srows = (
+            (
+                await db.execute(
+                    select(ChatSession).where(
+                        ChatSession.session_id.in_([r["session_id"] for r in out])
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        smap = {s.session_id: s for s in srows}
+        for r in out:
+            srow = smap.get(r["session_id"])
+            if srow is not None:
+                r["state"] = srow.state or "bot"
+                r["claimed_by"] = srow.claimed_by
+    return out
 
 
 # --------------------------------------------------------------------------- #
@@ -178,6 +304,28 @@ async def claim_session(db: AsyncSession, session_id: str, operator: str) -> boo
     n = res.rowcount or 0
     await db.commit()
     return n > 0
+
+
+async def takeover_session(
+    db: AsyncSession, client_id: str, session_id: str, operator: str
+) -> str:
+    """m46/B: proaktív átvétel BÁRMELY sessionre. Vissza: 'ok' | 'conflict'.
+
+    bot / nincs-sor / requested / closed -> operator (get-or-create + claim);
+    MÁSIK operátor aktív ('operator') sessionje -> 'conflict' — a WHERE-guard
+    atomi. Ugyanaz az operátor -> idempotens 'ok' (claimed_at frissül). Commitál."""
+    await _ensure_row(db, client_id, session_id)
+    res = await db.execute(
+        update(ChatSession)
+        .where(
+            ChatSession.session_id == session_id,
+            or_(ChatSession.state != "operator", ChatSession.claimed_by == operator),
+        )
+        .values(state="operator", claimed_by=operator, claimed_at=_now())
+    )
+    n = res.rowcount or 0
+    await db.commit()
+    return "ok" if n > 0 else "conflict"
 
 
 async def operator_send(db: AsyncSession, session_id: str, operator: str, text: str) -> int | None:
