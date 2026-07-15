@@ -34,15 +34,18 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_session
+from app.core.redis import get_redis
 from app.models.db_models import ChatMessage, ChatSession, Tenant
 from app.services.conversations import format_transcript, get_transcript
 from app.services.live_agent import (
     add_message as la_add_message,
     claim_session,
+    clear_takeover,
     close_session,
     get_conversation,
     list_live,
     list_queue,
+    mark_takeover,
     operator_send,
     resolve_client_id,
     takeover_session,
@@ -133,6 +136,9 @@ async def operator_claim(request: Request, session: AsyncSession = Depends(get_s
     sid = str(b.get("session_id") or "")
     await _assert_in_scope(session, sid, scope)
     ok = await claim_session(session, sid, str(b.get("operator") or "operator"))
+    if ok:
+        # m47: atvetel-flag a Redisbe -> a widget state-pollja azonnal latja
+        await mark_takeover(get_redis(), sid, str(b.get("operator") or "operator"))
     return {"ok": True, "claimed": ok}
 
 
@@ -158,6 +164,7 @@ async def operator_close(request: Request, session: AsyncSession = Depends(get_s
     sid = str(b.get("session_id") or "")
     await _assert_in_scope(session, sid, scope)
     await close_session(session, sid)
+    await clear_takeover(get_redis(), sid)
     return {"ok": True}
 
 
@@ -204,6 +211,7 @@ async def operator_takeover(request: Request, session: AsyncSession = Depends(ge
     outcome = await takeover_session(session, cid, sid, operator)
     if outcome == "conflict":
         return JSONResponse({"error": "claimed_by_other"}, status_code=409)
+    await mark_takeover(get_redis(), sid, operator)
     # bot-előzmény becsatolása (csak ha még nincs live-agent üzenet a sessionben)
     try:
         has_any = (

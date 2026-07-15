@@ -350,3 +350,75 @@ async def close_session(db: AsyncSession, session_id: str) -> None:
         .values(state="closed", closed_at=_now())
     )
     await db.commit()
+
+
+# --------------------------------------------------------------------------- #
+# m47/C: widget state-poll (Redis-first) + takeover-flag
+# --------------------------------------------------------------------------- #
+TAKEOVER_TTL = 3600      # s -- az atvetel-flag elettartama a Redisben
+_STATE_CACHE_TTL = 20    # s -- rovid negativ cache: a DB-t kimeli a widget-poll
+
+
+def _takeover_key(session_id: str) -> str:
+    return f"cx:live:takeover:{session_id}"
+
+
+def _state_cache_key(session_id: str) -> str:
+    return f"cx:live:statecache:{session_id}"
+
+
+async def mark_takeover(redis, session_id: str, operator: str = "operator") -> None:
+    """m47: atvetel-flag a Redisbe (claim/takeover utan hivja az operator API).
+
+    A cache-kulcsot is toroljuk, hogy a widget kovetkezo state-pollja AZONNAL
+    'operator'-t lasson (a rovid negativ cache ne kesleltesse). Fail-safe."""
+    if not session_id:
+        return
+    try:
+        await redis.set(_takeover_key(session_id), operator or "operator", ex=TAKEOVER_TTL)
+        await redis.delete(_state_cache_key(session_id))
+    except Exception:  # noqa: BLE001 - Redis-hiba ne torje az operator-muveletet
+        pass
+
+
+async def clear_takeover(redis, session_id: str) -> None:
+    """m47: atvetel-flag torlese (close utan). Fail-safe."""
+    if not session_id:
+        return
+    try:
+        await redis.delete(_takeover_key(session_id))
+        await redis.delete(_state_cache_key(session_id))
+    except Exception:  # noqa: BLE001
+        pass
+
+
+async def session_live_state(db: AsyncSession, redis, session_id: str) -> str:
+    """m47/C: konnyu allapot a widget-pollnak -> 'bot' | 'operator'.
+
+    Redis-first (cx:live:takeover:<sid>), utana rovid negativ cache; DB csak
+    cache-miss eseten (get_session_state). 'operator' -> 'operator', minden mas
+    (bot/requested/closed/ismeretlen) -> 'bot'. Fail-safe: hiba -> 'bot'."""
+    if not session_id:
+        return "bot"
+    try:
+        if await redis.get(_takeover_key(session_id)):
+            return "operator"
+        cached = await redis.get(_state_cache_key(session_id))
+        if cached:
+            return "operator" if cached == "operator" else "bot"
+    except Exception:  # noqa: BLE001 - Redis-hiba -> DB-fallback
+        pass
+    try:
+        state = await get_session_state(db, "", session_id)
+    except Exception:  # noqa: BLE001
+        return "bot"
+    out = "operator" if state == "operator" else "bot"
+    try:
+        if out == "operator":
+            # self-heal: flag potlas (pl. Redis-restart vagy deploy elotti claim)
+            await redis.set(_takeover_key(session_id), "operator", ex=TAKEOVER_TTL)
+        else:
+            await redis.set(_state_cache_key(session_id), out, ex=_STATE_CACHE_TTL)
+    except Exception:  # noqa: BLE001
+        pass
+    return out

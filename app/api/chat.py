@@ -42,6 +42,7 @@ from app.services.live_agent import (
     get_session_state,
     poll_messages,
     request_operator,
+    session_live_state,
 )
 from app.services.live_product import fetch_live_price_stock
 from app.services.operator_hours import operators_available
@@ -361,3 +362,15 @@ async def chat_poll(
     state = await get_session_state(session, client_id, session_id)
     messages = await poll_messages(session, session_id, after, senders=("operator",))
     return {"state": state, "messages": messages}
+@router.get("/chat/state")
+async def chat_state(
+    client_id: str = Query(...),
+    session_id: str = Query(...),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """m47/C: konnyu widget state-poll -> {"state": "bot" | "operator"}.
+
+    Redis-first (nagy forgalmu polling-cel, a DB-t kimeljuk), DB csak
+    cache-miss eseten (session_live_state). A widget nyitott panel + bot-mod
+    mellett ritkan (~25 s) pollolja; 'operator' -> azonnali operator-mod."""
+    return {"state": await session_live_state(session, get_redis(), session_id)}
