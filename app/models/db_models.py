@@ -69,6 +69,8 @@ class Tenant(Base):
     operator_bot_token: Mapped[str | None] = mapped_column(String)                                      # m31: per-tenant Telegram bot token (BotFather)
     sync_instock_only: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")    # m35: csak raktáron lévő termékek szinkronja
     handoff_keywords: Mapped[list | None] = mapped_column(JSONB)                                      # m50: tenant-specifikus elo-atadas kifejezesek (lista)
+    quick_questions: Mapped[list | None] = mapped_column(JSONB)                                       # m52: gyorskerdes-gombok (lista)
+    quick_questions_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")  # m52: gyorskerdesek be/ki
 
 
 class Plan(Base):

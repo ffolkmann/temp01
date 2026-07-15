@@ -112,6 +112,11 @@ def _config_body(t: Tenant | None) -> dict[str, Any]:
         "auto_open_delay": _num(t.auto_open_delay if t else None, 25),
         "proactive_message": (t.proactive_message or "") if t else "",
         "proactive_product_message": (t.proactive_product_message or "") if t else "",
+        "quick_questions": (
+            [str(x)[:120] for x in t.quick_questions][:10]
+            if (t and bool(t.quick_questions_enabled) and isinstance(t.quick_questions, list))
+            else []
+        ),
         "popup": {
             "enabled": pc.get("enabled") is True,
             "trigger_product": pc.get("trigger_product") is True,
@@ -223,6 +228,8 @@ def _tenant_to_dict(t: Tenant) -> dict[str, Any]:
     )
     hk = d.get("handoff_keywords")  # m51: az admin vesszos szovegkent szerkeszti
     d["handoff_keywords"] = ", ".join(str(x) for x in hk) if isinstance(hk, list) else (hk or "")
+    qq = d.get("quick_questions")  # m52: az admin soronkent szerkeszti
+    d["quick_questions"] = "\n".join(str(x) for x in qq) if isinstance(qq, list) else (qq or "")
     return d
 
 
@@ -240,6 +247,28 @@ def _iso(dt: Any) -> str:
         return dt.isoformat()
     except Exception:  # noqa: BLE001
         return str(dt)
+
+
+def _parse_quick_questions(val: Any) -> list | None:
+    """m52: soronkent elvalasztott szoveg vagy JSON-tomb -> lista; ures -> None."""
+    qq = val
+    if isinstance(qq, str):
+        t_ = qq.strip()
+        if t_.startswith("["):
+            try:
+                parsed = json.loads(t_)
+                qq = parsed if isinstance(parsed, list) else None
+            except Exception:  # noqa: BLE001
+                qq = None
+        elif t_:
+            qq = [x.strip() for x in t_.split("\n") if x.strip()]
+        else:
+            qq = None
+    if not isinstance(qq, list):
+        qq = None
+    else:
+        qq = [str(x).strip()[:120] for x in qq if str(x).strip()][:10] or None
+    return qq
 
 
 async def _save_config(session: AsyncSession, row_in: dict[str, Any]) -> dict[str, Any]:
@@ -268,7 +297,7 @@ async def _save_config(session: AsyncSession, row_in: dict[str, Any]) -> dict[st
     if "search_fallback" in row:
         row["search_fallback"] = _as_bool(row["search_fallback"])
     # m28 élő operátor: bool-kapcsolók + operator_hours JSONB (launcher_config mintájára)
-    for _laf in ("live_agent_enabled", "handoff_bot_silent"):
+    for _laf in ("live_agent_enabled", "handoff_bot_silent", "quick_questions_enabled"):
         if _laf in row:
             row[_laf] = _as_bool(row[_laf])
     if "operator_hours" in row and isinstance(row["operator_hours"], str):
@@ -297,6 +326,9 @@ async def _save_config(session: AsyncSession, row_in: dict[str, Any]) -> dict[st
         else:
             hk = [str(x).strip()[:120] for x in hk if str(x).strip()][:100] or None
         row["handoff_keywords"] = hk
+    # m52: quick_questions - soronkenti szoveg vagy JSON-tomb -> jsonb lista; ures -> NULL
+    if "quick_questions" in row:
+        row["quick_questions"] = _parse_quick_questions(row["quick_questions"])
     if "warehouse_config" in row:
         wcv = row["warehouse_config"]
         if isinstance(wcv, str):
