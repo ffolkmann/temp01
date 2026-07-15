@@ -203,6 +203,18 @@ def detect_handoff(
     is_handoff = bool(_HANDOFF_STRONG.search(a)) or bool(
         _HANDOFF_PERSON.search(a) and _HANDOFF_VERB.search(a)
     )
+    # m50: tenant-specifikus kifejezes-lista (tenants.handoff_keywords, jsonb tomb).
+    # Sima reszlet-egyezes ekezet-strip + lowercase utan (nem regex - a kliens-adat
+    # ne torhesse a matchet). 3 karakternel rovidebb elem nem szamit.
+    if not is_handoff:
+        try:
+            for kw in (getattr(tenant, "handoff_keywords", None) or []):
+                k = _ascii_fold(kw).strip()
+                if len(k) >= 3 and k in a:
+                    is_handoff = True
+                    break
+        except Exception:  # noqa: BLE001 - hibas config ne torje a chatet
+            pass
     # m32: ha a BOT ajanlotta fel az elo atadast, a puszta "igen" is atadas
     # (a regi mintak csak akkor kapcsoltak, ha a latogato maga kerte az embert)
     if not is_handoff and accepted_offer(msg, history):
