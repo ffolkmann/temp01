@@ -73,6 +73,7 @@ logger = logging.getLogger("cx.chat")
 router = APIRouter()
 
 _FALLBACK = "Elnézést, most nem tudok válaszolni."
+_FALLBACK_BUSY = "Elnézést, éppen nagyon sokan kérdeznek. Kérlek, próbáld újra pár másodperc múlva!"  # m53: 529
 
 
 async def _get_tenant(session: AsyncSession, client_id: str) -> Tenant | None:
@@ -286,10 +287,11 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
 
     try:
         raw = await generate_reply(system_prompt, req.history, message)
-    except Exception:  # noqa: BLE001 — a widget mindig kapjon választ
+    except Exception as _llm_err:  # noqa: BLE001 — a widget mindig kapjon választ
         logger.exception("LLM hívás hiba")
-        await log_turn(session, req.client_id, req.session_id, message, _FALLBACK)
-        return ChatResponse(reply=_FALLBACK)
+        _fb = _FALLBACK_BUSY if getattr(_llm_err, "status_code", None) == 529 else _FALLBACK
+        await log_turn(session, req.client_id, req.session_id, message, _fb)
+        return ChatResponse(reply=_fb)
 
     parsed = parse_reply(raw)
     # m25: search_fallback zaro-link determinisztikusan (az LLM nem mindig teszi be magatol)
