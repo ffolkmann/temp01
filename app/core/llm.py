@@ -12,6 +12,7 @@ _settings = get_settings()
 _client = AsyncAnthropic(api_key=_settings.anthropic_api_key)
 
 _RETRY_SLEEPS = (1.5, 3.0)  # m53: 529-re ennyi varakozas a 2. es 3. probalkozas elott
+_FALLBACK_MODEL = "claude-sonnet-4-6"  # m54: ha a fo modell 529-re kimerul, egy proba evvel
 
 
 async def generate_reply(
@@ -47,8 +48,17 @@ async def generate_reply(
             )
             break
         except APIStatusError as err:
-            if getattr(err, "status_code", None) != 529 or _delay is None:
+            if getattr(err, "status_code", None) != 529:
                 raise
+            if _delay is None:
+                # m54: a fo modell tuloterhelt — utolso probalkozas masik tierrel
+                resp = await _client.messages.create(
+                    model=_FALLBACK_MODEL,
+                    max_tokens=_settings.max_tokens,
+                    system=system_prompt,
+                    messages=messages,
+                )
+                break
             await asyncio.sleep(_delay + random.uniform(0, 0.5))
     # válasz: content[0].text (manual 1.)
     parts = [b.text for b in resp.content if getattr(b, "type", None) == "text"]

@@ -24,9 +24,11 @@ class _FakeMessages:
     def __init__(self):
         self.calls = 0
         self.script = []
+        self.models = []
 
     async def create(self, **kw):
         self.calls += 1
+        self.models.append(kw.get("model"))
         act = self.script.pop(0)
         if isinstance(act, Exception):
             raise act
@@ -87,11 +89,19 @@ async def test_529_then_success():
     assert m.calls == 3
 
 
-async def test_529_exhausted_raises():
-    m = _fresh_client([FakeStatusError(529)] * 3)
+async def test_529_exhausted_falls_back_to_sonnet():
+    m = _fresh_client([FakeStatusError(529)] * 3 + [_ok_resp("sonnet-valasz")])
+    assert await _llm.generate_reply("sys", [], "hi") == "sonnet-valasz"
+    assert m.calls == 4
+    assert m.models[-1] == _llm._FALLBACK_MODEL
+    assert m.models[0] != _llm._FALLBACK_MODEL
+
+
+async def test_529_everything_down_raises():
+    m = _fresh_client([FakeStatusError(529)] * 4)
     with pytest.raises(FakeStatusError):
         await _llm.generate_reply("sys", [], "hi")
-    assert m.calls == 3
+    assert m.calls == 4
 
 
 async def test_non_529_raises_immediately():
