@@ -329,6 +329,9 @@ async def _save_config(session: AsyncSession, row_in: dict[str, Any]) -> dict[st
     # m52: quick_questions - soronkenti szoveg vagy JSON-tomb -> jsonb lista; ures -> NULL
     if "quick_questions" in row:
         row["quick_questions"] = _parse_quick_questions(row["quick_questions"])
+    # m55: chat_model — ures string -> NULL (globalis default)
+    if "chat_model" in row:
+        row["chat_model"] = str(row["chat_model"] or "").strip()[:64] or None
     if "warehouse_config" in row:
         wcv = row["warehouse_config"]
         if isinstance(wcv, str):

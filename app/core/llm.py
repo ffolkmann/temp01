@@ -19,6 +19,7 @@ async def generate_reply(
     system_prompt: str,
     history: list[HistoryItem],
     message: str,
+    model: str | None = None,
 ) -> str:
     """A history utolsó (max 10) üzenete + az aktuális message a user turn.
 
@@ -36,12 +37,13 @@ async def generate_reply(
     while messages and messages[0]["role"] != "user":
         messages.pop(0)
 
+    _model = (model or "").strip() or _settings.chat_model  # m55: tenant-szintu felulbiralat
     # m53: 529 (overloaded_error) — app-szintu ujraprobalas az SDK sajat retry-jai folott
     resp = None
     for _delay in (*_RETRY_SLEEPS, None):
         try:
             resp = await _client.messages.create(
-                model=_settings.chat_model,
+                model=_model,
                 max_tokens=_settings.max_tokens,
                 system=system_prompt,
                 messages=messages,

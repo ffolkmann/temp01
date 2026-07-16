@@ -286,7 +286,7 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
     )
 
     try:
-        raw = await generate_reply(system_prompt, req.history, message)
+        raw = await generate_reply(system_prompt, req.history, message, model=getattr(tenant, "chat_model", None))
     except Exception as _llm_err:  # noqa: BLE001 — a widget mindig kapjon választ
         logger.exception("LLM hívás hiba")
         _fb = _FALLBACK_BUSY if getattr(_llm_err, "status_code", None) == 529 else _FALLBACK

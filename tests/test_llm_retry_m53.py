@@ -109,3 +109,15 @@ async def test_non_529_raises_immediately():
     with pytest.raises(FakeStatusError):
         await _llm.generate_reply("sys", [], "hi")
     assert m.calls == 1
+
+
+async def test_model_override_used():
+    m = _fresh_client([_ok_resp()])
+    await _llm.generate_reply("sys", [], "hi", model="custom-model")
+    assert m.models == ["custom-model"]
+
+
+async def test_default_model_when_no_override():
+    m = _fresh_client([_ok_resp()])
+    await _llm.generate_reply("sys", [], "hi")
+    assert m.models == ["m"]

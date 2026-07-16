@@ -71,6 +71,7 @@ class Tenant(Base):
     handoff_keywords: Mapped[list | None] = mapped_column(JSONB)                                      # m50: tenant-specifikus elo-atadas kifejezesek (lista)
     quick_questions: Mapped[list | None] = mapped_column(JSONB)                                       # m52: gyorskerdes-gombok (lista)
     quick_questions_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")  # m52: gyorskerdesek be/ki
+    chat_model: Mapped[str | None] = mapped_column(String)                                            # m55: tenant-szintu modell-felulbiralat (NULL = globalis default)
 
 
 class Plan(Base):
