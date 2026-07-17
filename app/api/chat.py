@@ -295,6 +295,22 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
         return ChatResponse(reply=_fb)
 
     parsed = parse_reply(raw)
+    # m62: szuperlativusz/keszlet-modnal determinisztikus kereso-link a valasz vegen
+    # (mint az m25-os zarolink) — a latogato egy kattintassal a bolt keresojeben folytathatja.
+    if _rmode and not shop_hits:
+        _su2 = _shop_search_url(tenant)
+        if _su2 and _su2 not in parsed.reply and u"További találatok a webáruházban" not in parsed.reply:
+            from app.services.superlative import topic_of as _topic_of  # pure fuggveny
+            _q2 = (_topic_of(message) or "").strip() or (build_queries(message) or [message[:60]])[0]
+            _newreply2 = (
+                parsed.reply.rstrip()
+                + u"\n\n[További találatok a webáruházban](" + _su2 + quote_plus(_q2) + u")"
+            )
+            try:
+                parsed.reply = _newreply2
+            except Exception:  # noqa: BLE001 — frozen dataclass eseten
+                from dataclasses import replace as _dc_replace2
+                parsed = _dc_replace2(parsed, reply=_newreply2)
     # m25: search_fallback zaro-link determinisztikusan (az LLM nem mindig teszi be magatol)
     if shop_hits:
         _su = _shop_search_url(tenant)
