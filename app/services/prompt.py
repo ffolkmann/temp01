@@ -210,6 +210,23 @@ def _live_block(live: LivePriceStock, name: str) -> str:
     )
 
 
+_M63_STOCK_FIRST = (
+    u"A tal\u00e1lataid term\u00e9kein\u00e9l szerepel a k\u00e9szlet-\u00e1llapot. Amikor TE "
+    u"aj\u00e1nlasz term\u00e9ket (a l\u00e1togat\u00f3 nem egy konkr\u00e9t, \u00e1ltala megnevezett "
+    u"term\u00e9kre k\u00e9rdez), KIZ\u00c1R\u00d3LAG rakt\u00e1ron l\u00e9v\u0151 term\u00e9ket "
+    u"aj\u00e1nlj; a nem rakt\u00e1ron l\u00e9v\u0151ket hagyd ki az aj\u00e1nl\u00e1sb\u00f3l. "
+    u"Nem rakt\u00e1ron l\u00e9v\u0151 term\u00e9ket csak akkor eml\u00edts, ha: (1) a "
+    u"l\u00e1togat\u00f3 konkr\u00e9tan arra a term\u00e9kre k\u00e9rdez r\u00e1 (n\u00e9vvel, "
+    u"cikksz\u00e1mmal, linkkel) \u2014 ilyenkor v\u00e1laszolj r\u00f3la, \u00e9s jelezd, hogy "
+    u"nincs rakt\u00e1ron; vagy (2) a k\u00e9rd\u00e9sre illeszked\u0151 rakt\u00e1ron l\u00e9v\u0151 "
+    u"tal\u00e1latod nincs \u2014 ilyenkor mondd ki, hogy az \u00e1ltalad l\u00e1tott rakt\u00e1ron "
+    u"l\u00e9v\u0151 tal\u00e1latok k\u00f6z\u00f6tt most nincs ilyen, \u00e9s aj\u00e1nld a webshop "
+    u"keres\u0151j\u00e9t. Ha nem rakt\u00e1ron l\u00e9v\u0151 term\u00e9ket eml\u00edtesz, MINDIG "
+    u"jelezd egy\u00e9rtelm\u0171en, hogy nincs rakt\u00e1ron. Kiv\u00e9tel: ha a # KERESESI MOD "
+    u"blokk m\u00e1st mond, az az ir\u00e1nyad\u00f3."
+)
+
+
 def _shop_search_url(tenant) -> str:
     """A bolt frontend-keresojenek link-sablonja platformonkent (m25)."""
     pub = str(getattr(tenant, "public_url", "") or "").rstrip("/")
@@ -274,6 +291,15 @@ def build_system_prompt(
     chunks = _chunks(hits)
     context = "\n\n---\n\n".join(chunks) if chunks else "(nincs talalat a tudasbazisban)"
     system += "\n\n# TUDASBAZIS\n" + context
+
+    # m63: keszlet-alapu ajanlas — alapertelmezetten CSAK raktaron levot ajanlunk.
+    # Csak ott, ahol van szinkronizalt keszlet-adat (webdoc/SR/Unas/Woo); Sellvional nem.
+    try:
+        from app.services.superlative import availability as _avail_m63
+        if any(_avail_m63(h) is not None for h in (hits or [])):
+            system += u"\n\n# K\u00c9SZLET-ALAP\u00da AJ\u00c1NL\u00c1S\n" + _M63_STOCK_FIRST
+    except Exception:  # noqa: BLE001 — a szabaly hianya ne torje a promptot
+        pass
 
     # m58: strukturalt keszlet-szures jelzese (szuperlativusz + "raktaron levo")
     if retrieval_note:
