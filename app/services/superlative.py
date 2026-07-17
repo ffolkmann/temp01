@@ -280,6 +280,40 @@ def _price_floor_filter(hits: list[dict], ratio: float = 0.2) -> list[dict]:
     return out or hits
 
 
+def needs_available_boost(hits: list[dict]) -> bool:
+    """m64: igaz, ha a kontextus termekei kozott NINCS raktaron levo, de van keszlet-adat.
+
+    Ilyenkor az m63-as "csak raktarost ajanlj" szabalynak nincs mibol ajanlania —
+    a retrieval available-szurt jelolteket fuz hozza.
+    """
+    avails = [availability(h) for h in hits if _is_product(h)]
+    if not avails:
+        return False
+    return not any(a is True for a in avails) and any(a is not None for a in avails)
+
+
+def merge_available_extras(hits: list[dict], pool: list[dict], k: int = 3) -> list[dict]:
+    """m64: legfeljebb k raktaros jelolt hozzafuzese a kontextushoz (relevancia-sorrend, dedup)."""
+    def _k(h: dict):
+        if h.get("id") is not None:
+            return ("id", str(h.get("id")))
+        pl = h.get("payload", {}) or {}
+        return ("nu", str(pl.get("name") or ""), str(pl.get("url") or ""))
+
+    seen = {_k(h) for h in hits}
+    out = list(hits)
+    added = 0
+    for h in pool or []:
+        if added >= k:
+            break
+        if _k(h) in seen or not _is_product(h) or availability(h) is not True:
+            continue
+        out.append(h)
+        seen.add(_k(h))
+        added += 1
+    return out
+
+
 def _sorted_by_price(hits: list[dict], direction: str, top_n: int) -> list[dict]:
     """Sima ar-rendezes MIN-3 kuszob nelkul (a keszlet-szurt reszhalmazon 1-2 talalat is ervenyes)."""
     priced: list[tuple[float, dict]] = []

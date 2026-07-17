@@ -227,3 +227,34 @@ def test_price_floor_failsafe_all_cheap():
     out, mode = S.price_context_stock(pool, "asc", 4, True, avail_pool=pool)
     assert mode == S.STOCK_FILTERED
     assert out and out[0]["id"] == "a"  # homogen olcso tema: a padlo nem vag ki semmit
+
+
+def test_needs_available_boost():
+    assert S.needs_available_boost([
+        _hit("a", price="100", available=False),
+        _hit("b", price="200", available=False),
+    ]) is True
+    assert S.needs_available_boost([
+        _hit("a", price="100", available=False),
+        _hit("b", price="200", available=True),
+    ]) is False
+    assert S.needs_available_boost([
+        _hit("a", price="100"),
+        _hit("b", price="200"),
+    ]) is False
+    assert S.needs_available_boost([]) is False
+
+
+def test_merge_available_extras():
+    hits = [_hit("a", price="100", available=False, score=0.9)]
+    pool = [
+        _hit("a", price="100", available=False, score=0.9),   # duplikatum
+        _hit("x", price="300", available=True, score=0.8),
+        _hit("y", price="400", available=False, score=0.7),   # nem raktaros -> kimarad
+        _hit("z", price="500", available=True, score=0.6),
+        _hit("w", price="600", available=True, score=0.5),
+        _hit("v", price="700", available=True, score=0.4),    # k=3 folott -> kimarad
+    ]
+    out = S.merge_available_extras(hits, pool, 3)
+    ids = [h["id"] for h in out]
+    assert ids == ["a", "x", "z", "w"]

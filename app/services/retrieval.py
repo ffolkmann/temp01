@@ -31,9 +31,9 @@ async def retrieve(
     from app.services.rerank import rerank  # késleltetett import a körkörösség elkerülésére
     from app.services.policy_filter import filter_for_policy, policy_embed_input  # m34
     from app.services.query_cleanup import product_query_cleanup  # m36: zaj-tisztitas
-    from app.services.superlative import (  # m38/m39/m40/m58
+    from app.services.superlative import (  # m38/m39/m40/m58/m64
         AVAIL_WIDE_LIMIT, WIDE_LIMIT, detect_price_superlative, detect_stock_filter,
-        price_context_stock, topic_of,
+        merge_available_extras, needs_available_boost, price_context_stock, topic_of,
     )
 
     # m34: policy-kerdesnel a beagyazando query-t policy-kulcsszavakkal dusitjuk, hogy a dense
@@ -102,4 +102,16 @@ async def retrieve(
     # a modell csak a hivatalos KB-szoveget lassa. (A hits mar szurt volt, de a rerank a teljes
     # bemenetbol valogat -> itt a vegleges top_n-en ervenyesitjuk.)
     reranked = filter_for_policy(message, reranked)
+    # m64: ha a kontextus termekei kozott nincs raktaron levo, de van keszlet-adat,
+    # max 3 raktaros jeloltet fuzunk hozza relevancia szerint (available-szurt keresesbol),
+    # hogy az m63-as "csak raktarost ajanlj" szabalynak legyen mibol ajanlania.
+    if needs_available_boost(reranked):
+        try:
+            _pool64 = await qdrant.search(
+                vector=vector, client_id=client_id, limit=40,
+                product_only=True, available_only=True,
+            )
+            reranked = merge_available_extras(reranked, _pool64, 3)
+        except Exception:  # noqa: BLE001 — a boost hibaja ne torje a chatet
+            pass
     return reranked, top_score, _mode
