@@ -143,3 +143,46 @@ def test_stock_hint_absent_without_stock_data():
 
 def test_stock_notes_has_hint():
     assert S.STOCK_HINT in S.STOCK_NOTES
+
+
+def test_avail_pool_used_for_extras():
+    hits = [
+        _hit("olcsoNincs", price="85000", available=False, score=0.9),
+        _hit("kozepNincs", price="120000", available=False, score=0.8),
+        _hit("dragaVan", price="325000", available=True, score=0.7),
+    ]
+    pool = [
+        _hit("legolcsobbVan", price="109000", available=True, score=0.6),
+        _hit("masodikVan", price="119000", available=True, score=0.55),
+        _hit("dragaVan", price="325000", available=True, score=0.7),
+    ]
+    out, mode = S.price_context_stock(hits, "asc", 4, False, avail_pool=pool)
+    assert mode == S.STOCK_HINT
+    ids = [h["id"] for h in out]
+    assert "legolcsobbVan" in ids and "masodikVan" in ids
+
+
+def test_avail_pool_used_for_stock_only():
+    hits = [
+        _hit("olcsoNincs", price="85000", available=False, score=0.9),
+        _hit("dragaVan", price="325000", available=True, score=0.7),
+    ]
+    pool = [
+        _hit("legolcsobbVan", price="109000", available=True, score=0.6),
+        _hit("dragaVan", price="325000", available=True, score=0.7),
+    ]
+    out, mode = S.price_context_stock(hits, "asc", 8, True, avail_pool=pool)
+    assert mode == S.STOCK_FILTERED
+    assert out[0]["id"] == "legolcsobbVan"
+    assert all(S.availability(h) is True for h in out)
+
+
+def test_avail_pool_none_falls_back_to_hits():
+    hits = [
+        _hit("noteA", price="200000", available=True, score=0.9),
+        _hit("noteB", price="150000", available=False, score=0.8),
+        _hit("noteC", price="300000", available=True, score=0.7),
+    ]
+    out, mode = S.price_context_stock(hits, "asc", 8, True, avail_pool=None)
+    assert mode == S.STOCK_FILTERED
+    assert [h["id"] for h in out] == ["noteA", "noteC"]

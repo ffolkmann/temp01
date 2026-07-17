@@ -32,7 +32,8 @@ async def retrieve(
     from app.services.policy_filter import filter_for_policy, policy_embed_input  # m34
     from app.services.query_cleanup import product_query_cleanup  # m36: zaj-tisztitas
     from app.services.superlative import (  # m38/m39/m40/m58
-        WIDE_LIMIT, detect_price_superlative, detect_stock_filter, price_context_stock, topic_of,
+        AVAIL_WIDE_LIMIT, WIDE_LIMIT, detect_price_superlative, detect_stock_filter,
+        price_context_stock, topic_of,
     )
 
     # m34: policy-kerdesnel a beagyazando query-t policy-kulcsszavakkal dusitjuk, hogy a dense
@@ -71,7 +72,22 @@ async def retrieve(
     if superlative:
         # m40: fele ar-veg + fele tema-relevancia -- kiegeszito-beszivargas ellen (copygo eles eset)
         # m58: keszlet-szuro ("raktaron levo") -> csak available==True jeloltek; a mode a promptnak megy
-        by_price, _mode = price_context_stock(hits, superlative, _settings.context_top_n, stock_only)
+        # m60: available==True SZURT dense pool kozvetlenul a Qdrantbol — a szuretlen 120-as
+        # poolbol az olcso raktaros gepek kiszorulhatnak (eles eset: Vivobook 109 900 raktaron,
+        # de a pool legolcsobb raktarosa 325 990 volt). SR/Unas-nal (nincs available mezo) a
+        # filter 0 talalatot ad -> fallback a pool klienses szuresere (avail_pool=None).
+        avail_pool = None
+        try:
+            _ap = await qdrant.search(
+                vector=vector, client_id=client_id,
+                limit=AVAIL_WIDE_LIMIT, product_only=True, available_only=True,
+            )
+            avail_pool = _ap or None
+        except Exception:  # noqa: BLE001 — a szurt pool hibaja ne torje a chatet
+            avail_pool = None
+        by_price, _mode = price_context_stock(
+            hits, superlative, _settings.context_top_n, stock_only, avail_pool=avail_pool
+        )
         if by_price:
             return by_price, top_score, _mode
     reranked = rerank(

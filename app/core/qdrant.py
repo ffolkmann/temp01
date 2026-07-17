@@ -28,11 +28,14 @@ class QdrantClient:
         client_id: str,
         limit: int = 30,
         product_only: bool = True,
+        available_only: bool = False,
     ) -> list[dict[str, Any]]:
         """Dense keresés client_id payload-szűréssel."""
         must: list[dict[str, Any]] = [{"key": "client_id", "match": {"value": client_id}}]
         if product_only:
             must.append({"key": "type", "match": {"value": "product"}})
+        if available_only:  # m60: keszlet-szurt dense pool (webdoc/Woo available bool payload)
+            must.append({"key": "available", "match": {"value": True}})
         body = {
             "vector": vector,
             "filter": {"must": must},

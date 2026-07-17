@@ -20,6 +20,8 @@ import unicodedata
 
 # szelesebb pool szuperlativusz-kerdesnel (a 24 helyett)
 WIDE_LIMIT = 120
+# m60: az available==True SZURT dense pool merete (a raktaros jeloltekhez)
+AVAIL_WIDE_LIMIT = 300
 
 _ASC_RE = re.compile(r"legolcsobb|legkedvezobb\s+ar|legalacsonyabb\s+ar|legjobb\s+ar")
 _DESC_RE = re.compile(r"legdragabb|legmagasabb\s+ar")
@@ -261,7 +263,8 @@ def _sorted_by_price(hits: list[dict], direction: str, top_n: int) -> list[dict]
 
 
 def price_context_stock(
-    hits: list[dict], direction: str, top_n: int, stock_only: bool
+    hits: list[dict], direction: str, top_n: int, stock_only: bool,
+    avail_pool: list[dict] | None = None,
 ) -> tuple[list[dict], str]:
     """(context_hits, mode) -- mode: "" | STOCK_FILTERED | STOCK_NONE | STOCK_UNKNOWN.
 
@@ -283,7 +286,7 @@ def price_context_stock(
         if not base:
             return base, ""
         extras = _sorted_by_price(
-            [x for x in hits if _is_product(x) and availability(x) is True],
+            [x for x in (avail_pool or hits) if _is_product(x) and availability(x) is True],
             direction, 2,
         )
         if not extras:
@@ -302,7 +305,7 @@ def price_context_stock(
                 seen.add(_k(h))
         return base, STOCK_HINT
     avail = [
-        h for h in hits
+        h for h in (avail_pool or hits)
         if _is_product(h) and _price(h) is not None and availability(h) is True
     ]
     if avail:
