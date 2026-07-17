@@ -109,6 +109,37 @@ def test_not_stock_only_passthrough():
 
 
 def test_stock_notes_keys():
-    assert set(S.STOCK_NOTES) == {S.STOCK_FILTERED, S.STOCK_NONE, S.STOCK_UNKNOWN}
+    assert set(S.STOCK_NOTES) == {S.STOCK_FILTERED, S.STOCK_NONE, S.STOCK_UNKNOWN, S.STOCK_HINT}
     for v in S.STOCK_NOTES.values():
         assert len(v) > 40
+
+
+def test_stock_hint_plain_superlative():
+    hits = [
+        _hit("olcsoA", price="85000", available=False, score=0.9),
+        _hit("olcsoB", price="99000", available=False, score=0.85),
+        _hit("olcsoC", price="110000", available=False, score=0.8),
+        _hit("dragaAvail", price="465000", available=True, score=0.7),
+        _hit("kozepAvail", price="325000", available=True, score=0.4),
+        _hit("legolcsobbAvail", price="300000", available=True, score=0.3),
+    ]
+    out, mode = S.price_context_stock(hits, "asc", 4, False)
+    assert mode == S.STOCK_HINT
+    ids = [h["id"] for h in out]
+    assert ids[0] == "olcsoA"  # az ar-veg valtozatlanul az elso
+    assert "legolcsobbAvail" in ids and "kozepAvail" in ids  # a 2 legolcsobb raktaros bekerult
+
+
+def test_stock_hint_absent_without_stock_data():
+    hits = [
+        _hit("tA", price="200000", score=0.9),
+        _hit("tB", price="150000", score=0.8),
+        _hit("tC", price="300000", score=0.7),
+    ]
+    out, mode = S.price_context_stock(hits, "asc", 8, False)
+    assert mode == ""
+    assert out
+
+
+def test_stock_notes_has_hint():
+    assert S.STOCK_HINT in S.STOCK_NOTES

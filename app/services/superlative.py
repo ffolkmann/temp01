@@ -210,8 +210,19 @@ def availability(hit: dict) -> bool | None:
 STOCK_FILTERED = "stock_filtered"
 STOCK_NONE = "stock_none_available"
 STOCK_UNKNOWN = "stock_unknown"
+STOCK_HINT = "stock_hint"  # m59: sima ar-szuperlativusz, de a kontextusban raktaros jeloltek is vannak
 
 STOCK_NOTES = {
+    STOCK_HINT: (
+        u"A látogató árban legkedvezőbb terméket keres, készlet-szűrés "
+        u"nélkül. A # TUDÁSBÁZIS az ár szerinti véget ÉS a legkedvezőbb "
+        u"árú, raktáron jelölt termékeket is tartalmazza. A legolcsóbb/legdrágább "
+        u"kérdésre a teljes ár-vég a válasz (akkor is, ha épp nincs raktáron), "
+        u"és emellett ajánld a legkedvezőbb árú raktáron lévőt is. Ha "
+        u"készletről beszélsz: KIZÁRÓLAG a raktáron jelölt termékeket nevezd "
+        u"raktáron lévőnek, és SOHA ne állítsd, hogy rajtuk kívül nincs más "
+        u"raktáron — a kontextus a kínálatnak csak egy szelete."
+    ),
     STOCK_FILTERED: (
         u"A # TUD\u00c1SB\u00c1ZIS tal\u00e1latai k\u00e9szletre sz\u0171rt, \u00e1r szerint rendezett "
         u"strukt\u00far\u00e1lt keres\u00e9sb\u0151l sz\u00e1rmaznak (szinkroniz\u00e1lt k\u00e9szlet-adat "
@@ -263,7 +274,33 @@ def price_context_stock(
       - nincs keszlet-adat a poolban (pl. Sellvio) -> szuretlen kontextus, mode=STOCK_UNKNOWN.
     """
     if not stock_only:
-        return price_context(hits, direction, top_n), ""
+        # m59: sima ar-szuperlativusznal ("melyik a legolcsobb laptop?") a modell hajlamos
+        # a kontextus VELETLEN raktaros darabjat "ami raktaron van"-kent ajanlani (eles eset:
+        # Victus 465e, mikozben a legolcsobb raktaros Asus 325e nem volt a kontextusban).
+        # Ezert az ar-vegi kontextushoz hozzatesszuk a 2 legkedvezobb aru RAKTARON jeloltet,
+        # es a STOCK_HINT prompt-szabaly mondja meg, mit szabad keszletnek nevezni.
+        base = price_context(hits, direction, top_n)
+        if not base:
+            return base, ""
+        extras = _sorted_by_price(
+            [x for x in hits if _is_product(x) and availability(x) is True],
+            direction, 2,
+        )
+        if not extras:
+            return base, ""
+
+        def _k(h: dict):
+            if h.get("id") is not None:
+                return ("id", str(h.get("id")))
+            pl = h.get("payload", {}) or {}
+            return ("nu", str(pl.get("name") or ""), str(pl.get("url") or ""))
+
+        seen = {_k(h) for h in base}
+        for h in extras:
+            if _k(h) not in seen:
+                base.append(h)
+                seen.add(_k(h))
+        return base, STOCK_HINT
     avail = [
         h for h in hits
         if _is_product(h) and _price(h) is not None and availability(h) is True
