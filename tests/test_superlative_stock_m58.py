@@ -59,8 +59,10 @@ def test_stock_filtered_only_available():
     assert out, "nem lehet ures"
     for h in out:
         assert S.availability(h) is True
-    assert out[0]["id"] == "kabel"  # ar-horgony: a szurt halmaz legolcsobbja
+    # m61: az ar-padlo a 990 Ft-os kabelt kiszuri -> a legolcsobb VALODI gep a horgony
+    assert out[0]["id"] == "noteA"
     ids = {h["id"] for h in out}
+    assert "kabel" not in ids
     assert "noteB" not in ids and "noteD" not in ids
 
 
@@ -186,3 +188,42 @@ def test_avail_pool_none_falls_back_to_hits():
     out, mode = S.price_context_stock(hits, "asc", 8, True, avail_pool=None)
     assert mode == S.STOCK_FILTERED
     assert [h["id"] for h in out] == ["noteA", "noteC"]
+
+
+def test_price_floor_drops_accessories():
+    pool = [
+        _hit("taska1", price="4690", available=True, score=0.62),
+        _hit("taska2", price="4890", available=True, score=0.61),
+        _hit("gepDraga", price="465000", available=True, score=0.7),
+        _hit("gepKozep", price="325000", available=True, score=0.68),
+        _hit("gepOlcso", price="109900", available=True, score=0.6),
+        _hit("gepMasik", price="119900", available=True, score=0.58),
+        _hit("gepPlusz", price="399000", available=True, score=0.66),
+    ]
+    hits = [
+        _hit("nincsRakt", price="85990", available=False, score=0.9),
+        _hit("nincsRakt2", price="99000", available=False, score=0.85),
+        _hit("gepDraga", price="465000", available=True, score=0.7),
+    ]
+    out, mode = S.price_context_stock(hits, "asc", 4, False, avail_pool=pool)
+    assert mode == S.STOCK_HINT
+    ids = [h["id"] for h in out]
+    assert "gepOlcso" in ids  # a 109 900-as gep a jelolt
+    assert "taska1" not in ids and "taska2" not in ids  # a taskak kiesnek a padlon
+
+    out2, mode2 = S.price_context_stock(pool, "asc", 6, True, avail_pool=pool)
+    assert mode2 == S.STOCK_FILTERED
+    ids2 = [h["id"] for h in out2]
+    assert ids2[0] == "gepOlcso"  # ar-horgony: a legolcsobb VALODI gep
+    assert "taska1" not in ids2 and "taska2" not in ids2
+
+
+def test_price_floor_failsafe_all_cheap():
+    pool = [
+        _hit("a", price="990", available=True, score=0.9),
+        _hit("b", price="1290", available=True, score=0.8),
+        _hit("c", price="1590", available=True, score=0.7),
+    ]
+    out, mode = S.price_context_stock(pool, "asc", 4, True, avail_pool=pool)
+    assert mode == S.STOCK_FILTERED
+    assert out and out[0]["id"] == "a"  # homogen olcso tema: a padlo nem vag ki semmit

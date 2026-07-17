@@ -249,6 +249,37 @@ STOCK_NOTES = {
 }
 
 
+def _score_median_price(hits: list[dict], k: int = 8) -> float | None:
+    """A tema top-k score-u arazott termekeinek median-ara — a kerdezett termektipus arszintje.
+
+    m40-megfigyeles: a dense pool top-score talalatai megbizhatoan a kerdezett tipusbol
+    valok (eles meres: 8/8 laptop). A median-ar ezert jo horgony a tipus arszintjere.
+    """
+    prods = [h for h in hits if _is_product(h) and _price(h) is not None]
+    prods.sort(key=lambda h: float(h.get("score") or 0.0), reverse=True)
+    ps = sorted(_price(h) for h in prods[:k])
+    if not ps:
+        return None
+    return ps[len(ps) // 2]
+
+
+def _price_floor_filter(hits: list[dict], ratio: float = 0.2) -> list[dict]:
+    """m61: kiegeszito-beszivargas elleni ar-padlo a RAKTAROS jeloltekre.
+
+    Eles eset (notebookstore): az available-szurt pool ar-vege notebookTASKAKKAL
+    (4690 Ft) telt meg, igy a "legolcsobb raktaros" jelolt taska lett, a valodi
+    legolcsobb gep (109 900) meg a score-felbol szorult ki. A padlo: a tema
+    top-score median-aranak <ratio>-szorosa alatti termek nem lehet ar-jelolt.
+    Fail-safe: ha a padlo mindent kivagna, az eredeti lista marad.
+    """
+    m = _score_median_price(hits)
+    if not m:
+        return hits
+    floor = m * ratio
+    out = [h for h in hits if (_price(h) or 0.0) >= floor]
+    return out or hits
+
+
 def _sorted_by_price(hits: list[dict], direction: str, top_n: int) -> list[dict]:
     """Sima ar-rendezes MIN-3 kuszob nelkul (a keszlet-szurt reszhalmazon 1-2 talalat is ervenyes)."""
     priced: list[tuple[float, dict]] = []
@@ -286,7 +317,9 @@ def price_context_stock(
         if not base:
             return base, ""
         extras = _sorted_by_price(
-            [x for x in (avail_pool or hits) if _is_product(x) and availability(x) is True],
+            _price_floor_filter(
+                [x for x in (avail_pool or hits) if _is_product(x) and availability(x) is True]
+            ),
             direction, 2,
         )
         if not extras:
@@ -308,6 +341,7 @@ def price_context_stock(
         h for h in (avail_pool or hits)
         if _is_product(h) and _price(h) is not None and availability(h) is True
     ]
+    avail = _price_floor_filter(avail)  # m61: taska/kabel/patron ne lehessen "legolcsobb raktaros"
     if avail:
         ctxh = price_context(avail, direction, top_n)
         if not ctxh:
