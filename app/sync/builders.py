@@ -314,6 +314,20 @@ class WooBuilder:
             cross = [_s(i) for i in (p.get("upsell_ids") or [])] + [_s(i) for i in (p.get("cross_sell_ids") or [])]
             ch = content_fnv(name, brand, ",".join(sorted(cats)), sd, ld, ";".join(sorted(attrs)), url, ",".join(sorted(cross)))
             _pstr = "" if eff is None else str(eff)
+            # m58: keszlet-jel a PAYLOADBA is (a stock_note eddig csak a text-be sult).
+            # onbackorder: rendelheto, de NEM raktaron -> available=False.
+            _wq = p.get("stock_quantity")
+            _wavail = None
+            if p.get("manage_stock") is True and _wq is not None:
+                try:
+                    _wavail = float(_wq) > 0
+                except (TypeError, ValueError):
+                    _wavail = None
+            elif p.get("stock_status") == "instock":
+                _wavail = True
+            elif p.get("stock_status") in ("outofstock", "onbackorder"):
+                _wavail = False
+            _wstock = _s(_wq) if (p.get("manage_stock") is True and _wq is not None) else ""
             products.append(SourceProduct(
                 id_key=wid, sku=sku, name=name, url=url,
                 price=_pstr, brand=brand,
@@ -321,7 +335,8 @@ class WooBuilder:
                 related_additional=self._rel_list((p.get("upsell_ids") or []) + (p.get("cross_sell_ids") or [])),
                 text=line, content_hash=ch,
                 platform_id_field="wc_id", platform_id_value=wid,
-                ps_hash_str=ps_hash(_pstr, "", stock_note),
+                stock_str=_wstock, available=_wavail,
+                ps_hash_str=ps_hash(_pstr, "w2|" + _wstock, stock_note),
                 filename="__woocommerce_products__"))
         return products
 
@@ -604,7 +619,7 @@ class ShoprenterBuilder:
                 price=_pstr, brand=manu, stock_str=stock,
                 related_similar=rel_similar, related_additional=rel_additional,
                 text=line, content_hash=ch,
-                ps_hash_str=ps_hash(_pstr, stock + ("|" + wh_note if wh_note else ""), avail),
+                ps_hash_str=ps_hash(_pstr, "v2|" + stock + ("|" + wh_note if wh_note else ""), avail),  # m58: egyszeri PS-refresh
                 filename="__shoprenter_products__"))
         return products
 
@@ -775,7 +790,7 @@ class UnasBuilder:
                 price=m["price"], brand=m["brand"], stock_str=m["stock"],
                 related_similar=rel_similar, related_additional=rel_additional,
                 text=m["line"], content_hash=ch,
-                ps_hash_str=ps_hash(m["price"], m["stock"], ""),
+                ps_hash_str=ps_hash(m["price"], m["stock"], "v2"),  # m58: egyszeri PS-refresh
                 filename="__unas_products__"))
         return products
 

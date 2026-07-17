@@ -258,7 +258,7 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
                 embed_input = f"{prev_q[:120]}. {message}"
         except Exception:  # noqa: BLE001 — kontextus-dúsítás hibája ne törje a chatet
             pass
-    hits, top_score = await retrieve(
+    hits, top_score, _rmode = await retrieve(
         embed_input, message, req.client_id, ctx.page_url, ctx.page_url_norm
     )
     current = await get_current_product(req.client_id, ctx.page_url_norm)
@@ -280,9 +280,10 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
             logger.exception("search_fallback hiba")
             shop_hits = None
     coupons = await active_coupons(session, req.client_id)
+    from app.services.superlative import STOCK_NOTES  # m58
     system_prompt = build_system_prompt(
         tenant, hits, current, coupons, ctx, live=live, shop_search=shop_hits,
-        operator_online=op_online,
+        operator_online=op_online, retrieval_note=STOCK_NOTES.get(_rmode, ""),
     )
 
     try:

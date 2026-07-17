@@ -31,7 +31,9 @@ async def retrieve(
     from app.services.rerank import rerank  # késleltetett import a körkörösség elkerülésére
     from app.services.policy_filter import filter_for_policy, policy_embed_input  # m34
     from app.services.query_cleanup import product_query_cleanup  # m36: zaj-tisztitas
-    from app.services.superlative import WIDE_LIMIT, detect_price_superlative, price_context, topic_of  # m38/m39/m40
+    from app.services.superlative import (  # m38/m39/m40/m58
+        WIDE_LIMIT, detect_price_superlative, detect_stock_filter, price_context_stock, topic_of,
+    )
 
     # m34: policy-kerdesnel a beagyazando query-t policy-kulcsszavakkal dusitjuk, hogy a dense
     # kereses a KB-doksi (ASZF/garancia/elallas) fele billenjen, ne a termeknevek fele.
@@ -42,6 +44,7 @@ async def retrieve(
     # folytato kerdes ugyanazt a poolt kapja -> konzisztens valasz. A rendezes lent
     # determinisztikus (ar szerint), a dense csak a temat szuri.
     superlative = detect_price_superlative(message)
+    stock_only = bool(superlative) and detect_stock_filter(message)  # m58: "raktaron levo" szuro
     _topic = topic_of(message) if superlative else ""
     if superlative and len(_topic) >= 3:
         vector = await embed_query(_topic)
@@ -64,11 +67,13 @@ async def retrieve(
     # m38: szuperlativusznal a rerank relevancia-sorrendje okozta az onellentmondast
     # (koronkent mas top-8 'legolcsobbja'). Determinisztikus ar-rendezes a szeles poolon:
     # igy a valasz korrol korre AZONOS, es tenyleg a legkedvezobb aru relevans termek.
+    _mode = ""
     if superlative:
         # m40: fele ar-veg + fele tema-relevancia -- kiegeszito-beszivargas ellen (copygo eles eset)
-        by_price = price_context(hits, superlative, _settings.context_top_n)
+        # m58: keszlet-szuro ("raktaron levo") -> csak available==True jeloltek; a mode a promptnak megy
+        by_price, _mode = price_context_stock(hits, superlative, _settings.context_top_n, stock_only)
         if by_price:
-            return by_price, top_score
+            return by_price, top_score, _mode
     reranked = rerank(
         message,
         hits,
@@ -81,4 +86,4 @@ async def retrieve(
     # a modell csak a hivatalos KB-szoveget lassa. (A hits mar szurt volt, de a rerank a teljes
     # bemenetbol valogat -> itt a vegleges top_n-en ervenyesitjuk.)
     reranked = filter_for_policy(message, reranked)
-    return reranked, top_score
+    return reranked, top_score, _mode

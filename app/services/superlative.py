@@ -149,6 +149,11 @@ _TOPIC_STOP = {
     "mennyi", "mennyibe", "melyik", "mi", "mik", "mit", "es", "a", "az", "ti",
     "nalatok", "nalunk", "most", "jelenleg", "van", "vane", "kaphato", "kerul",
     "ara", "aru", "arban", "arert",
+    # m58: keszlet-szavak -- a tema-embedbol KI (kulonben a "nincs raktaron"
+    # szoveget tartalmazo chunkok fele huz a dense kereses)
+    "raktaron", "raktarrol", "raktarban", "keszleten", "keszletrol", "keszlet",
+    "azonnal", "atveheto", "elviheto", "vihetem", "szallithato", "elerheto",
+    "levo", "levot", "ami", "amit", "amelyik",
 }
 _SUPER_RE = re.compile(r"legolcsobb|legdragabb|legkedvezobb|legalacsonyabb|legmagasabb|legjobb")
 
@@ -169,3 +174,105 @@ def topic_of(message: str) -> str:
             continue
         out.append(tok.strip(".,;:!?()\"'"))
     return " ".join(out)
+
+
+# --------------------------------------------------------------------------- #
+# m58: keszlet-szures a szuperlativusz-agban ("legolcsobb RAKTARON LEVO ...")
+# --------------------------------------------------------------------------- #
+
+_STOCK_RE = re.compile(
+    r"raktaron|raktarrol|raktarban|keszleten|keszletrol|"
+    r"azonnal\s+(atveheto|elviheto|viheto|vihetem|szallithato|kaphato)|"
+    r"rogton\s+(atveheto|elviheto)"
+)
+
+
+def detect_stock_filter(message: str) -> bool:
+    """True, ha a latogato keszleten levo termekre szur ("raktaron levo", "azonnal atveheto")."""
+    return bool(_STOCK_RE.search(fold(message)))
+
+
+def availability(hit: dict) -> bool | None:
+    """Keszlet-jel a payloadbol: webdoc `available` bool; SR/Unas `stock` szam; kulonben None."""
+    p = hit.get("payload", hit) if isinstance(hit, dict) else {}
+    av = p.get("available")
+    if isinstance(av, bool):
+        return av
+    raw = str(p.get("stock") or "").replace(" ", "").replace(",", ".")
+    if raw:
+        try:
+            return float(raw) > 0
+        except ValueError:
+            return None
+    return None
+
+
+STOCK_FILTERED = "stock_filtered"
+STOCK_NONE = "stock_none_available"
+STOCK_UNKNOWN = "stock_unknown"
+
+STOCK_NOTES = {
+    STOCK_FILTERED: (
+        u"A # TUD\u00c1SB\u00c1ZIS tal\u00e1latai k\u00e9szletre sz\u0171rt, \u00e1r szerint rendezett "
+        u"strukt\u00far\u00e1lt keres\u00e9sb\u0151l sz\u00e1rmaznak (szinkroniz\u00e1lt k\u00e9szlet-adat "
+        u"alapj\u00e1n) \u2014 ezek t\u00e9nylegesen rakt\u00e1ron jel\u00f6lt term\u00e9kek. Ezekb\u0151l "
+        u"aj\u00e1nlj, \u00e9s jelezd, hogy a v\u00e9gleges \u00e1r \u00e9s k\u00e9szlet a term\u00e9koldalon "
+        u"ellen\u0151rizend\u0151."
+    ),
+    STOCK_NONE: (
+        u"A l\u00e1togat\u00f3 rakt\u00e1ron l\u00e9v\u0151 term\u00e9ket keres, de a k\u00e9rd\u00e9sre "
+        u"illeszked\u0151 szinkroniz\u00e1lt tal\u00e1latok k\u00f6z\u00f6tt most egy sincs rakt\u00e1ron "
+        u"jel\u00f6l\u00e9s\u0171. TILOS ebb\u0151l a teljes k\u00edn\u00e1latra \u00e1ltal\u00e1nos\u00edtani "
+        u"(pl. \u201esemmi nincs rakt\u00e1ron\u201d). Mondd ki, hogy az \u00e1ltalad most l\u00e1tott "
+        u"tal\u00e1latok k\u00f6z\u00f6tt nincs rakt\u00e1ron l\u00e9v\u0151, \u00e9s ir\u00e1ny\u00edtsd a "
+        u"l\u00e1togat\u00f3t a webshop keres\u0151j\u00e9hez vagy az \u00fcgyf\u00e9lszolg\u00e1lathoz."
+    ),
+    STOCK_UNKNOWN: (
+        u"A l\u00e1togat\u00f3 rakt\u00e1rk\u00e9szletre k\u00e9rdez, de ehhez a bolthoz nincs "
+        u"szinkroniz\u00e1lt k\u00e9szlet-adat. K\u00e9szletet NE \u00e1ll\u00edts \u00e9s ne tagadj; az "
+        u"\u00e1rakr\u00f3l v\u00e1laszolhatsz, a k\u00e9szletr\u0151l mondd, hogy a term\u00e9koldal vagy "
+        u"az \u00fcgyf\u00e9lszolg\u00e1lat ad pontos inform\u00e1ci\u00f3t."
+    ),
+}
+
+
+def _sorted_by_price(hits: list[dict], direction: str, top_n: int) -> list[dict]:
+    """Sima ar-rendezes MIN-3 kuszob nelkul (a keszlet-szurt reszhalmazon 1-2 talalat is ervenyes)."""
+    priced: list[tuple[float, dict]] = []
+    for h in hits:
+        if not _is_product(h):
+            continue
+        p = _price(h)
+        if p is not None:
+            priced.append((p, h))
+    priced.sort(key=lambda t: t[0], reverse=(direction == "desc"))
+    return [h for _, h in priced[:top_n]]
+
+
+def price_context_stock(
+    hits: list[dict], direction: str, top_n: int, stock_only: bool
+) -> tuple[list[dict], str]:
+    """(context_hits, mode) -- mode: "" | STOCK_FILTERED | STOCK_NONE | STOCK_UNKNOWN.
+
+    stock_only=False: az m40-es price_context valtozatlanul (mode="").
+    stock_only=True:
+      - van available==True jelolt -> CSAK azokbol epul a kontextus (m40-mix; ha <3, sima
+        ar-rendezes a szurt reszhalmazon), mode=STOCK_FILTERED;
+      - van keszlet-adat, de senki sincs raktaron -> a szuretlen ar-kontextus megy tovabb
+        (a modell lassa, MIK illeszkednek), mode=STOCK_NONE (a prompt tiltja az altalanositast);
+      - nincs keszlet-adat a poolban (pl. Sellvio) -> szuretlen kontextus, mode=STOCK_UNKNOWN.
+    """
+    if not stock_only:
+        return price_context(hits, direction, top_n), ""
+    avail = [
+        h for h in hits
+        if _is_product(h) and _price(h) is not None and availability(h) is True
+    ]
+    if avail:
+        ctxh = price_context(avail, direction, top_n)
+        if not ctxh:
+            ctxh = _sorted_by_price(avail, direction, top_n)
+        return ctxh, STOCK_FILTERED
+    known = any(_is_product(h) and availability(h) is not None for h in hits)
+    mode = STOCK_NONE if known else STOCK_UNKNOWN
+    return price_context(hits, direction, top_n), mode

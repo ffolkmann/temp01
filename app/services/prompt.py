@@ -251,6 +251,7 @@ def build_system_prompt(
     live: LivePriceStock | None = None,
     shop_search: list[dict[str, Any]] | None = None,
     operator_online: bool = False,
+    retrieval_note: str = "",
 ) -> str:
     base = (tenant.system_prompt or "").strip() or _DEFAULT_BASE
     # m33: platform-szintu teny-korlat MINDEN tenantnak. A base utan, a dinamikus
@@ -273,6 +274,10 @@ def build_system_prompt(
     chunks = _chunks(hits)
     context = "\n\n---\n\n".join(chunks) if chunks else "(nincs talalat a tudasbazisban)"
     system += "\n\n# TUDASBAZIS\n" + context
+
+    # m58: strukturalt keszlet-szures jelzese (szuperlativusz + "raktaron levo")
+    if retrieval_note:
+        system += "\n\n# KERESESI MOD\n" + retrieval_note
 
     # 3b) # WEBSHOP KERESO TALALATAI (m25: gyenge RAG-score-nal a bolt sajat keresoje)
     if shop_search:

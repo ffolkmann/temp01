@@ -181,6 +181,8 @@ def _ps_payload(p) -> dict:
     payload = {"price": p.price, "text": p.text, "ps_hash": p.ps_hash_str}
     if p.available is not None:
         payload["available"] = p.available
+    if p.stock_str != "":
+        payload["stock"] = p.stock_str  # m58: SR/Unas stock a PS-merge-ben is (eddig kimaradt -> elavulhatott)
     return payload
 
 
