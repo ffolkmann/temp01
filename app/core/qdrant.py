@@ -66,10 +66,15 @@ class QdrantClient:
             "with_payload": True,
             "with_vector": False,
         }
-        r = await self._client.post(
-            f"/collections/{self.collection}/points/scroll", json=body
-        )
-        r.raise_for_status()
+        try:
+            r = await self._client.post(
+                f"/collections/{self.collection}/points/scroll", json=body
+            )
+            r.raise_for_status()
+        except Exception as e:  # noqa: BLE001 — m66: qdrant-kieses/timeout ne 500-azza a popup/chat utat
+            import logging as _logging
+            _logging.getLogger("cx.qdrant").warning("find_by_url qdrant hiba: %r", e)
+            return None
         points = r.json().get("result", {}).get("points", [])
         return points[0] if points else None
 
