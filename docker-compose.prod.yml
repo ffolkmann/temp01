@@ -23,6 +23,8 @@ services:
     image: postgres:16-alpine
     container_name: chatbot-db-prod
     restart: unless-stopped
+    # m67: az m66-os ALTER SYSTEM perzisztensen — friss volume-ra is érvényes
+    command: ["postgres", "-c", "idle_in_transaction_session_timeout=90000"]
     environment:
       POSTGRES_USER: cx
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}

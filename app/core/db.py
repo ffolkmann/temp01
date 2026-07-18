@@ -20,6 +20,12 @@ engine = create_async_engine(
     pool_size=20,
     max_overflow=30,
     pool_recycle=1800,
+    connect_args={
+        # m67: az m66-os ALTER SYSTEM idle_in_transaction_session_timeout párja
+        # REPO-perzisztensen — minden app-kapcsolatra él, DB-konténer/volume
+        # újralétrehozása után is.
+        "server_settings": {"idle_in_transaction_session_timeout": "90000"},
+    },
 )
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 

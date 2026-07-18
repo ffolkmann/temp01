@@ -258,6 +258,21 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
                 embed_input = f"{prev_q[:120]}. {message}"
         except Exception:  # noqa: BLE001 — kontextus-dúsítás hibája ne törje a chatet
             pass
+    # --- m67: DB-kapcsolat elengedése a lassú szakaszra ---
+    # Minden még szükséges DB-olvasást ELŐRE hozunk (plan search_fallback flag,
+    # kuponok), majd a commit() a kapcsolatot visszaadja a poolba (expire_on_commit=False
+    # -> a már betöltött ORM-objektumok használhatók maradnak). Az embedding + qdrant +
+    # külső HTTP + LLM (akár 25 mp) így KAPCSOLAT NÉLKÜL fut; a záró írások friss,
+    # rövid kapcsolatot kérnek. (m65/m66 incidens: "idle in transaction" -> pool-kimerülés.)
+    search_fb_allowed = False
+    if bool(getattr(tenant, "search_fallback", False)):
+        try:
+            search_fb_allowed = await _plan_search_fallback(session, tenant.plan)
+        except Exception:  # noqa: BLE001 — a flag-olvasás hibája ne törje a chatet
+            search_fb_allowed = False
+    coupons = await active_coupons(session, req.client_id)
+    await session.commit()  # m67: kapcsolat vissza a poolba a lassú szakaszra
+
     hits, top_score, _rmode = await retrieve(
         embed_input, message, req.client_id, ctx.page_url, ctx.page_url_norm
     )
@@ -269,17 +284,15 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
         live = await fetch_live_price_stock(tenant, current)
     # webshop-kereso fallback (m25): gyenge score-nal a bolt sajat keresoje ad jelolteket
     shop_hits: list[dict] | None = None
-    if top_score < SEARCH_FB_THRESHOLD and bool(getattr(tenant, "search_fallback", False)):
+    _sfb_meta: dict | None = None
+    if top_score < SEARCH_FB_THRESHOLD and search_fb_allowed:
         try:
-            if await _plan_search_fallback(session, tenant.plan):
-                shop_hits = await shop_front_search(tenant, message)
-                if shop_hits:
-                    await log_event(session, req.client_id, req.session_id, "search_fallback",
-                                    {"q": message[:80], "n": len(shop_hits)})
+            shop_hits = await shop_front_search(tenant, message)
+            if shop_hits:
+                _sfb_meta = {"q": message[:80], "n": len(shop_hits)}
         except Exception:  # noqa: BLE001 — a fallback hibaja ne torje a chatet
             logger.exception("search_fallback hiba")
             shop_hits = None
-    coupons = await active_coupons(session, req.client_id)
     from app.services.superlative import STOCK_NOTES  # m58
     system_prompt = build_system_prompt(
         tenant, hits, current, coupons, ctx, live=live, shop_search=shop_hits,
@@ -322,6 +335,9 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
             except Exception:  # noqa: BLE001 — frozen dataclass eseten
                 from dataclasses import replace as _dc_replace
                 parsed = _dc_replace(parsed, reply=_newreply)
+    # m67: a search_fallback esemény-log a lassú szakasz UTÁN (rövid, friss kapcsolat)
+    if _sfb_meta:
+        await log_event(session, req.client_id, req.session_id, "search_fallback", _sfb_meta)
     # megválaszolatlan-naplózás (Eval Unanswered): low_score / collect_lead / order_form
     await log_unanswered(session, req.client_id, req.session_id, message, top_score, parsed.action)
     # beszélgetés-napló (m22): a stat.html visszanéző + e-mail átiratok forrása

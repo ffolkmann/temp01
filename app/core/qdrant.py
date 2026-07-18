@@ -12,6 +12,17 @@ from app.core.settings import get_settings
 
 _settings = get_settings()
 
+# m67: a chat-út (search / find_by_url) szűrt payload-mezői — index nélkül a
+# filter/scroll full-scan (m66 incidens: url-scroll ~180k ponton minden
+# termékoldal-betöltésnél). Új/újraépített kollekció ezekből automatikusan kap.
+_PAYLOAD_INDEXES: dict[str, str] = {
+    "client_id": "keyword",
+    "url": "keyword",
+    "type": "keyword",
+    "sku": "keyword",
+    "available": "bool",
+}
+
 
 class QdrantClient:
     def __init__(self, url: str | None = None, collection: str | None = None) -> None:
@@ -81,15 +92,33 @@ class QdrantClient:
     # --- sync írás/admin (Fázis 3) — KÜLÖN kollekcióra (cx_chatbot_v2); a chat read-útját
     #     (search/find_by_url, self.collection) nem érinti. A `collection` mindig explicit. ---
     async def ensure_collection(self, collection: str, size: int, distance: str = "Cosine") -> None:
-        """Létrehozza a kollekciót, ha nincs (idempotens)."""
+        """Létrehozza a kollekciót, ha nincs, és garantálja a payload-indexeket (idempotens)."""
         r = await self._client.get(f"/collections/{collection}")
-        if r.status_code == 200:
-            return
-        r = await self._client.put(
-            f"/collections/{collection}",
-            json={"vectors": {"size": size, "distance": distance}},
-        )
+        if r.status_code != 200:
+            r = await self._client.put(
+                f"/collections/{collection}",
+                json={"vectors": {"size": size, "distance": distance}},
+            )
+            r.raise_for_status()
+        await self.ensure_payload_indexes(collection)
+
+    async def ensure_payload_indexes(self, collection: str) -> None:
+        """m67: payload-indexek idempotens létrehozása (csak a hiányzókat teszi fel).
+
+        A payload_schema-ból nézi, mi van már meg; létrehozás:
+        PUT /collections/{coll}/index?wait=true, body {"field_name","field_schema"}.
+        """
+        r = await self._client.get(f"/collections/{collection}")
         r.raise_for_status()
+        schema = (r.json().get("result") or {}).get("payload_schema") or {}
+        for field, ftype in _PAYLOAD_INDEXES.items():
+            if field in schema:
+                continue
+            rr = await self._client.put(
+                f"/collections/{collection}/index?wait=true",
+                json={"field_name": field, "field_schema": ftype},
+            )
+            rr.raise_for_status()
 
     async def scroll_products(
         self, collection: str, client_id: str, fields: list[str]
