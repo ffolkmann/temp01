@@ -196,6 +196,7 @@ _mod(
     "app.services.prompt",
     PromptContext=_Ctx,
     build_system_prompt=lambda *a, **kw: "SP",
+    build_system_prompt_parts=lambda *a, **kw: ("SP", ""),
     _shop_search_url=lambda t: "",
 )
 

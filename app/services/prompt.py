@@ -259,7 +259,7 @@ def order_form_hint(platform: str | None) -> str:
     return _ORDER_HINT_ZIP if plat == "webdoc" else _ORDER_HINT_EMAIL
 
 
-def build_system_prompt(
+def build_system_prompt_parts(
     tenant: Tenant,
     hits: list[dict[str, Any]],
     current: CurrentProduct | None,
@@ -269,11 +269,17 @@ def build_system_prompt(
     shop_search: list[dict[str, Any]] | None = None,
     operator_online: bool = False,
     retrieval_note: str = "",
-) -> str:
+) -> tuple[str, str]:
+    """m68: (statikus, dinamikus) par. A statikus prefix (tenant-prompt + m33
+    teny-korlat) tenantonkent allando -> az LLM-hivasban cache_control-lal
+    cache-elheto; a dinamikus resz (TUDASBAZIS, modok, kuponok, ...) kerelemrol
+    kerelemre valtozik. A ketto konkatenacioja BYTE-RA azonos a
+    build_system_prompt kimenetevel."""
     base = (tenant.system_prompt or "").strip() or _DEFAULT_BASE
     # m33: platform-szintu teny-korlat MINDEN tenantnak. A base utan, a dinamikus
     # blokkok elott -> a statikus prefix tenantonkent allando marad (prompt-cache).
-    system = base + _factuality_block()
+    static = base + _factuality_block()
+    system = ""
 
     # 2) # AKTUALIS TERMEK
     current_text = current.text if current else ""
@@ -521,4 +527,23 @@ def build_system_prompt(
     if operator_online:
         system += _handoff_offer_block()
 
-    return system
+    return static, system
+
+
+def build_system_prompt(
+    tenant: Tenant,
+    hits: list[dict[str, Any]],
+    current: CurrentProduct | None,
+    coupons: list[Coupon],
+    ctx: PromptContext,
+    live: LivePriceStock | None = None,
+    shop_search: list[dict[str, Any]] | None = None,
+    operator_online: bool = False,
+    retrieval_note: str = "",
+) -> str:
+    """A teljes system prompt egy stringkent (kompatibilitasi wrapper, m68)."""
+    static, dynamic = build_system_prompt_parts(
+        tenant, hits, current, coupons, ctx, live=live, shop_search=shop_search,
+        operator_online=operator_online, retrieval_note=retrieval_note,
+    )
+    return static + dynamic

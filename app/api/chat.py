@@ -58,7 +58,7 @@ from app.services.rate_limit import (
 )
 from app.services.order_status import ORDER_LOOKUP_BLOCKED_REPLY, handle_order_status_ex
 from app.services.parse_reply import parse_reply
-from app.services.prompt import PromptContext, build_system_prompt
+from app.services.prompt import PromptContext, build_system_prompt_parts
 from app.services.retrieval import retrieve
 from urllib.parse import quote_plus
 
@@ -294,7 +294,8 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
             logger.exception("search_fallback hiba")
             shop_hits = None
     from app.services.superlative import STOCK_NOTES  # m58
-    system_prompt = build_system_prompt(
+    # m68: (statikus, dinamikus) system-par -> a llm.py cache_control-lal kuldi
+    system_prompt = build_system_prompt_parts(
         tenant, hits, current, coupons, ctx, live=live, shop_search=shop_hits,
         operator_online=op_online, retrieval_note=STOCK_NOTES.get(_rmode, ""),
     )
