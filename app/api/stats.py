@@ -482,7 +482,8 @@ async def admin_overview(
         "FROM messages WHERE created_at > now() - (:d || ' days')::interval GROUP BY client_id"
     ), P)).mappings().all()
     erows = (await session.execute(text(
-        "SELECT client_id, kind, COUNT(*) n, COALESCE(SUM(NULLIF(meta->>'count','')::int),0) s "
+        "SELECT client_id, kind, COUNT(*) n, COALESCE(SUM(NULLIF(meta->>'count','')::int),0) s, "
+        "COALESCE(SUM(NULLIF(meta->>'value','')::numeric),0) v "
         "FROM events WHERE created_at > now() - (:d || ' days')::interval GROUP BY 1,2"
     ), P)).mappings().all()
     frows = (await session.execute(text(
@@ -496,9 +497,12 @@ async def admin_overview(
 
     msg = {r["client_id"]: r for r in mrows}
     ev: dict[str, dict[str, int]] = {}
+    pval: dict[str, int] = {}
     for r in erows:
         val = _int(r["s"]) if r["kind"] == "product_rec" else _int(r["n"])
         ev.setdefault(r["client_id"], {})[r["kind"]] = val
+        if r["kind"] == "purchase":
+            pval[r["client_id"]] = _int(r["v"])
     fb_up: dict[str, int] = {}
     fb_down: dict[str, int] = {}
     for r in frows:
@@ -511,7 +515,7 @@ async def admin_overview(
 
     rows = []
     tot = {"conversations": 0, "questions": 0, "unanswered": 0, "fb_up": 0, "fb_down": 0,
-           "product_rec": 0, "order_lookup": 0, "link_click": 0}
+           "product_rec": 0, "order_lookup": 0, "link_click": 0, "purchase": 0, "purchase_value": 0}
     for t in trows:
         cid = t["client_id"]
         m = msg.get(cid)
@@ -529,6 +533,8 @@ async def admin_overview(
             "product_rec": e.get("product_rec", 0),
             "order_lookup": e.get("order_lookup", 0),
             "link_click": e.get("link_click", 0),
+            "purchase": e.get("purchase", 0),
+            "purchase_value": pval.get(cid, 0),
             "last_activity": _iso(m["last_act"]) if m and m["last_act"] else "",
         }
         rows.append(row)
