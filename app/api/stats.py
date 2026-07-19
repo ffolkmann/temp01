@@ -7,7 +7,7 @@ Period kulcs: aktuális hónap Europe/Budapest 'YYYY-MM'. order_lookups/product_
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -44,8 +44,61 @@ def _int(v) -> int:
         return 0
 
 
+_PERIOD_DAYS = {7, 14, 30, 60, 90}
+
+
+def _period_window(days, from_s, to_s, now):
+    """m70: (from_dt, to_dt, label, days) vagy None, ha nincs idoszak-szures.
+
+    Prioritas: from&to egyutt > days. Hibas parameter -> 400.
+    A datumok Europe/Budapest szerinti naphatarok (from 00:00 -> to masnap 00:00).
+    """
+    if from_s or to_s:
+        if not (from_s and to_s):
+            raise HTTPException(status_code=400, detail="from es to egyutt kotelezo")
+        try:
+            f_d = datetime.strptime(from_s, "%Y-%m-%d")
+            t_d = datetime.strptime(to_s, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="hibas datum (YYYY-MM-DD)")
+        if t_d < f_d or (t_d - f_d).days > 366:
+            raise HTTPException(status_code=400, detail="hibas idoszak")
+        f_dt = f_d.replace(tzinfo=BUDAPEST)
+        t_dt = (t_d + timedelta(days=1)).replace(tzinfo=BUDAPEST)
+        return f_dt, t_dt, "%s – %s" % (from_s, to_s), (t_d - f_d).days + 1
+    if days is not None:
+        try:
+            days = int(days)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="hibas days")
+        if days not in _PERIOD_DAYS:
+            raise HTTPException(status_code=400, detail="days: 7|14|30|60|90")
+        return now - timedelta(days=days), now, "Utolsó %d nap" % days, days
+    return None
+
+
+def _months_between(f_dt: datetime, t_dt: datetime) -> list[str]:
+    """Az idoszak altal erintett Europe/Budapest honapok ('YYYY-MM') listaja."""
+    a = f_dt.astimezone(BUDAPEST)
+    b = (t_dt - timedelta(microseconds=1)).astimezone(BUDAPEST)
+    out = []
+    y, m = a.year, a.month
+    while (y, m) <= (b.year, b.month):
+        out.append("%04d-%02d" % (y, m))
+        m += 1
+        if m == 13:
+            y, m = y + 1, 1
+    return out
+
+
 @router.get("/stats")
-async def stats(k: str = Query(...), session: AsyncSession = Depends(get_session)) -> dict:
+async def stats(
+    k: str = Query(...),
+    days: int | None = Query(None),
+    date_from: str | None = Query(None, alias="from"),
+    date_to: str | None = Query(None, alias="to"),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
     tenant = (await session.execute(text(
         "SELECT t.client_id, t.plan, t.platform, t.bot_name, t.header_color, "
         "p.white_label, p.live_api, p.monthly_limit "
@@ -60,6 +113,7 @@ async def stats(k: str = Query(...), session: AsyncSession = Depends(get_session
     cw = _iso_week(now)
     monthly_limit = _int(tenant["monthly_limit"])
     P = {"c": cid}
+    pw = _period_window(days, date_from, date_to, now)  # m70: hibas parameter -> 400 mar itt
 
     # --- usage (conversations/messages) ---
     cur_u = (await session.execute(text(
@@ -224,6 +278,64 @@ async def stats(k: str = Query(...), session: AsyncSession = Depends(get_session
     questions = questions[:60]
     weekly = [{"week": w, "count": weekly_counts[w]} for w in sorted(weekly_counts)]
 
+    # --- m70: idoszak-szures ("period" blokk, csak days= vagy from&to eseten) ---
+    period_block = None
+    if pw is not None:
+        pf, pt, plabel, pdays = pw
+        PP = {"c": cid, "f": pf, "t": pt}
+        prs = (await session.execute(text(
+            "SELECT kind, COUNT(*) n, "
+            "COALESCE(SUM(NULLIF(meta->>'count','')::int),0) s, "
+            "COALESCE(SUM(NULLIF(meta->>'value','')::numeric),0) v "
+            "FROM events WHERE client_id=:c AND created_at >= :f AND created_at < :t "
+            "AND kind IN ('product_rec','link_click','order_lookup','handoff','configurator','purchase') "
+            "GROUP BY 1"
+        ), PP)).mappings().all()
+        pev = {r["kind"]: r for r in prs}
+
+        def _pn(kind: str) -> int:
+            r = pev.get(kind)
+            if r is None:
+                return 0
+            return _int(r["s"]) if kind == "product_rec" else _int(r["n"])
+
+        p_leads = _int((await session.execute(text(
+            "SELECT COUNT(*) FROM leads WHERE client_id=:c AND created_at >= :f AND created_at < :t"
+        ), PP)).scalar())
+        p_approx = pf < now - timedelta(days=30)
+        if not p_approx:
+            cm = (await session.execute(text(
+                "SELECT COUNT(*) m, COUNT(DISTINCT session_id) cv FROM messages "
+                "WHERE client_id=:c AND created_at >= :f AND created_at < :t"
+            ), PP)).mappings().first()
+            p_conv = _int(cm["cv"]) if cm else 0
+            p_msg = _int(cm["m"]) if cm else 0
+        else:
+            # 30 napnal regebbre nyulo ablak: a messages-naplo (30 nap retention) mar
+            # nem teljes -> KOZELITES a havi usage-szamlalokbol (erintett honapok osszege).
+            months = "','".join(_months_between(pf, pt))  # belso strftime-ertekek, nem user input
+            um = (await session.execute(text(
+                "SELECT COALESCE(SUM(conversations),0) cv, COALESCE(SUM(messages),0) m "
+                "FROM usage WHERE client_id=:c AND period IN ('" + months + "')"
+            ), P)).mappings().first()
+            p_conv = _int(um["cv"]) if um else 0
+            p_msg = _int(um["m"]) if um else 0
+        p_pur = pev.get("purchase")
+        period_block = {
+            "from": _iso(pf), "to": _iso(pt), "label": plabel, "days": pdays,
+            "conversations": p_conv, "messages": p_msg, "conv_msg_approx": p_approx,
+            "leads": p_leads,
+            "events": {
+                "product_recs": _pn("product_rec"),
+                "link_clicks": _pn("link_click"),
+                "order_lookups": _pn("order_lookup"),
+                "handoffs": _pn("handoff"),
+                "configurator": _pn("configurator"),
+                "purchases": {"count": _pn("purchase"),
+                              "value": round(float(p_pur["v"] or 0)) if p_pur is not None else 0},
+            },
+        }
+
     # --- usage/leads összevont current + totals + monthly ---
     cur_conv = _int(cur_u["conversations"]) if cur_u else 0
     cur_msg = _int(cur_u["messages"]) if cur_u else 0
@@ -244,7 +356,7 @@ async def stats(k: str = Query(...), session: AsyncSession = Depends(get_session
             "leads": leads_by_period.get(per, 0),
         })
 
-    return {
+    resp = {
         "client_id": cid, "plan": tenant["plan"] or "", "platform": tenant["platform"] or "",
         "bot_name": tenant["bot_name"] or "", "header_color": tenant["header_color"] or "",
         "white_label": bool(tenant["white_label"]), "live_api": bool(tenant["live_api"]),
@@ -280,6 +392,9 @@ async def stats(k: str = Query(...), session: AsyncSession = Depends(get_session
             "current_week_label": cw, "weekly": weekly, "questions": questions,
         },
     }
+    if period_block is not None:
+        resp["period"] = period_block
+    return resp
 
 
 @router.get("/stats/unanswered/export")
