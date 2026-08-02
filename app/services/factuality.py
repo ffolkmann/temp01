@@ -54,6 +54,13 @@ BLOCK = (
     "hivatkozz a sajat adatbazisodra vagy rendszeredre. Roviden ismerd el, hogy elso korben nem "
     "talaltad, kerj egy pontosabb megnevezest vagy linket, es ha a boltnak van keresoje, add meg "
     "annak a linkjet a keresett kifejezessel.\n"
+    # m77: a modell a sajat korabbi (elavult) valaszat masolta ismetelt kerdesnel,
+    # a frissebb TUDASBAZIS-adat elleneben (notebookstore eles eset: HP 304 990 vs V15 159 900)
+    "A beszelgetes korabbi valaszai NEM adatforrasok: minden korben a MOSTANI # TUDASBAZIS "
+    "es # AKTUALIS TERMEK adatai az iranyadok. Ha a friss adatok mast mutatnak, mint amit "
+    "korabban valaszoltal (pl. idokozben mas lett a legolcsobb, vagy valtozott az ar/keszlet), "
+    "SOHA ne masold es ne ismeteld a korabbi valaszod — a friss adatbol valaszolj, es roviden "
+    "jelezd, hogy pontositod a korabbi informaciot.\n"
     "Jogi, adozasi es penzugyi tanacsot nem adsz."
 )
 

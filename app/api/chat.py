@@ -298,13 +298,45 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
     if _hide_oos and not _rmode:
         _rmode = "oos_guard"  # m73: = superlative.OOS_GUARD -- kemeny OOS-tilto szabaly a promptba
     # m68: (statikus, dinamikus) system-par -> a llm.py cache_control-lal kuldi
+    _rnote = STOCK_NOTES.get(_rmode, "")
+    # m77: ismetelt ar-kerdesnel a modell a sajat korabbi (elavult) valaszat masolta a
+    # friss kontextus elleneben — history jelenleteben explicit feluliras a jegyzetben.
+    if req.history and _rnote:
+        _rnote += (
+            " FIGYELEM: ha a beszelgetes korabbi valaszaiban mas termeket neveztel a"
+            " legolcsobbnak/legjobbnak, az a valasz ELAVULT. Kizarolag a MOSTANI"
+            " # TUDASBAZIS talalataibol valassz, akkor is, ha ez ellentmond a korabbi"
+            " valaszodnak, es roviden jelezd, hogy pontositod a korabbi informaciot."
+        )
     system_prompt = build_system_prompt_parts(
         tenant, hits, current, coupons, ctx, live=live, shop_search=shop_hits,
-        operator_online=op_online, retrieval_note=STOCK_NOTES.get(_rmode, ""),
+        operator_online=op_online, retrieval_note=_rnote,
     )
 
     try:
         raw = await generate_reply(system_prompt, req.history, message, model=getattr(tenant, "chat_model", None))
+        # m77: onismetles-orseg — ar-modban a modell hajlamos a korabbi (elavult)
+        # "legolcsobb" valaszat bajtra ujramasolni a friss kontextus elleneben.
+        # Determinisztikus ellenorzes: ha a kontextus minimum-ara nincs a valaszban,
+        # EGYSZERI ujrageneralas az assistant-fordulok nelkul (bizonyitottan jo ut).
+        if req.history and _rmode in ("stock_filtered", "oos_guard"):
+            try:
+                _prices = []
+                for _h in hits:
+                    _pl = (_h.get("payload", {}) or {}) if isinstance(_h, dict) else {}
+                    if str(_pl.get("type") or "") == "product":
+                        _rawp = str(_pl.get("price") or "").replace(" ", "").replace("\u00a0", "")
+                        try:
+                            _prices.append(int(float(_rawp)))
+                        except (TypeError, ValueError):
+                            pass
+                _minp = min(_prices) if _prices else None
+                if _minp and str(_minp) not in (raw or "").replace(" ", "").replace("\u00a0", ""):
+                    logger.info("m77 self-repeat guard: regen assistant-history nelkul (min=%s)", _minp)
+                    _uh = [t for t in req.history if getattr(t, "role", "") != "assistant"]
+                    raw = await generate_reply(system_prompt, _uh, message, model=getattr(tenant, "chat_model", None))
+            except Exception:  # noqa: BLE001 — az orseg hibaja ne torje a valaszt
+                pass
     except Exception as _llm_err:  # noqa: BLE001 — a widget mindig kapjon választ
         logger.exception("LLM hívás hiba")
         _fb = _FALLBACK_BUSY if getattr(_llm_err, "status_code", None) == 529 else _FALLBACK
