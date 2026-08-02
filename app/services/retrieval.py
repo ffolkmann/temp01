@@ -33,8 +33,9 @@ async def retrieve(
     from app.services.policy_filter import filter_for_policy, policy_embed_input  # m34
     from app.services.query_cleanup import product_query_cleanup  # m36: zaj-tisztitas
     from app.services.superlative import (  # m38/m39/m40/m58/m64
-        AVAIL_WIDE_LIMIT, WIDE_LIMIT, detect_price_superlative, detect_stock_filter,
-        merge_available_extras, needs_available_boost, price_context_stock, topic_of,
+        AVAIL_WIDE_LIMIT, WIDE_LIMIT, accessory_filter, detect_price_superlative,
+        detect_stock_filter, merge_available_extras, needs_available_boost,
+        price_context_stock, topic_of,
     )
 
     # m34: policy-kerdesnel a beagyazando query-t policy-kulcsszavakkal dusitjuk, hogy a dense
@@ -86,8 +87,12 @@ async def retrieve(
             avail_pool = _ap or None
         except Exception:  # noqa: BLE001 — a szurt pool hibaja ne torje a chatet
             avail_pool = None
+        # m75: eszkoz-temaju szuperlativusznal (notebook/laptop) a kiegeszito-zaj
+        # (taska/dokkolo/tolto...) kiszurese a poolokbol, mielott az ar-rendezes fut.
+        _hits_f = accessory_filter(hits, _topic or message)
+        _ap_f = accessory_filter(avail_pool, _topic or message) if avail_pool else avail_pool
         by_price, _mode = price_context_stock(
-            hits, superlative, _settings.context_top_n, stock_only, avail_pool=avail_pool
+            _hits_f, superlative, _settings.context_top_n, stock_only, avail_pool=_ap_f
         )
         if by_price:
             return by_price, top_score, _mode

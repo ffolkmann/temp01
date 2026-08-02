@@ -209,6 +209,35 @@ def availability(hit: dict) -> bool | None:
     return None
 
 
+_DEVICE_RE = re.compile(r"notebook|laptop")
+_ACC_RE = re.compile(
+    r"taska|hatizsak|sleeve|hutopad|dokkol"
+    r"|\btok\b|\btokok\b|\beger\b|\bkabel\b|\badapter\b|\btolto\b|\bpatron\b|\btoner\b|\ballvany\b"
+)
+
+
+def accessory_filter(hits: list[dict], topic_or_message: str) -> list[dict]:
+    """m75: eszkoz-temanal (notebook/laptop) a kiegeszito-nevu tetelek kiszurese a poolbol.
+
+    Kivalto eset (notebookstore): az "uzleti notebook" avail-pool 10 legolcsobbja mind
+    notebookTASKA volt -- a m61-es ar-padlo a taska-arakbol szamolt medianbol keptelen
+    volt szurni, a modell kontextusaba alig jutott valodi gep. Fail-safe: ha a szures
+    mindent kidobna, az eredeti lista marad.
+    """
+    ft = fold(topic_or_message or "")
+    # ha maga a tema kiegeszito (pl. "notebooktaska"), NEM szurunk -- az a keresett termek
+    if not hits or not _DEVICE_RE.search(ft) or _ACC_RE.search(ft):
+        return hits
+    kept = []
+    for h in hits:
+        p = h.get("payload", h) if isinstance(h, dict) else {}
+        name = fold(str(p.get("name") or ""))
+        if name and _ACC_RE.search(name):
+            continue
+        kept.append(h)
+    return kept or hits
+
+
 STOCK_FILTERED = "stock_filtered"
 STOCK_NONE = "stock_none_available"
 STOCK_UNKNOWN = "stock_unknown"
