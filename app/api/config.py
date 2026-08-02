@@ -297,7 +297,7 @@ async def _save_config(session: AsyncSession, row_in: dict[str, Any]) -> dict[st
     if "search_fallback" in row:
         row["search_fallback"] = _as_bool(row["search_fallback"])
     # m28 élő operátor: bool-kapcsolók + operator_hours JSONB (launcher_config mintájára)
-    for _laf in ("live_agent_enabled", "handoff_bot_silent", "quick_questions_enabled"):
+    for _laf in ("live_agent_enabled", "handoff_bot_silent", "quick_questions_enabled", "recommend_out_of_stock"):
         if _laf in row:
             row[_laf] = _as_bool(row[_laf])
     if "operator_hours" in row and isinstance(row["operator_hours"], str):

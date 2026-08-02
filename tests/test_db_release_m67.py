@@ -202,7 +202,7 @@ _mod(
 
 _RETRIEVE = {"result": ([], 0.9, None)}
 
-async def _retrieve(embed_input, message, client_id, page_url, page_url_norm):
+async def _retrieve(embed_input, message, client_id, page_url, page_url_norm, **_kw):
     CALLS.append("retrieve")
     return _RETRIEVE["result"]
 

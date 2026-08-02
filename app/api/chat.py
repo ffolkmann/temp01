@@ -273,8 +273,9 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
     coupons = await active_coupons(session, req.client_id)
     await session.commit()  # m67: kapcsolat vissza a poolba a lassú szakaszra
 
+    _hide_oos = not bool(getattr(tenant, "recommend_out_of_stock", False))  # m73: default TILT
     hits, top_score, _rmode = await retrieve(
-        embed_input, message, req.client_id, ctx.page_url, ctx.page_url_norm
+        embed_input, message, req.client_id, ctx.page_url, ctx.page_url_norm, hide_oos=_hide_oos
     )
     current = await get_current_product(req.client_id, ctx.page_url_norm)
     # élő ár/készlet a megnyitott termékre (plan.live_api-gated, csak termékoldalon);
@@ -294,6 +295,8 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
             logger.exception("search_fallback hiba")
             shop_hits = None
     from app.services.superlative import STOCK_NOTES  # m58
+    if _hide_oos and not _rmode:
+        _rmode = "oos_guard"  # m73: = superlative.OOS_GUARD -- kemeny OOS-tilto szabaly a promptba
     # m68: (statikus, dinamikus) system-par -> a llm.py cache_control-lal kuldi
     system_prompt = build_system_prompt_parts(
         tenant, hits, current, coupons, ctx, live=live, shop_search=shop_hits,

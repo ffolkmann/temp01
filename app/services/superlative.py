@@ -213,6 +213,7 @@ STOCK_FILTERED = "stock_filtered"
 STOCK_NONE = "stock_none_available"
 STOCK_UNKNOWN = "stock_unknown"
 STOCK_HINT = "stock_hint"  # m59: sima ar-szuperlativusz, de a kontextusban raktaros jeloltek is vannak
+OOS_GUARD = "oos_guard"  # m73: tenant-szintu tiltas -- raktaron nem levo termek nem ajanlhato
 
 STOCK_NOTES = {
     STOCK_HINT: (
@@ -245,6 +246,14 @@ STOCK_NOTES = {
         u"szinkroniz\u00e1lt k\u00e9szlet-adat. K\u00e9szletet NE \u00e1ll\u00edts \u00e9s ne tagadj; az "
         u"\u00e1rakr\u00f3l v\u00e1laszolhatsz, a k\u00e9szletr\u0151l mondd, hogy a term\u00e9koldal vagy "
         u"az \u00fcgyf\u00e9lszolg\u00e1lat ad pontos inform\u00e1ci\u00f3t."
+    ),
+    OOS_GUARD: (
+        u"Ebben a boltban rakt\u00e1ron nem l\u00e9v\u0151 term\u00e9ket TILOS aj\u00e1nlani vagy "
+        u"els\u0151dleges v\u00e1laszk\u00e9nt megnevezni. Ha a l\u00e1togat\u00f3 kifejezetten egy "
+        u"konkr\u00e9t, nem el\u00e9rhet\u0151 term\u00e9kre k\u00e9rdez r\u00e1, k\u00f6z\u00f6ld, hogy jelenleg "
+        u"nem rendelhet\u0151, \u00e9s aj\u00e1nlj helyette rakt\u00e1ron jel\u00f6lt alternat\u00edv\u00e1t. "
+        u"Aj\u00e1nl\u00e1sn\u00e1l kiz\u00e1r\u00f3lag rakt\u00e1ron jel\u00f6lt term\u00e9ket nevezz meg; "
+        u"k\u00e9szlet-adat n\u00e9lk\u00fcli boltban k\u00e9szletet ne \u00e1ll\u00edts."
     ),
 }
 

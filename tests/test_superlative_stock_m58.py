@@ -111,7 +111,7 @@ def test_not_stock_only_passthrough():
 
 
 def test_stock_notes_keys():
-    assert set(S.STOCK_NOTES) == {S.STOCK_FILTERED, S.STOCK_NONE, S.STOCK_UNKNOWN, S.STOCK_HINT}
+    assert set(S.STOCK_NOTES) == {S.STOCK_FILTERED, S.STOCK_NONE, S.STOCK_UNKNOWN, S.STOCK_HINT, S.OOS_GUARD}
     for v in S.STOCK_NOTES.values():
         assert len(v) > 40
 

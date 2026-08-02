@@ -20,7 +20,8 @@ async def retrieve(
     client_id: str,
     page_url: str = "",
     page_url_norm: str = "",
-) -> tuple[list[dict[str, Any]], float]:
+    hide_oos: bool = False,
+) -> tuple[list[dict[str, Any]], float, str]:
     """A kérdésre dense találatok a Qdrantból (client_id-only, limit 24), majd hibrid rerank -> top 8.
 
     Visszaad: (reranked top_n hits, top_dense_score) — a top score a megválaszolatlan-küszöbhöz.
@@ -45,7 +46,7 @@ async def retrieve(
     # folytato kerdes ugyanazt a poolt kapja -> konzisztens valasz. A rendezes lent
     # determinisztikus (ar szerint), a dense csak a temat szuri.
     superlative = detect_price_superlative(message)
-    stock_only = bool(superlative) and detect_stock_filter(message)  # m58: "raktaron levo" szuro
+    stock_only = bool(superlative) and (detect_stock_filter(message) or hide_oos)  # m58 + m73: tenant-tiltas is kenyszeriti
     _topic = topic_of(message) if superlative else ""
     if superlative and len(_topic) >= 3:
         vector = await embed_query(_topic)
@@ -105,7 +106,7 @@ async def retrieve(
     # m64: ha a kontextus termekei kozott nincs raktaron levo, de van keszlet-adat,
     # max 3 raktaros jeloltet fuzunk hozza relevancia szerint (available-szurt keresesbol),
     # hogy az m63-as "csak raktarost ajanlj" szabalynak legyen mibol ajanlania.
-    if needs_available_boost(reranked):
+    if hide_oos or needs_available_boost(reranked):  # m73: OOS-tiltasnal mindig legyen raktaros jelolt
         try:
             _pool64 = await qdrant.search(
                 vector=vector, client_id=client_id, limit=40,
