@@ -16,6 +16,7 @@ _settings = get_settings()
 # filter/scroll full-scan (m66 incidens: url-scroll ~180k ponton minden
 # termékoldal-betöltésnél). Új/újraépített kollekció ezekből automatikusan kap.
 _PAYLOAD_INDEXES: dict[str, str] = {
+    "usage": "keyword",  # m76: felhasznalas-jelleg cimke (tools/usage_crawl.py irja)
     "client_id": "keyword",
     "url": "keyword",
     "type": "keyword",
@@ -40,6 +41,7 @@ class QdrantClient:
         limit: int = 30,
         product_only: bool = True,
         available_only: bool = False,
+        usage: str | None = None,
     ) -> list[dict[str, Any]]:
         """Dense keresés client_id payload-szűréssel."""
         must: list[dict[str, Any]] = [{"key": "client_id", "match": {"value": client_id}}]
@@ -47,6 +49,8 @@ class QdrantClient:
             must.append({"key": "type", "match": {"value": "product"}})
         if available_only:  # m60: keszlet-szurt dense pool (webdoc/Woo available bool payload)
             must.append({"key": "available", "match": {"value": True}})
+        if usage:  # m76: felhasznalas-jelleg szuro (crawler-cimkezett payload)
+            must.append({"key": "usage", "match": {"value": usage}})
         body = {
             "vector": vector,
             "filter": {"must": must},

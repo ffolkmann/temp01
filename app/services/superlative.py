@@ -22,6 +22,9 @@ import unicodedata
 WIDE_LIMIT = 120
 # m60: az available==True SZURT dense pool merete (a raktaros jeloltekhez)
 AVAIL_WIDE_LIMIT = 300
+# m76: usage-cimkes (kategoria-exact) poolnal a TELJES cimkezett halmazt lefedjuk,
+# kulonben a vektor-farok (epp a legolcsobb gepek) kicsuszhat a limitbol
+USAGE_WIDE_LIMIT = 1000
 
 _ASC_RE = re.compile(r"legolcsobb|legkedvezobb\s+ar|legalacsonyabb\s+ar|legjobb\s+ar")
 _DESC_RE = re.compile(r"legdragabb|legmagasabb\s+ar")
@@ -214,6 +217,18 @@ _ACC_RE = re.compile(
     r"taska|hatizsak|sleeve|hutopad|dokkol"
     r"|\btok\b|\btokok\b|\beger\b|\bkabel\b|\badapter\b|\btolto\b|\bpatron\b|\btoner\b|\ballvany\b"
 )
+
+
+_USAGE_RE = re.compile(r"\b(uzleti|otthoni|gamer|gaming|grafikus|atalakithato)\b")
+_USAGE_MAP = {"gaming": "gamer"}
+
+
+def detect_usage(message: str) -> str | None:
+    """m76: felhasznalas-jelleg cimke a kerdesben (uzleti/otthoni/gamer/grafikus/atalakithato)."""
+    m = _USAGE_RE.search(fold(message or ""))
+    if not m:
+        return None
+    return _USAGE_MAP.get(m.group(1), m.group(1))
 
 
 def accessory_filter(hits: list[dict], topic_or_message: str) -> list[dict]:

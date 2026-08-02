@@ -36,3 +36,10 @@ def test_accessory_topic_not_filtered():
 
 def test_fail_safe_when_all_filtered():
     assert sup.accessory_filter([BAG, SLEEVE], "notebook") == [BAG, SLEEVE]
+
+
+def test_detect_usage_m76():
+    assert sup.detect_usage("melyik a legolcsobb uzleti notebook?") == "uzleti"
+    assert sup.detect_usage(u"melyik a legolcs\u00f3bb \u00fczleti notebook?") == "uzleti"
+    assert sup.detect_usage("legjobb gaming laptop") == "gamer"
+    assert sup.detect_usage("melyik a legolcsobb laptop?") is None

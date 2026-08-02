@@ -33,9 +33,9 @@ async def retrieve(
     from app.services.policy_filter import filter_for_policy, policy_embed_input  # m34
     from app.services.query_cleanup import product_query_cleanup  # m36: zaj-tisztitas
     from app.services.superlative import (  # m38/m39/m40/m58/m64
-        AVAIL_WIDE_LIMIT, WIDE_LIMIT, accessory_filter, detect_price_superlative,
-        detect_stock_filter, merge_available_extras, needs_available_boost,
-        price_context_stock, topic_of,
+        AVAIL_WIDE_LIMIT, USAGE_WIDE_LIMIT, WIDE_LIMIT, accessory_filter, detect_price_superlative,
+        detect_stock_filter, detect_usage, merge_available_extras,
+        needs_available_boost, price_context_stock, topic_of,
     )
 
     # m34: policy-kerdesnel a beagyazando query-t policy-kulcsszavakkal dusitjuk, hogy a dense
@@ -48,6 +48,7 @@ async def retrieve(
     # determinisztikus (ar szerint), a dense csak a temat szuri.
     superlative = detect_price_superlative(message)
     stock_only = bool(superlative) and (detect_stock_filter(message) or hide_oos)  # m58 + m73: tenant-tiltas is kenyszeriti
+    _usage = detect_usage(message)  # m76: felhasznalas-jelleg cimke (uzleti/otthoni/gamer/...) -> payload-szuro
     _topic = topic_of(message) if superlative else ""
     if superlative and len(_topic) >= 3:
         vector = await embed_query(_topic)
@@ -82,8 +83,15 @@ async def retrieve(
         try:
             _ap = await qdrant.search(
                 vector=vector, client_id=client_id,
-                limit=AVAIL_WIDE_LIMIT, product_only=True, available_only=True,
+                limit=(USAGE_WIDE_LIMIT if _usage else AVAIL_WIDE_LIMIT),
+                product_only=True, available_only=True,
+                usage=_usage,
             )
+            if not _ap and _usage:  # m76 fallback: cimke-hiany eseten a regi (cimketlen) ut
+                _ap = await qdrant.search(
+                    vector=vector, client_id=client_id,
+                    limit=AVAIL_WIDE_LIMIT, product_only=True, available_only=True,
+                )
             avail_pool = _ap or None
         except Exception:  # noqa: BLE001 — a szurt pool hibaja ne torje a chatet
             avail_pool = None
@@ -115,8 +123,13 @@ async def retrieve(
         try:
             _pool64 = await qdrant.search(
                 vector=vector, client_id=client_id, limit=40,
-                product_only=True, available_only=True,
+                product_only=True, available_only=True, usage=_usage,
             )
+            if not _pool64 and _usage:  # m76 fallback
+                _pool64 = await qdrant.search(
+                    vector=vector, client_id=client_id, limit=40,
+                    product_only=True, available_only=True,
+                )
             reranked = merge_available_extras(reranked, _pool64, 3)
         except Exception:  # noqa: BLE001 — a boost hibaja ne torje a chatet
             pass
