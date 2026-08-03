@@ -30,6 +30,7 @@ _PRIORITY = (
     ("p_max_meret_gte", "maximalis-notebook-meret", "meret"),
     ("kijelzo_meret_gte", "kijelzo-meret", "meret"),  # m79b-nb
     ("p_tipus", "taska-tipusa", "tipus"),
+    ("brand", "marka", "brand"),  # m80: URL-formatum: <kategoria>/<marka-slug>
     ("usage", "felhasznalas-jellege", "direct"),  # m79b-nb
     ("p_szin", "szin", "szin"),
 )
@@ -148,6 +149,14 @@ def facet_link(base_url, categories, constraints, fmap):
             v = _TIPUS_VAL.get(str(raw))
             if v and int(vals.get(v) or 0) <= 0:
                 v = None
+        elif mode == "brand":
+            # a crawl-terkep marka-slugjai kozott: exact vagy prefix
+            # ('msi' -> 'msi-micro-star-international')
+            raw_s = str(raw)
+            v = next(
+                (k for k in vals if (k == raw_s or k.startswith(raw_s + "-")) and int(vals[k] or 0) > 0),
+                None,
+            )
         elif mode == "direct":
             v = str(raw)
             if int(vals.get(v) or 0) <= 0:
@@ -157,5 +166,7 @@ def facet_link(base_url, categories, constraints, fmap):
             if not v or int(vals.get(v) or 0) <= 0:
                 v = None
         if v:
+            if mode == "brand":
+                return base + str(ent["url"]) + "/" + v
             return base + str(ent["url"]) + "/" + attr + ":" + v
     return None

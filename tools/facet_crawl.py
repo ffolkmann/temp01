@@ -28,6 +28,12 @@ SHOPS = [
 ]
 
 _RE_CAT = re.compile(r'href="(?:https?://[^"/]+)?((?:/[a-z0-9-]+)*/[a-z0-9-]+-c\d+)/?"')
+# m80: marka-szuro linkek (URL: <kategoria>/<marka-slug>, attr nelkul) --
+# a data-type="brand" li-horgony teszi egyertelmuve
+_RE_BRAND = re.compile(
+    r'data-type="brand" data-value="([a-z0-9-]+)">\s*<a href="[^"]*?((?:/[a-z0-9-]+)*/[a-z0-9-]+-c\d+)/[a-z0-9-]+"[^>]*>(?=(.{0,240}))',
+    re.S,
+)
 _RE_FACET = re.compile(
     r'href="[^"]*?((?:/[a-z0-9-]+)*/[a-z0-9-]+-c\d+)/([a-z0-9-]+):([a-z0-9.\-]+)"[^>]*>(?=(.{0,240}))',
     re.S,
@@ -72,6 +78,10 @@ def crawl_shop(shop):
                 continue  # mas kategoriara mutato szuro-link
             attr, val = fm.group(2), fm.group(3)
             facets.setdefault(attr, {})[val] = parse_count(fm.group(4))
+        for bm in _RE_BRAND.finditer(page):
+            if bm.group(2) != path:
+                continue
+            facets.setdefault("marka", {})[bm.group(1)] = parse_count(bm.group(3))
         out[slug_nosuffix] = {"url": path, "facets": facets}
         time.sleep(0.35)
     return out

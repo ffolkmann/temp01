@@ -26,6 +26,7 @@ FMAP = {
                 # valos crawl-ertekek (2026-08-03): 170 NEM letezik a c100-ban
                 "kijelzo-meret": {"133": 35, "140": 305, "156": 206, "160": 274, "173": 15, "180": 24},
                 "felhasznalas-jellege": {"otthoni": 408, "uzleti": 627, "gamer": 163, "grafikus": 62, "atalakithato": 53},
+                "marka": {"asus": 133, "hp": 166, "lenovo": 470, "dell": 165, "msi-micro-star-international": 12, "hpe": 3},
             },
         },
     }
@@ -131,3 +132,33 @@ def test_bag_kategorian_nincs_kijelzo_facet_m79bnb():
     # taska-kategorian a kijelzo-meret attr nem letezik -> usage-ra sem esik at
     # (az sincs), None -> m79a kereso-link
     assert lf.facet_link(BASE, [CAT_BAG], {"kijelzo_meret_gte": 17.0}, FMAP) is None
+
+
+def test_brand_link_slash_formatum_m80():
+    u = lf.facet_link(BASE, [CAT_NB], {"brand": "asus"}, FMAP)
+    assert u == BASE + "/laptop-notebook/uj-notebook-c100/asus"
+
+
+def test_brand_msi_prefix_match_m80():
+    u = lf.facet_link(BASE, [CAT_NB], {"brand": "msi"}, FMAP)
+    assert u.endswith("/msi-micro-star-international")
+
+
+def test_brand_hp_nem_hpe_m80():
+    u = lf.facet_link(BASE, [CAT_NB], {"brand": "hp"}, FMAP)
+    assert u.endswith("/hp")
+
+
+def test_brand_prioritas_meret_nyer_m80():
+    u = lf.facet_link(BASE, [CAT_NB], {"kijelzo_meret_gte": 15.6, "brand": "asus"}, FMAP)
+    assert u.endswith("/kijelzo-meret:156")
+
+
+def test_brand_usage_elott_m80():
+    u = lf.facet_link(BASE, [CAT_NB], {"brand": "asus", "usage": "uzleti"}, FMAP)
+    assert u.endswith("/asus")
+
+
+def test_brand_bag_kategorian_nincs_marka_m80():
+    # a teszt-FMAP taska-kategoriajan nincs marka facet -> None
+    assert lf.facet_link(BASE, [CAT_BAG], {"brand": "asus"}, FMAP) is None

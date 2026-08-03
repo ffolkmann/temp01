@@ -274,8 +274,29 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
     await session.commit()  # m67: kapcsolat vissza a poolba a lassú szakaszra
 
     _hide_oos = not bool(getattr(tenant, "recommend_out_of_stock", False))  # m73: default TILT
+    # m80: rovid, megkotes-jellegu follow-up ("es ASUS markajuak kozul?") orokli az
+    # elozo user-kerdes ar-szuperlativuszat a determinisztikus detektoroknak
+    # (superlative/usage/constraints/topic) -- igy a 2. korben is a teljes
+    # keszlet-szurt pool + brand-szures fut, nem a szuk top-k. Konzervativ gate:
+    # csak ha az aktualis uzenet rovid, onmaga megkotest tartalmaz (brand/meret/
+    # tipus), szuperlativuszt viszont nem, az elozo user-kerdes pedig igen.
+    _det_msg = message
+    try:
+        if req.history and len(message) <= 60:
+            from app.services.paramextract import detect_constraints as _dc80
+            from app.services.superlative import detect_price_superlative as _dps80
+            if _dc80(message) and not _dps80(message):
+                _prev_u = [
+                    str(getattr(h, "content", "") or "") for h in req.history
+                    if str(getattr(h, "role", "") or "") == "user"
+                ]
+                if _prev_u and _dps80(_prev_u[-1]):
+                    _det_msg = _prev_u[-1].strip() + " " + message
+                    logger.info("m80 follow-up merge client=%s: %r", req.client_id, _det_msg[:120])
+    except Exception:  # noqa: BLE001 - a merge hibaja ne torje a chatet
+        _det_msg = message
     hits, top_score, _rmode = await retrieve(
-        embed_input, message, req.client_id, ctx.page_url, ctx.page_url_norm, hide_oos=_hide_oos
+        embed_input, _det_msg, req.client_id, ctx.page_url, ctx.page_url_norm, hide_oos=_hide_oos
     )
     current = await get_current_product(req.client_id, ctx.page_url_norm)
     # élő ár/készlet a megnyitott termékre (plan.live_api-gated, csak termékoldalon);
@@ -394,7 +415,7 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
                 from app.services.linkfacet import facet_link as _fl79b
                 from app.services.linkfacet import load_map as _lm79b
                 from app.services.paramextract import detect_constraints as _dc79b
-                _cons79b = _dc79b(message)
+                _cons79b = _dc79b(_det_msg)  # m80: follow-up merge-elt szoveg
                 if _cons79b and _hc:
                     _fu79b = _fl79b(
                         str(getattr(tenant, "public_url", "") or ""),

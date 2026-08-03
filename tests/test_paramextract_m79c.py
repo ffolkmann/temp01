@@ -155,3 +155,38 @@ def test_q_nb_meret_es_usage_egyutt_m79bnb():
 def test_conditions_nb_kulcsok_nem_szurnek_m79bnb():
     # nb-kulcsokbol NEM lesz Qdrant-feltetel (nincs payload-mezojuk)
     assert px.build_filter_conditions({"kijelzo_meret_gte": 17.0, "usage": "uzleti"}) == []
+
+
+def test_q_brand_gate_nelkul_m80():
+    # follow-up: nincs tema-szo, a marka onmagaban megkotes
+    assert px.detect_constraints("\u00e9s ASUS m\u00e1rk\u00e1j\u00faak k\u00f6z\u00fcl?") == {"brand": "asus"}
+
+
+def test_q_brand_es_usage_m80():
+    c = px.detect_constraints("legolcs\u00f3bb asus gamer laptop")
+    assert c == {"usage": "gamer", "brand": "asus"}
+
+
+def test_q_brand_hp_toner_m80():
+    assert px.detect_constraints("HP toner \u00e1rak?")["brand"] == "hp"
+
+
+def test_q_beillesztett_termeknev_nincs_meret_m80():
+    # RAM+SSD spec = beillesztett termeknev -> a 15.6" nem kerdes-oldali igeny
+    c = px.detect_constraints(
+        "ne mez? Asus Vivobook Go 15 Notebook - 15.6\" FullHD, AMD Ryzen 3-7320U, "
+        "8GB RAM, 512GB SSD, Magyar billenty\u0171zet"
+    )
+    assert "kijelzo_meret_gte" not in c
+    assert c["brand"] == "asus"
+
+
+def test_conditions_brand_any_valtozatok_m80():
+    must = px.build_filter_conditions({"brand": "asus"})
+    assert must == [{"key": "brand", "match": {"any": ["asus", "ASUS", "Asus"]}}]
+
+
+def test_conditions_brand_msi_alias_m80():
+    must = px.build_filter_conditions({"brand": "msi"})
+    vals = must[0]["match"]["any"]
+    assert "MSI (Micro-Star International)" in vals and "MSI" in vals

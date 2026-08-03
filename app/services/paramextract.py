@@ -9,8 +9,11 @@ fallbackot ad.
 
 m79b-nb: notebook-temaju kerdesnel LINK-oldali megkotesek (kijelzo_meret_gte,
 usage) -- ezeket a build_filter_conditions szandekosan NEM forditja
-Qdrant-feltetelle (nincs hozzajuk payload-mezo), csak a linkfacet hasznalja
-a fasetta/SEO zaro-linkhez.
+Qdrant-feltetelle (nincs hozzajuk payload-mezo), csak a linkfacet hasznalja.
+
+m80: marka-megkotes TEMA-GATE NELKUL (a marka-szo onmagaban egyertelmu jel,
+follow-upban is: "es ASUS markajuak kozul?") -> Qdrant brand-szures
+(match any, iras-valtozatokkal) + marka-szuros zaro-link (linkfacet).
 """
 from __future__ import annotations
 
@@ -100,10 +103,30 @@ _USAGE_WORDS = (
     ("uzleti", "uzleti"), ("otthoni", "otthoni"), ("gamer", "gamer"),
     ("gaming", "gamer"), ("grafikus", "grafikus"), ("atalakithato", "atalakithato"),
 )
+# m80: gyakori markak (fold-olt) -- a payload brand-ertekek iras-valtozatait a
+# build_filter_conditions kepzi; a linkfacet a marka-szuro slugjaval matchel
+_BRANDS = (
+    "asus", "acer", "lenovo", "dell", "apple", "msi", "samsung", "huawei",
+    "microsoft", "fujitsu", "toshiba", "xiaomi", "gigabyte", "honor",
+    "brother", "epson", "canon", "logitech", "synology", "kingston",
+    "tp-link", "targus", "philips", "dicota", "hp", "lg",
+)
+# marka -> tovabbi pontos payload-ertekek (ahol az iras-valtozat nem eleg)
+_BRAND_PAYLOAD_ALIASES = {
+    "msi": ("MSI (Micro-Star International)",),
+    "tp-link": ("TP-Link",),
+}
 
 
 def _meret_from_q(fm: str) -> float | None:
-    """Colmeret a kerdesbol; a 'windows 11-es' szoftver-verzio NEM meret."""
+    """Colmeret a kerdesbol.
+
+    Kizarasok: 'windows 11-es' szoftver-verzio nem meret; ha az uzenetben
+    RAM es SSD szo is van (beillesztett termeknev-spec), a benne szereplo
+    colmeret a termek adata, nem kerdes-oldali igeny (m80 guard).
+    """
+    if re.search(r"\bram\b", fm) and re.search(r"\bssd\b", fm):
+        return None
     for m in _RE_MERET_Q.finditer(fm):
         pre = fm[max(0, m.start() - 9):m.start()]
         if "windows" in pre:
@@ -118,11 +141,12 @@ def detect_constraints(message: str) -> dict:
     Taska-temanal (bag-gate, elsobbseg): p_max_meret_gte / p_tipus / p_szin --
     ezek a Qdrant-szurest IS hajtjak (build_filter_conditions).
     Notebook-temanal (m79b-nb): kijelzo_meret_gte / usage -- CSAK a zaro
-    fasetta-linkhez (linkfacet), Qdrant-szures nincs beloluk.
+    fasetta-linkhez (linkfacet).
+    Marka (m80): tema-gate nelkul -- Qdrant brand-szures ES zaro-link is.
     """
     fm = _fold(message)
+    out: dict = {}
     if _RE_BAG_TOPIC.search(fm):
-        out: dict = {}
         v = _meret_from_q(fm)
         if v is not None:
             out["p_max_meret_gte"] = v
@@ -139,10 +163,7 @@ def detect_constraints(message: str) -> dict:
             if re.search(r"\b" + c + r"\b", fm):
                 out["p_szin"] = c
                 break
-        return out
-
-    if _RE_NB_TOPIC.search(fm):
-        out = {}
+    elif _RE_NB_TOPIC.search(fm):
         v = _meret_from_q(fm)
         if v is not None:
             out["kijelzo_meret_gte"] = v
@@ -150,16 +171,32 @@ def detect_constraints(message: str) -> dict:
             if re.search(r"\b" + word, fm):
                 out["usage"] = val
                 break
-        return out
 
-    return {}
+    # m80: marka tema-gate nelkul
+    for b in _BRANDS:
+        if re.search(r"\b" + re.escape(b) + r"\b", fm):
+            out["brand"] = b
+            break
+    return out
+
+
+def _brand_variants(b: str) -> list[str]:
+    """A Qdrant brand payload lehetseges iras-valtozatai (match any lista)."""
+    variants = [b, b.upper(), b.capitalize(), b.title()]
+    variants.extend(_BRAND_PAYLOAD_ALIASES.get(b, ()))
+    seen: list[str] = []
+    for v in variants:
+        if v not in seen:
+            seen.append(v)
+    return seen
 
 
 def build_filter_conditions(cons: dict) -> list[dict]:
     """Qdrant must-feltetelek a detect_constraints kimenetebol. Ures dict -> ures lista.
 
-    Csak a p_* kulcsokbol epit feltetelt -- a notebook-agi kulcsok
-    (kijelzo_meret_gte, usage) szandekosan kimaradnak (nincs payload-mezojuk).
+    A p_* kulcsokbol es a brand-bol epit feltetelt -- a notebook-agi
+    link-kulcsok (kijelzo_meret_gte, usage) szandekosan kimaradnak
+    (nincs payload-mezojuk; a usage-t a retrieval m76-os aga kezeli).
     """
     must: list[dict] = []
     if not cons:
@@ -171,4 +208,6 @@ def build_filter_conditions(cons: dict) -> list[dict]:
         must.append({"key": "p_tipus", "match": {"value": cons["p_tipus"]}})
     if cons.get("p_szin"):
         must.append({"key": "p_szin", "match": {"value": cons["p_szin"]}})
+    if cons.get("brand"):
+        must.append({"key": "brand", "match": {"any": _brand_variants(cons["brand"])}})
     return must
