@@ -366,7 +366,23 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
         _su2 = _shop_search_url(tenant)
         if _su2 and _su2 not in parsed.reply and u"További találatok a webáruházban" not in parsed.reply:
             from app.services.superlative import topic_of as _topic_of  # pure fuggveny
-            _q2 = (_topic_of(message) or "").strip() or (build_queries(message) or [message[:60]])[0]
+            # m79a: a zaro link keresoterme a kontextus-talalatok nevebol jon
+            # (a bolt sajat elnevezese -> garantalt talalat a keresoben),
+            # fallback: toltelekszo-mentes rovid topic. A teljes kerdes-frazis
+            # k= parametere a Webdoc keresoben 0 talalatot adott (m79 bug).
+            from app.services.linkterm import link_search_term
+            _hn = []
+            _hb = []
+            try:
+                for _h2 in hits or []:
+                    _pl2 = (_h2.get("payload", {}) or {}) if isinstance(_h2, dict) else {}
+                    if str(_pl2.get("type") or "") == "product" and _pl2.get("name"):
+                        _hn.append(str(_pl2.get("name")))
+                        if _pl2.get("brand"):
+                            _hb.append(str(_pl2.get("brand")))
+            except Exception:  # noqa: BLE001 — a linkterm hibaja ne torje a valaszt
+                _hn = []
+            _q2 = link_search_term(message, _hn, _hb) or (_topic_of(message) or "").strip() or (build_queries(message) or [message[:60]])[0]
             _newreply2 = (
                 parsed.reply.rstrip()
                 + u"\n\n[További találatok a webáruházban](" + _su2 + quote_plus(_q2) + u")"
