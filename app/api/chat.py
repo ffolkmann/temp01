@@ -331,10 +331,26 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
                         except (TypeError, ValueError):
                             pass
                 _minp = min(_prices) if _prices else None
-                if _minp and str(_minp) not in (raw or "").replace(" ", "").replace("\u00a0", ""):
-                    logger.info("m77 self-repeat guard: regen assistant-history nelkul (min=%s)", _minp)
-                    _uh = [t for t in req.history if getattr(t, "role", "") != "assistant"]
-                    raw = await generate_reply(system_prompt, _uh, message, model=getattr(tenant, "chat_model", None))
+                # m78: csak VALODI onismetlesnel regen — a valasz normalizaltan
+                # ~azonos egy korabbi assistant-fordulattal ES a kontextus-minimum
+                # hianyzik belole. Az ar-minimum onmagaban NEM trigger (megkoteses
+                # szuperlativusznal a helyes ar != pool-minimum, m78 bug). Regen
+                # TELJESEN ures historyval — a user-only regen arva user-kerdesekre
+                # valaszolgatott (irrelevans bevezeto bekezdesek).
+                from app.services.selfrepeat import has_stale_price, is_self_repeat
+                _olds = []
+                for _t in req.history:
+                    if getattr(_t, "role", "") == "assistant":
+                        _c = getattr(_t, "content", None) or (_t.get("content") if isinstance(_t, dict) else None) or getattr(_t, "text", "") or ""
+                        _olds.append(str(_c))
+                _nraw = (raw or "").replace(" ", "").replace("\u00a0", "")
+                if (
+                    _minp is not None
+                    and str(_minp) not in _nraw
+                    and (is_self_repeat(raw, _olds) or has_stale_price(raw, _olds))
+                ):
+                    logger.info("m78 self-repeat guard: regen ures historyval (client=%s min=%s)", req.client_id, _minp)
+                    raw = await generate_reply(system_prompt, [], message, model=getattr(tenant, "chat_model", None))
             except Exception:  # noqa: BLE001 — az orseg hibaja ne torje a valaszt
                 pass
     except Exception as _llm_err:  # noqa: BLE001 — a widget mindig kapjon választ
