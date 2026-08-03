@@ -7,6 +7,17 @@ byte-paritásban (lásd app/sync/builders.py). A content_hash / point_id a v2 SA
 
 from dataclasses import dataclass
 
+try:  # m79c
+    from app.services.paramextract import extract_params
+except Exception:  # fajl-betoltos tesztek (sync parity/delta) app-csomag nelkul
+    import importlib.util as _ilu
+    import pathlib as _pl
+    _pp = _pl.Path(__file__).resolve().parents[1] / "services" / "paramextract.py"
+    _sp = _ilu.spec_from_file_location("paramextract_m79c_fb", _pp)
+    _pm = _ilu.module_from_spec(_sp)
+    _sp.loader.exec_module(_pm)
+    extract_params = _pm.extract_params
+
 
 @dataclass
 class SourceProduct:
@@ -55,4 +66,5 @@ def build_payload(client_id: str, p: SourceProduct) -> dict:
         payload["available"] = p.available
     if p.ps_hash_str:                    # webdoc: ár/készlet ujjlenyomat
         payload["ps_hash"] = p.ps_hash_str
+    payload.update(extract_params(p.name, p.text))  # m79c: parameter-mezok (csak kinyert kulcsok)
     return payload

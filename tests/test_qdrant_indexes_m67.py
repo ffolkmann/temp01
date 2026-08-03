@@ -84,7 +84,7 @@ def test_existing_collection_creates_only_missing_indexes():
     fake = _FakeHttp(exists=True, schema={"client_id": "keyword"})
     asyncio.run(_client(fake).ensure_collection("cx_test", 1536))
     assert not any(p == "/collections/cx_test" for p, _ in fake.puts)  # nincs re-create
-    assert sorted(_index_fields(fake)) == ["available", "sku", "type", "url", "usage"]
+    assert sorted(_index_fields(fake)) == ["available", "p_max_meret", "p_szin", "p_tipus", "sku", "type", "url", "usage"]
     put_path = [p for p, _ in fake.puts if "/index" in p][0]
     assert put_path == "/collections/cx_test/index?wait=true"
 
@@ -93,7 +93,7 @@ def test_new_collection_gets_all_indexes():
     fake = _FakeHttp(exists=False)
     asyncio.run(_client(fake).ensure_collection("cx_test", 1536))
     assert fake.puts[0][0] == "/collections/cx_test"
-    assert sorted(_index_fields(fake)) == ["available", "client_id", "sku", "type", "url", "usage"]
+    assert sorted(_index_fields(fake)) == ["available", "client_id", "p_max_meret", "p_szin", "p_tipus", "sku", "type", "url", "usage"]
     bools = [j for _, j in fake.puts if j and j.get("field_name") == "available"]
     assert bools == [{"field_name": "available", "field_schema": "bool"}]
 
@@ -110,4 +110,4 @@ def test_ensure_payload_indexes_idempotent_second_run():
     asyncio.run(c.ensure_payload_indexes("cx_test"))
     n1 = len(fake.puts)
     asyncio.run(c.ensure_payload_indexes("cx_test"))
-    assert len(fake.puts) == n1 == 6
+    assert len(fake.puts) == n1 == 9

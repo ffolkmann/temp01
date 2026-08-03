@@ -32,6 +32,7 @@ async def retrieve(
     from app.services.rerank import rerank  # késleltetett import a körkörösség elkerülésére
     from app.services.policy_filter import filter_for_policy, policy_embed_input  # m34
     from app.services.query_cleanup import product_query_cleanup  # m36: zaj-tisztitas
+    from app.services.paramextract import build_filter_conditions, detect_constraints  # m79c
     from app.services.superlative import (  # m38/m39/m40/m58/m64
         AVAIL_WIDE_LIMIT, USAGE_WIDE_LIMIT, WIDE_LIMIT, accessory_filter, detect_price_superlative,
         detect_stock_filter, detect_usage, merge_available_extras,
@@ -49,6 +50,7 @@ async def retrieve(
     superlative = detect_price_superlative(message)
     stock_only = bool(superlative) and (detect_stock_filter(message) or hide_oos)  # m58 + m73: tenant-tiltas is kenyszeriti
     _usage = detect_usage(message)  # m76: felhasznalas-jelleg cimke (uzleti/otthoni/gamer/...) -> payload-szuro
+    _pextra = build_filter_conditions(detect_constraints(message))  # m79c: param-szures (bag-gate, konzervativ)
     _topic = topic_of(message) if superlative else ""
     if superlative and len(_topic) >= 3:
         vector = await embed_query(_topic)
@@ -60,7 +62,17 @@ async def retrieve(
         client_id=client_id,
         limit=(max(WIDE_LIMIT, _settings.retrieval_top_k) if superlative else _settings.retrieval_top_k),
         product_only=False,  # parity: NINCS type=product szűrő a fő keresésben
+        extra_must=_pextra or None,  # m79c
     )
+    if not hits and _pextra:  # m79c fail-safe: ures param-szurt lista -> szuretlen fallback
+        import logging as _logging
+        _logging.getLogger("cx.retrieval").info("m79c param filter empty -> fallback (client=%s)", client_id)
+        hits = await qdrant.search(
+            vector=vector,
+            client_id=client_id,
+            limit=(max(WIDE_LIMIT, _settings.retrieval_top_k) if superlative else _settings.retrieval_top_k),
+            product_only=False,
+        )
     # a prod `Eval Unanswered` a SEARCH KB top dense score-ját nézi (rerank ELŐTT)
     top_score = float(hits[0].get("score") or 0.0) if hits else 0.0
     # m34: policy-temaju kerdesnel (garancia/szallitas/elallas...) a termek-chunkokat a NYERS
@@ -85,9 +97,9 @@ async def retrieve(
                 vector=vector, client_id=client_id,
                 limit=(USAGE_WIDE_LIMIT if _usage else AVAIL_WIDE_LIMIT),
                 product_only=True, available_only=True,
-                usage=_usage,
+                usage=_usage, extra_must=_pextra or None,  # m79c
             )
-            if not _ap and _usage:  # m76 fallback: cimke-hiany eseten a regi (cimketlen) ut
+            if not _ap and (_usage or _pextra):  # m76/m79c fallback: cimke/param-hiany -> regi ut
                 _ap = await qdrant.search(
                     vector=vector, client_id=client_id,
                     limit=AVAIL_WIDE_LIMIT, product_only=True, available_only=True,
@@ -124,8 +136,9 @@ async def retrieve(
             _pool64 = await qdrant.search(
                 vector=vector, client_id=client_id, limit=40,
                 product_only=True, available_only=True, usage=_usage,
+                extra_must=_pextra or None,  # m79c
             )
-            if not _pool64 and _usage:  # m76 fallback
+            if not _pool64 and (_usage or _pextra):  # m76/m79c fallback
                 _pool64 = await qdrant.search(
                     vector=vector, client_id=client_id, limit=40,
                     product_only=True, available_only=True,

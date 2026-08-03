@@ -22,6 +22,9 @@ _PAYLOAD_INDEXES: dict[str, str] = {
     "type": "keyword",
     "sku": "keyword",
     "available": "bool",
+    "p_tipus": "keyword",    # m79c
+    "p_szin": "keyword",     # m79c
+    "p_max_meret": "float",  # m79c
 }
 
 
@@ -42,6 +45,7 @@ class QdrantClient:
         product_only: bool = True,
         available_only: bool = False,
         usage: str | None = None,
+        extra_must: list[dict[str, Any]] | None = None,  # m79c: parameter-megkotesek
     ) -> list[dict[str, Any]]:
         """Dense keresés client_id payload-szűréssel."""
         must: list[dict[str, Any]] = [{"key": "client_id", "match": {"value": client_id}}]
@@ -51,6 +55,8 @@ class QdrantClient:
             must.append({"key": "available", "match": {"value": True}})
         if usage:  # m76: felhasznalas-jelleg szuro (crawler-cimkezett payload)
             must.append({"key": "usage", "match": {"value": usage}})
+        if extra_must:  # m79c
+            must.extend(extra_must)
         body = {
             "vector": vector,
             "filter": {"must": must},
