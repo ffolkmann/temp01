@@ -16,6 +16,7 @@ services:
     volumes:
       - n8n_data:/n8n_data:ro
       - /root/weboldal_fajlok/chatbot/reports:/reports
+      - /docker/chatbot-prod/data:/app/data
     networks:
       - prodnet
       - qnet

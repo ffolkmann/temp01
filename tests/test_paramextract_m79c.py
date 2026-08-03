@@ -105,3 +105,13 @@ def test_conditions_alak():
     assert {"key": "p_tipus", "match": {"value": "hatizsak"}} in must
     assert {"key": "p_szin", "match": {"value": "fekete"}} in must
     assert px.build_filter_conditions({}) == []
+
+
+def test_category_egysoros_szoveg_levagas_m79b():
+    # valos chunk-formatum: a text EGY sorban van, a kategoria utan '. ' es leiras
+    text = (
+        "Kateg\u00f3ria: Laptop, Notebook > \u00daJ Notebook. Lenovo IdeaPad 3 "
+        "(17ABA7) Notebook AMD Ryzen 7 processzorral. Link: https://x"
+    )
+    p = px.extract_params("Lenovo IdeaPad 3 Notebook", text)
+    assert p["category"] == "Laptop, Notebook > \u00daJ Notebook"

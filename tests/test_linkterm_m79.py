@@ -58,3 +58,14 @@ def test_brand_tokens_excluded_and_longest_wins():
     brands = ["Lenovo", "Lenovo", "Lenovo", "HP"]
     out = lt.link_search_term(Q_BAG, names, brands)
     assert out == "Notebookt\u00e1ska"
+
+
+def test_notebook_nevek_zaj_tokenek_kizarva_m79b():
+    # "Magyar billentyuzet" / "3 ev garancia" minden nevben szerepel -> zaj
+    names = [
+        "Lenovo V15 G4 Notebook - Magyar billenty\u0171zet - 3 \u00e9v garanci\u00e1val",
+        "HP 250R G10 Notebook Magyar billenty\u0171zettel - 3 \u00e9v garanci\u00e1val",
+        "Asus Vivobook Notebook Magyar billenty\u0171zet 3 \u00e9v garancia",
+    ]
+    t = lt.link_search_term("melyik a legolcs\u00f3bb \u00fczleti notebook?", names, [])
+    assert t == "Notebook"

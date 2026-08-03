@@ -19,6 +19,9 @@ _FILLER = {
 _NAME_STOP = {
     "maximum", "meretu", "notebookokhoz", "laptopokhoz", "szinben",
     "szinu", "colos", "tipusu", "darab",
+    # m79b: notebook-nevek gyakori zaj-tokenjei ("Magyar billentyuzettel",
+    # "3 ev garanciaval") ne nyerjenek keresotermkent
+    "billentyuzet", "billentyuzettel", "magyar", "garancia", "garanciaval",
 }
 
 

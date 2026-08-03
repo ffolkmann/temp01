@@ -70,7 +70,12 @@ def extract_params(name: str, text: str = "") -> dict:
     if text:
         mc = _RE_CATEGORY.search(text)
         if mc:
-            out["category"] = mc.group(1).strip().rstrip(".").strip()
+            cat = mc.group(1)
+            # m79b: a text egysoros -> a kategoria-nev az elso '. ' hatarig tart
+            cut = cat.find(". ")
+            if cut != -1:
+                cat = cat[:cut]
+            out["category"] = cat.strip().rstrip(".").strip()
     return out
 
 

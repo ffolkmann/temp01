@@ -373,6 +373,7 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
             from app.services.linkterm import link_search_term
             _hn = []
             _hb = []
+            _hc = []
             try:
                 for _h2 in hits or []:
                     _pl2 = (_h2.get("payload", {}) or {}) if isinstance(_h2, dict) else {}
@@ -380,12 +381,33 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
                         _hn.append(str(_pl2.get("name")))
                         if _pl2.get("brand"):
                             _hb.append(str(_pl2.get("brand")))
+                        if _pl2.get("category"):
+                            _hc.append(str(_pl2.get("category")))
             except Exception:  # noqa: BLE001 — a linkterm hibaja ne torje a valaszt
                 _hn = []
             _q2 = link_search_term(message, _hn, _hb) or (_topic_of(message) or "").strip() or (build_queries(message) or [message[:60]])[0]
+            _more_url = _su2 + quote_plus(_q2)
+            # m79b: ha a kerdesben felismert megkotes van (paramextract) es letezik
+            # hozza fasetta/SEO-szuro-oldal a crawl-terkepben (linkfacet), arra
+            # linkelunk; kulonben marad az m79a kereso-link (fail-safe).
+            try:
+                from app.services.linkfacet import facet_link as _fl79b
+                from app.services.linkfacet import load_map as _lm79b
+                from app.services.paramextract import detect_constraints as _dc79b
+                _cons79b = _dc79b(message)
+                if _cons79b and _hc:
+                    _fu79b = _fl79b(
+                        str(getattr(tenant, "public_url", "") or ""),
+                        _hc, _cons79b, _lm79b(req.client_id),
+                    )
+                    if _fu79b:
+                        _more_url = _fu79b
+                        logger.info("m79b facet link: %s client=%s", _fu79b, req.client_id)
+            except Exception:  # noqa: BLE001 - a facet-link hibaja ne torje a valaszt
+                pass
             _newreply2 = (
                 parsed.reply.rstrip()
-                + u"\n\n[További találatok a webáruházban](" + _su2 + quote_plus(_q2) + u")"
+                + u"\n\n[További találatok a webáruházban](" + _more_url + u")"
             )
             try:
                 parsed.reply = _newreply2
