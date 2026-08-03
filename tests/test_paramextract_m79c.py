@@ -79,8 +79,12 @@ def test_q_fekete_hatizsak():
     assert c["p_tipus"] == "hatizsak" and c["p_szin"] == "fekete"
 
 
-def test_q_bag_gate_laptop_kijelzo():
-    assert px.detect_constraints("legolcs\u00f3bb laptop 17 colos kijelz\u0151vel") == {}
+def test_q_nb_ag_laptop_kijelzo_m79bnb():
+    # m79b-nb: notebook-temanal a colmeret LINK-oldali kulcs lesz (nem p_*),
+    # Qdrant-szures tovabbra sincs belole (ld. test_conditions_nb_kulcsok)
+    c = px.detect_constraints("legolcs\u00f3bb laptop 17 colos kijelz\u0151vel")
+    assert "p_max_meret_gte" not in c
+    assert c["kijelzo_meret_gte"] == 17.0
 
 
 def test_q_bag_gate_fekete_pentek():
@@ -115,3 +119,39 @@ def test_category_egysoros_szoveg_levagas_m79b():
     )
     p = px.extract_params("Lenovo IdeaPad 3 Notebook", text)
     assert p["category"] == "Laptop, Notebook > \u00daJ Notebook"
+
+
+def test_q_nb_usage_uzleti_m79bnb():
+    c = px.detect_constraints("Melyik a legolcs\u00f3bb \u00fczleti notebook?")
+    assert c == {"usage": "uzleti"}
+
+
+def test_q_nb_gaming_map_m79bnb():
+    assert px.detect_constraints("gaming laptop aj\u00e1nlat?")["usage"] == "gamer"
+
+
+def test_q_nb_windows_11_nem_meret_m79bnb():
+    c = px.detect_constraints("Windows 11-es laptopot keresek")
+    assert "kijelzo_meret_gte" not in c
+
+
+def test_q_bag_windows_11_nem_meret_m79bnb():
+    c = px.detect_constraints("t\u00e1ska kell a windows 11-es laptopomhoz")
+    assert "p_max_meret_gte" not in c
+
+
+def test_q_bag_elsobbseg_m79bnb():
+    # taska-tema nyer: p_* kulcsok, nb-kulcs nincs
+    c = px.detect_constraints("legolcs\u00f3bb t\u00e1ska 17-es laptophoz")
+    assert c["p_max_meret_gte"] == 17.0
+    assert "kijelzo_meret_gte" not in c and "usage" not in c
+
+
+def test_q_nb_meret_es_usage_egyutt_m79bnb():
+    c = px.detect_constraints("legolcs\u00f3bb 17,3 colos gamer laptop")
+    assert c == {"kijelzo_meret_gte": 17.3, "usage": "gamer"}
+
+
+def test_conditions_nb_kulcsok_nem_szurnek_m79bnb():
+    # nb-kulcsokbol NEM lesz Qdrant-feltetel (nincs payload-mezojuk)
+    assert px.build_filter_conditions({"kijelzo_meret_gte": 17.0, "usage": "uzleti"}) == []

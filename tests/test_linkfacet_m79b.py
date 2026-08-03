@@ -22,7 +22,11 @@ FMAP = {
         },
         "uj-notebook": {
             "url": "/laptop-notebook/uj-notebook-c100",
-            "facets": {"kijelzo-meret": {"156": 206}},
+            "facets": {
+                # valos crawl-ertekek (2026-08-03): 170 NEM letezik a c100-ban
+                "kijelzo-meret": {"133": 35, "140": 305, "156": 206, "160": 274, "173": 15, "180": 24},
+                "felhasznalas-jellege": {"otthoni": 408, "uzleti": 627, "gamer": 163, "grafikus": 62, "atalakithato": 53},
+            },
         },
     }
 }
@@ -98,3 +102,32 @@ def test_load_map_es_link(tmp_path):
     assert m is not None and "_idx" in m
     u = lf.facet_link(BASE, [CAT_BAG], {"p_max_meret_gte": 17.3}, m)
     assert u.endswith(":173")
+
+
+CAT_NB = "Laptop, Notebook > \u00daJ Notebook"
+
+
+def test_nb_usage_link_m79bnb():
+    u = lf.facet_link(BASE, [CAT_NB, CAT_NB], {"usage": "uzleti"}, FMAP)
+    assert u == BASE + "/laptop-notebook/uj-notebook-c100/felhasznalas-jellege:uzleti"
+
+
+def test_nb_kijelzo_17_a_173_szurot_kapja_m79bnb():
+    # 17.0 nincs a c100-ban -> legkisebb letezo >= 170 a 173
+    u = lf.facet_link(BASE, [CAT_NB], {"kijelzo_meret_gte": 17.0}, FMAP)
+    assert u.endswith("/kijelzo-meret:173")
+
+
+def test_nb_prioritas_kijelzo_nyer_m79bnb():
+    u = lf.facet_link(BASE, [CAT_NB], {"kijelzo_meret_gte": 15.6, "usage": "gamer"}, FMAP)
+    assert u.endswith("/kijelzo-meret:156")
+
+
+def test_nb_ismeretlen_usage_none_m79bnb():
+    assert lf.facet_link(BASE, [CAT_NB], {"usage": "szerver"}, FMAP) is None
+
+
+def test_bag_kategorian_nincs_kijelzo_facet_m79bnb():
+    # taska-kategorian a kijelzo-meret attr nem letezik -> usage-ra sem esik at
+    # (az sincs), None -> m79a kereso-link
+    assert lf.facet_link(BASE, [CAT_BAG], {"kijelzo_meret_gte": 17.0}, FMAP) is None

@@ -3,8 +3,14 @@
 Stdlib-only, fajlbol betoltheto (minta: selfrepeat/linkterm). Pilot:
 notebookstore/webdoc taska-attributumok (colmeret/tipus/szin) + kategoria-nev.
 Konzervativ elv: csak egyertelmu jelre adunk megkotest, es a kerdes-oldali
-szures CSAK taska-temaju kerdesnel aktiv (bag-gate) -- "fekete pentek" ne
-szurjon szinre. Ures szurt eredmenyre a hivo (retrieval) szuretlen fallbackot ad.
+Qdrant-szures CSAK taska-temaju kerdesnel aktiv (bag-gate) -- "fekete pentek"
+ne szurjon szinre. Ures szurt eredmenyre a hivo (retrieval) szuretlen
+fallbackot ad.
+
+m79b-nb: notebook-temaju kerdesnel LINK-oldali megkotesek (kijelzo_meret_gte,
+usage) -- ezeket a build_filter_conditions szandekosan NEM forditja
+Qdrant-feltetelle (nincs hozzajuk payload-mezo), csak a linkfacet hasznalja
+a fasetta/SEO zaro-linkhez.
 """
 from __future__ import annotations
 
@@ -82,43 +88,79 @@ def extract_params(name: str, text: str = "") -> dict:
 # --- kerdes-oldali megkotes-detektor (determinisztikus, konzervativ) ---
 
 _RE_BAG_TOPIC = re.compile(r"taska|hatizsak|\btok\b|sleeve")
+# m79b-nb: notebook/laptop tema -- csak link-oldali megkotesekhez
+_RE_NB_TOPIC = re.compile(r"notebook|laptop|ultrabook")
 # '17', '17,3', '17.3' + egyertelmu egyseg/rag: '"', col/colos, inch, huvelyk, -os/-es
 _RE_MERET_Q = re.compile(
     r"\b(1[0-8])(?:[.,](\d))?\s*(?:[\"\u2033']|col\w*|inch\w*|huvelyk\w*|-?os\b|-?es\b)"
 )
+# m79b-nb: linkfacet 'felhasznalas-jellege' ertekei (a superlative.detect_usage
+# parja, itt duplikalva az importfuggetlenseg miatt)
+_USAGE_WORDS = (
+    ("uzleti", "uzleti"), ("otthoni", "otthoni"), ("gamer", "gamer"),
+    ("gaming", "gamer"), ("grafikus", "grafikus"), ("atalakithato", "atalakithato"),
+)
+
+
+def _meret_from_q(fm: str) -> float | None:
+    """Colmeret a kerdesbol; a 'windows 11-es' szoftver-verzio NEM meret."""
+    for m in _RE_MERET_Q.finditer(fm):
+        pre = fm[max(0, m.start() - 9):m.start()]
+        if "windows" in pre:
+            continue
+        return _parse_num(m.group(1), m.group(2))
+    return None
 
 
 def detect_constraints(message: str) -> dict:
-    """Egyertelmu megkotesek a kerdesbol. CSAK taska-temanal (bag-gate) ad vissza barmit.
+    """Egyertelmu megkotesek a kerdesbol.
 
-    Kulcsok: p_max_meret_gte (float), p_tipus (str), p_szin (str).
+    Taska-temanal (bag-gate, elsobbseg): p_max_meret_gte / p_tipus / p_szin --
+    ezek a Qdrant-szurest IS hajtjak (build_filter_conditions).
+    Notebook-temanal (m79b-nb): kijelzo_meret_gte / usage -- CSAK a zaro
+    fasetta-linkhez (linkfacet), Qdrant-szures nincs beloluk.
     """
     fm = _fold(message)
-    if not _RE_BAG_TOPIC.search(fm):
-        return {}
-    out: dict = {}
+    if _RE_BAG_TOPIC.search(fm):
+        out: dict = {}
+        v = _meret_from_q(fm)
+        if v is not None:
+            out["p_max_meret_gte"] = v
 
-    m = _RE_MERET_Q.search(fm)
-    if m:
-        out["p_max_meret_gte"] = _parse_num(m.group(1), m.group(2))
+        if "hatizsak" in fm or "backpack" in fm:
+            out["p_tipus"] = "hatizsak"
+        elif "valltaska" in fm:
+            out["p_tipus"] = "valltaska"
+        elif "sleeve" in fm or re.search(r"\btok\b", fm):
+            out["p_tipus"] = "tok"
+        # generikus 'taska' -> NINCS tipus-szures (a hatizsak is taska)
 
-    if "hatizsak" in fm or "backpack" in fm:
-        out["p_tipus"] = "hatizsak"
-    elif "valltaska" in fm:
-        out["p_tipus"] = "valltaska"
-    elif "sleeve" in fm or re.search(r"\btok\b", fm):
-        out["p_tipus"] = "tok"
-    # generikus 'taska' -> NINCS tipus-szures (a hatizsak is taska)
+        for c in _COLORS:
+            if re.search(r"\b" + c + r"\b", fm):
+                out["p_szin"] = c
+                break
+        return out
 
-    for c in _COLORS:
-        if re.search(r"\b" + c + r"\b", fm):
-            out["p_szin"] = c
-            break
-    return out
+    if _RE_NB_TOPIC.search(fm):
+        out = {}
+        v = _meret_from_q(fm)
+        if v is not None:
+            out["kijelzo_meret_gte"] = v
+        for word, val in _USAGE_WORDS:
+            if re.search(r"\b" + word, fm):
+                out["usage"] = val
+                break
+        return out
+
+    return {}
 
 
 def build_filter_conditions(cons: dict) -> list[dict]:
-    """Qdrant must-feltetelek a detect_constraints kimenetebol. Ures dict -> ures lista."""
+    """Qdrant must-feltetelek a detect_constraints kimenetebol. Ures dict -> ures lista.
+
+    Csak a p_* kulcsokbol epit feltetelt -- a notebook-agi kulcsok
+    (kijelzo_meret_gte, usage) szandekosan kimaradnak (nincs payload-mezojuk).
+    """
     must: list[dict] = []
     if not cons:
         return must

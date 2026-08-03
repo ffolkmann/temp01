@@ -3,9 +3,11 @@
 A crawl-elt tenant-szintu kategoria/szuro-terkepbol (JSON,
 /app/data/facet_map_<client_id>.json, tools/facet_crawl.py irja) es a
 kerdes-oldali megkotesekbol (paramextract.detect_constraints) LETEZO,
-talalatot ado szuro-URL-t epit, max 1 szurovel (prioritas:
-meret > tipus > szin). Ha nincs passzolo: None -> a hivo az m79a
-kereso-linket hasznalja (fail-safe). Csak stdlib — tesztbol
+talalatot ado szuro-URL-t epit, max 1 szurovel. Prioritas-sor
+(_PRIORITY): taska-colmeret > kijelzo-meret > taska-tipus >
+felhasznalas-jelleg > szin -- az adott kategoriaban nem letezo attr
+automatikusan a kovetkezore esik at. Ha nincs passzolo: None -> a hivo
+az m79a kereso-linket hasznalja (fail-safe). Csak stdlib — tesztbol
 fajl-betoltheto.
 """
 from __future__ import annotations
@@ -20,11 +22,17 @@ __all__ = ["facet_link", "load_map", "top_category"]
 _MAP_DIR = os.environ.get("FACET_MAP_DIR", "/app/data")
 _cache: dict = {}  # path -> (mtime, data)
 
-_MERET_FACET = "maximalis-notebook-meret"
-_TIPUS_FACET = "taska-tipusa"
-_SZIN_FACET = "szin"
 # paramextract p_tipus -> webshop szuro-ertek
 _TIPUS_VAL = {"hatizsak": "hatizsak", "valltaska": "valltaskakezitaska", "tok": "toksleeve"}
+
+# (constraint-kulcs, facet-attr, mod) -- az elso linkelheto nyer
+_PRIORITY = (
+    ("p_max_meret_gte", "maximalis-notebook-meret", "meret"),
+    ("kijelzo_meret_gte", "kijelzo-meret", "meret"),  # m79b-nb
+    ("p_tipus", "taska-tipusa", "tipus"),
+    ("usage", "felhasznalas-jellege", "direct"),  # m79b-nb
+    ("p_szin", "szin", "szin"),
+)
 
 
 def _fold(s):
@@ -90,7 +98,8 @@ def _pick_meret(values, gte):
     """Diszkret szuro-ertekek (pl. '173' = 17.3\") kozul valasztas.
 
     Exact (gte*10) ha letezik darabszammal, kulonben a legkisebb >= gte
-    (a '17-es laptophoz' kerdesre a 17.0-s szuro a legjobb letezo oldal).
+    (a '17-es laptophoz' kerdesre a 17.0-s vagy a legkozelebbi nagyobb
+    letezo szuro-oldal a legjobb).
     """
     try:
         want = int(round(float(gte) * 10))
@@ -126,18 +135,27 @@ def facet_link(base_url, categories, constraints, fmap):
     facets = ent.get("facets") or {}
     base = str(base_url).rstrip("/")
 
-    def _url(attr, val):
-        return base + str(ent["url"]) + "/" + attr + ":" + val
-
-    g = constraints.get("p_max_meret_gte")
-    if isinstance(g, (int, float)):
-        v = _pick_meret(facets.get(_MERET_FACET), g)
+    for key, attr, mode in _PRIORITY:
+        raw = constraints.get(key)
+        if raw in (None, ""):
+            continue
+        vals = facets.get(attr) or {}
+        v = None
+        if mode == "meret":
+            if isinstance(raw, (int, float)):
+                v = _pick_meret(vals, raw)
+        elif mode == "tipus":
+            v = _TIPUS_VAL.get(str(raw))
+            if v and int(vals.get(v) or 0) <= 0:
+                v = None
+        elif mode == "direct":
+            v = str(raw)
+            if int(vals.get(v) or 0) <= 0:
+                v = None
+        else:  # szin
+            v = _fold(raw).replace(" ", "")
+            if not v or int(vals.get(v) or 0) <= 0:
+                v = None
         if v:
-            return _url(_MERET_FACET, v)
-    t = _TIPUS_VAL.get(str(constraints.get("p_tipus") or ""))
-    if t and int((facets.get(_TIPUS_FACET) or {}).get(t) or 0) > 0:
-        return _url(_TIPUS_FACET, t)
-    sz = _fold(constraints.get("p_szin") or "").replace(" ", "")
-    if sz and int((facets.get(_SZIN_FACET) or {}).get(sz) or 0) > 0:
-        return _url(_SZIN_FACET, sz)
+            return base + str(ent["url"]) + "/" + attr + ":" + v
     return None
