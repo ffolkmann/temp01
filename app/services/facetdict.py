@@ -30,7 +30,7 @@ from __future__ import annotations
 import re
 import unicodedata
 
-__all__ = ["detect_facet_tags", "build_facet_conditions", "facet_tag_url"]
+__all__ = ["detect_facet_tags", "build_facet_conditions", "facet_tag_url", "category_value"]
 
 # mar sajat aggal kezelt attributumok (m82c vezeti ki oket ide)
 _SKIP_ATTRS = frozenset({
@@ -39,7 +39,9 @@ _SKIP_ATTRS = frozenset({
     "maximalis-notebook-meret",   # m79c: p_max_meret
     "taska-tipusa",               # m79c: p_tipus
     "szin",                       # m79c: p_szin (bag-gate)
-    "felhasznalas-jellege",       # m76: usage payload
+    # m82c: a "felhasznalas-jellege" INNEN KIVEZETVE -- a crawl-olt generikus
+    # szotar ismeri fel (a kezi _USAGE_WORDS lista es a m76-os kulon usage
+    # payload-ag megszunt a kerdes-oldalon).
 })
 
 # bool/toltelek ertekek: soha nem jelentenek kerdes-oldali igenyt
@@ -192,6 +194,23 @@ def detect_facet_tags(message, categories, fmap, max_attrs=_MAX_ATTRS):
     return out
 
 
+def category_value(categories, fmap):
+    """A kontextus top-kategoriajanak PAYLOAD-erteke, ha a terkepben letezik ("" ha nem).
+
+    m82c: a `facets` cimkek kategoria-agnosztikusak -- ugyanaz a tag tobb
+    kategoriaban is el (felhasznalas-jellege:gamer notebookon ES asztali
+    gepen is). A bolt szuro-oldala viszont kategoria-szintu, ezert a Qdrant-
+    szurest is oda kell kotni, kulonben a "legolcsobb gamer laptop" poolba
+    gamer ASZTALI gep kerul (es ar-rendezes utan az is nyerhet).
+    """
+    if not (categories and fmap):
+        return ""
+    slug, ent = _category_entry(categories, fmap)
+    if not (slug and ent):
+        return ""
+    return _top_category(categories)
+
+
 def facet_tag_url(base_url, categories, tags, fmap):
     """Az elso olyan felismert cimke szuro-URL-je, ami a kategoriaban letezik.
 
@@ -215,6 +234,14 @@ def facet_tag_url(base_url, categories, tags, fmap):
     return None
 
 
-def build_facet_conditions(tags):
-    """Qdrant must-feltetelek a cimkekbol (attributumonkent kulon feltetel = AND)."""
-    return [{"key": "facets", "match": {"value": t}} for t in (tags or []) if t]
+def build_facet_conditions(tags, category=""):
+    """Qdrant must-feltetelek a cimkekbol (attributumonkent kulon feltetel = AND).
+
+    m82c: `category` megadasaval a szures a kontextus kategoriajara szukul (a
+    bolt szuro-oldalanak parja). A hivo ures talalatnal kategoria NELKUL
+    ujraprobalhat -- ez a fail-safe.
+    """
+    must = [{"key": "facets", "match": {"value": t}} for t in (tags or []) if t]
+    if must and category:
+        must.append({"key": "category", "match": {"value": str(category)}})
+    return must

@@ -121,13 +121,15 @@ def test_category_egysoros_szoveg_levagas_m79b():
     assert p["category"] == "Laptop, Notebook > \u00daJ Notebook"
 
 
-def test_q_nb_usage_uzleti_m79bnb():
+def test_q_nb_usage_mar_nem_kezi_lista_m82c():
+    # m82c: a felhasznalas-jelleget a generikus facets-szotar ismeri fel,
+    # a paramextract mar nem ad "usage" kulcsot
     c = px.detect_constraints("Melyik a legolcs\u00f3bb \u00fczleti notebook?")
-    assert c == {"usage": "uzleti"}
+    assert c == {}
 
 
-def test_q_nb_gaming_map_m79bnb():
-    assert px.detect_constraints("gaming laptop aj\u00e1nlat?")["usage"] == "gamer"
+def test_q_nb_gaming_nincs_usage_m82c():
+    assert "usage" not in px.detect_constraints("gaming laptop aj\u00e1nlat?")
 
 
 def test_q_nb_windows_11_nem_meret_m79bnb():
@@ -147,9 +149,9 @@ def test_q_bag_elsobbseg_m79bnb():
     assert "kijelzo_meret_gte" not in c and "usage" not in c
 
 
-def test_q_nb_meret_es_usage_egyutt_m79bnb():
+def test_q_nb_meret_usage_nelkul_m82c():
     c = px.detect_constraints("legolcs\u00f3bb 17,3 colos gamer laptop")
-    assert c == {"kijelzo_meret_gte": 17.3, "usage": "gamer"}
+    assert c == {"kijelzo_meret_gte": 17.3}
 
 
 def test_conditions_usage_nem_szur_meret_igen_m81():
@@ -164,9 +166,9 @@ def test_q_brand_gate_nelkul_m80():
     assert px.detect_constraints("\u00e9s ASUS m\u00e1rk\u00e1j\u00faak k\u00f6z\u00fcl?") == {"brand": "asus"}
 
 
-def test_q_brand_es_usage_m80():
+def test_q_brand_usage_nelkul_m82c():
     c = px.detect_constraints("legolcs\u00f3bb asus gamer laptop")
-    assert c == {"usage": "gamer", "brand": "asus"}
+    assert c == {"brand": "asus"}
 
 
 def test_q_brand_hp_toner_m80():

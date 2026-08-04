@@ -97,12 +97,9 @@ _RE_NB_TOPIC = re.compile(r"notebook|laptop|ultrabook")
 _RE_MERET_Q = re.compile(
     r"\b(1[0-8])(?:[.,](\d))?\s*(?:[\"\u2033']|col\w*|inch\w*|huvelyk\w*|-?os\b|-?es\b)"
 )
-# m79b-nb: linkfacet 'felhasznalas-jellege' ertekei (a superlative.detect_usage
-# parja, itt duplikalva az importfuggetlenseg miatt)
-_USAGE_WORDS = (
-    ("uzleti", "uzleti"), ("otthoni", "otthoni"), ("gamer", "gamer"),
-    ("gaming", "gamer"), ("grafikus", "grafikus"), ("atalakithato", "atalakithato"),
-)
+# m82c: a kezi _USAGE_WORDS lista KIVEZETVE -- a felhasznalas-jelleget a
+# crawl-olt generikus szotar (facetdict) ismeri fel, kategoria-kapuval, es a
+# zaro-linket is az adja (chat.py m82b fallback-aga).
 # m80: gyakori markak (fold-olt) -- a payload brand-ertekek iras-valtozatait a
 # build_filter_conditions kepzi; a linkfacet a marka-szuro slugjaval matchel
 _BRANDS = (
@@ -167,10 +164,6 @@ def detect_constraints(message: str) -> dict:
         v = _meret_from_q(fm)
         if v is not None:
             out["kijelzo_meret_gte"] = v
-        for word, val in _USAGE_WORDS:
-            if re.search(r"\b" + word, fm):
-                out["usage"] = val
-                break
 
     # m80: marka tema-gate nelkul
     for b in _BRANDS:

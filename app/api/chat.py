@@ -366,13 +366,24 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
                 # valaszolgatott (irrelevans bevezeto bekezdesek).
                 from app.services.paramextract import build_filter_conditions as _bfc80c, detect_constraints as _dc80c  # m80c
                 from app.services.policy_filter import is_policy_query as _ipq80  # m80b
-                from app.services.superlative import detect_usage as _du80c  # m80c
+                from app.services.facetdict import detect_facet_tags as _dft80c  # m82c
+                from app.services.linkfacet import load_map as _lm80c  # m82c
                 from app.services.selfrepeat import has_stale_price, is_self_repeat
                 _olds = []
                 for _t in req.history:
                     if getattr(_t, "role", "") == "assistant":
                         _c = getattr(_t, "content", None) or (_t.get("content") if isinstance(_t, dict) else None) or getattr(_t, "text", "") or ""
                         _olds.append(str(_c))
+                # m82c: a generikus facets-szures is Qdrant-szurt poolt jelent
+                # (a kivezetett m76-os usage-ag helyett) -- ez nyitja a gate-et
+                try:
+                    _fdt80c = _dft80c(
+                        _det_msg,
+                        [str((_h.get("payload") or {}).get("category") or "") for _h in (hits or [])],
+                        _lm80c(req.client_id),
+                    )
+                except Exception:  # noqa: BLE001
+                    _fdt80c = []
                 _nraw = (raw or "").replace(" ", "").replace("\u00a0", "")
                 if (
                     _minp is not None
@@ -388,7 +399,7 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
                         # helyett). A link-only meret-kulcsok NEM nyitjak a gate-et.
                         or (
                             _rmode == "stock_filtered"
-                            and bool(_bfc80c(_dc80c(_det_msg)) or _du80c(_det_msg))
+                            and bool(_bfc80c(_dc80c(_det_msg)) or _fdt80c)
                         )
                     )
                 ):

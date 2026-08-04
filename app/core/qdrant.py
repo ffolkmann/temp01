@@ -27,6 +27,10 @@ _PAYLOAD_INDEXES: dict[str, str] = {
     "p_max_meret": "float",  # m79c
     "p_kijelzo": "integer",  # m81: kijelzo-meret cimke (173 = 17.3 col) -> range
     "facets": "keyword",  # m82a: generikus bolt-szuro cimkek (marka:asus, ...)
+    # m82c: a facets cimkek KATEGORIA-AGNOSZTIKUSAK (ugyanaz a tag tobb
+    # kategoriaban is el), a bolt szuro-oldala viszont kategoria-szintu ->
+    # a facets-szures melle kategoria-feltetel megy, ahhoz index kell.
+    "category": "keyword",
 }
 
 

@@ -35,7 +35,7 @@ async def retrieve(
     from app.services.paramextract import build_filter_conditions, detect_constraints  # m79c
     from app.services.superlative import (  # m38/m39/m40/m58/m64
         AVAIL_WIDE_LIMIT, USAGE_WIDE_LIMIT, WIDE_LIMIT, accessory_filter, detect_price_superlative,
-        detect_stock_filter, detect_usage, merge_available_extras,
+        detect_stock_filter, merge_available_extras,
         needs_available_boost, price_context_stock, topic_of,
     )
 
@@ -49,8 +49,11 @@ async def retrieve(
     # determinisztikus (ar szerint), a dense csak a temat szuri.
     superlative = detect_price_superlative(message)
     stock_only = bool(superlative) and (detect_stock_filter(message) or hide_oos)  # m58 + m73: tenant-tiltas is kenyszeriti
-    _usage = detect_usage(message)  # m76: felhasznalas-jelleg cimke (uzleti/otthoni/gamer/...) -> payload-szuro
+    # m82c: a kulon m76-os `usage` payload-ag KIVEZETVE -- a felhasznalas-jelleget
+    # (uzleti/otthoni/gamer/...) a generikus, crawl-olt facets-szotar kezeli
+    # (facetdict), kategoria-kapuval; igy nincs ket parhuzamos cimke-ut.
     _pextra = build_filter_conditions(detect_constraints(message))  # m79c: param-szures (bag-gate, konzervativ)
+    _wide82 = False  # m82c: facets-szurt poolnal a TELJES cimkezett halmaz kell (USAGE_WIDE_LIMIT)
     _topic = topic_of(message) if superlative else ""
     if superlative and len(_topic) >= 3:
         vector = await embed_query(_topic)
@@ -86,27 +89,38 @@ async def retrieve(
     if superlative and hits:
         try:
             from app.services.facetdict import build_facet_conditions as _bfc82
+            from app.services.facetdict import category_value as _cv82
             from app.services.facetdict import detect_facet_tags as _dft82
             from app.services.linkfacet import load_map as _lm82
-            _tags82 = _dft82(
-                message,
-                [str((h.get("payload") or {}).get("category") or "") for h in hits],
-                _lm82(client_id),
-            )
+            _cats82 = [str((h.get("payload") or {}).get("category") or "") for h in hits]
+            _fmap82 = _lm82(client_id)
+            _tags82 = _dft82(message, _cats82, _fmap82)
             if _tags82:
-                _fc82 = _bfc82(_tags82)
+                # m82c: KATEGORIA-KAPU a szuresen is (nem csak a felismeresen).
+                # A cimkek kategoria-agnosztikusak, a bolt szuro-oldala nem az.
+                _cat82 = _cv82(_cats82, _fmap82)
+                _fc82 = _bfc82(_tags82, _cat82)
                 _fh82 = await qdrant.search(
                     vector=vector, client_id=client_id,
                     limit=max(WIDE_LIMIT, _settings.retrieval_top_k),
                     product_only=False, extra_must=(_pextra or []) + _fc82,
                 )
+                if not _fh82 and _cat82:  # fail-safe: kategoria-kapu nelkul ujra
+                    _fc82 = _bfc82(_tags82)
+                    _fh82 = await qdrant.search(
+                        vector=vector, client_id=client_id,
+                        limit=max(WIDE_LIMIT, _settings.retrieval_top_k),
+                        product_only=False, extra_must=(_pextra or []) + _fc82,
+                    )
                 import logging as _lg82
                 _lg82.getLogger("cx.retrieval").info(
-                    "m82b facet filter %s -> %d hit (client=%s)", _tags82, len(_fh82), client_id
+                    "m82b facet filter %s cat=%r -> %d hit (client=%s)",
+                    _tags82, _cat82, len(_fh82), client_id,
                 )
                 if _fh82:
                     hits = _fh82
                     _pextra = (_pextra or []) + _fc82
+                    _wide82 = True
         except Exception:  # noqa: BLE001 — a facet-szures hibaja ne torje a chatet
             pass
     hits = filter_for_policy(message, hits)
@@ -125,11 +139,11 @@ async def retrieve(
         try:
             _ap = await qdrant.search(
                 vector=vector, client_id=client_id,
-                limit=(USAGE_WIDE_LIMIT if _usage else AVAIL_WIDE_LIMIT),
+                limit=(USAGE_WIDE_LIMIT if _wide82 else AVAIL_WIDE_LIMIT),
                 product_only=True, available_only=True,
-                usage=_usage, extra_must=_pextra or None,  # m79c
+                extra_must=_pextra or None,  # m79c/m82c
             )
-            if not _ap and (_usage or _pextra):  # m76/m79c fallback: cimke/param-hiany -> regi ut
+            if not _ap and _pextra:  # m79c/m82c fallback: param-hiany -> regi ut
                 _ap = await qdrant.search(
                     vector=vector, client_id=client_id,
                     limit=AVAIL_WIDE_LIMIT, product_only=True, available_only=True,
@@ -165,10 +179,10 @@ async def retrieve(
         try:
             _pool64 = await qdrant.search(
                 vector=vector, client_id=client_id, limit=40,
-                product_only=True, available_only=True, usage=_usage,
-                extra_must=_pextra or None,  # m79c
+                product_only=True, available_only=True,
+                extra_must=_pextra or None,  # m79c/m82c
             )
-            if not _pool64 and (_usage or _pextra):  # m76/m79c fallback
+            if not _pool64 and _pextra:  # m79c/m82c fallback
                 _pool64 = await qdrant.search(
                     vector=vector, client_id=client_id, limit=40,
                     product_only=True, available_only=True,
