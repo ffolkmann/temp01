@@ -352,17 +352,21 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
                     if str(_pl.get("type") or "") == "product":
                         _rawp = str(_pl.get("price") or "").replace(" ", "").replace("\u00a0", "")
                         try:
-                            _prices.append(int(float(_rawp)))
+                            _prices.append((int(float(_rawp)), str(_pl.get("name") or "")))
                         except (TypeError, ValueError):
                             pass
-                _minp = min(_prices) if _prices else None
+                _minpair = min(_prices) if _prices else None
+                _minp = _minpair[0] if _minpair else None
+                _minname = (_minpair[1] if _minpair else "").strip()[:110]
                 # m78: csak VALODI onismetlesnel regen — a valasz normalizaltan
                 # ~azonos egy korabbi assistant-fordulattal ES a kontextus-minimum
                 # hianyzik belole. Az ar-minimum onmagaban NEM trigger (megkoteses
                 # szuperlativusznal a helyes ar != pool-minimum, m78 bug). Regen
                 # TELJESEN ures historyval — a user-only regen arva user-kerdesekre
                 # valaszolgatott (irrelevans bevezeto bekezdesek).
+                from app.services.paramextract import build_filter_conditions as _bfc80c, detect_constraints as _dc80c  # m80c
                 from app.services.policy_filter import is_policy_query as _ipq80  # m80b
+                from app.services.superlative import detect_usage as _du80c  # m80c
                 from app.services.selfrepeat import has_stale_price, is_self_repeat
                 _olds = []
                 for _t in req.history:
@@ -374,10 +378,35 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
                     _minp is not None
                     and str(_minp) not in _nraw
                     and not _ipq80(message)  # m80b: policy-valaszban nincs pool-min-ar
-                    and (is_self_repeat(raw, _olds) or has_stale_price(raw, _olds))
+                    and (
+                        is_self_repeat(raw, _olds)
+                        or has_stale_price(raw, _olds)
+                        # m80c: Qdrant-szurt poolnal (brand/p_* must vagy usage-cimke)
+                        # a pool-minimum megbizhatoan a helyes valasz -- ha hianyzik,
+                        # regen ismetles-gyanu nelkul is (LLM-variancia: "uzleti =
+                        # Expertbook sorozat" felreertelmezes a 175 990-es Vivobook
+                        # helyett). A link-only meret-kulcsok NEM nyitjak a gate-et.
+                        or (
+                            _rmode == "stock_filtered"
+                            and bool(_bfc80c(_dc80c(_det_msg)) or _du80c(_det_msg))
+                        )
+                    )
                 ):
                     logger.info("m78 self-repeat guard: regen ures historyval (client=%s min=%s)", req.client_id, _minp)
-                    raw = await generate_reply(system_prompt, [], message, model=getattr(tenant, "chat_model", None))
+                    # m80c: a regen determinisztikus hintet kap -- ures history
+                    # onmagaban nem eleg, ha a modell a KONTEXTUSBOL valasztja a
+                    # rosszabb talalatot (pl. "uzleti = Expertbook sorozat")
+                    _hint = (
+                        "\n\n# GUARD - LEGOLCSOBB SZURT TALALAT (determinisztikus adat)\n"
+                        "A szuresi felteteleknek megfelelo legolcsobb, raktaron levo termek: "
+                        + _minname + " - " + f"{_minp:,}".replace(",", " ") + " Ft. "
+                        "Ar-szuperlativuszos kerdesnel EZT a termeket nevezd meg elsokent."
+                    )
+                    if isinstance(system_prompt, (tuple, list)) and len(system_prompt) == 2:
+                        _sp2 = (system_prompt[0], (system_prompt[1] or "") + _hint)
+                    else:
+                        _sp2 = str(system_prompt) + _hint
+                    raw = await generate_reply(_sp2, [], message, model=getattr(tenant, "chat_model", None))
             except Exception:  # noqa: BLE001 — az orseg hibaja ne torje a valaszt
                 pass
     except Exception as _llm_err:  # noqa: BLE001 — a widget mindig kapjon választ
