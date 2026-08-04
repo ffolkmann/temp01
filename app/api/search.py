@@ -79,6 +79,32 @@ def load_config(client_id: str) -> dict[str, Any]:
         return {}
 
 
+_SQL_TENANT_CFG = text("SELECT search_config FROM tenants WHERE client_id = :cid")
+
+
+async def db_config(session: Any, client_id: str) -> dict[str, Any]:
+    """A tenant ``tenants.search_config`` jsonb-je (hibara / hianyzo sorra ures dict)."""
+    try:
+        row = (await session.execute(_SQL_TENANT_CFG, {"cid": client_id})).scalar()
+    except Exception:  # noqa: BLE001 - a widget sosem torhet el a configon
+        logger.warning("search: search_config olvasas sikertelen (%s)", client_id)
+        return {}
+    if isinstance(row, str):
+        try:
+            row = json.loads(row)
+        except Exception:  # noqa: BLE001
+            return {}
+    return row if isinstance(row, dict) else {}
+
+
+async def get_config(session: Any, client_id: str) -> dict[str, Any]:
+    """S3 igazsag-forras: tenants.search_config; ha ures/hibas -> data/smartsearch.json."""
+    if not client_id:
+        return {}
+    cfg = await db_config(session, client_id)
+    return cfg if cfg else load_config(client_id)
+
+
 # --------------------------------------------------------------------------- #
 # normalizálók (a widget által várt alak)
 # --------------------------------------------------------------------------- #
@@ -227,7 +253,7 @@ async def search_settings(
 ) -> JSONResponse:
     """A widget beállításai. Ismeretlen/kikapcsolt tenantnál üres, de valid válasz."""
     cid = (client_id or "").strip()
-    cfg = load_config(cid)
+    cfg = await get_config(session, cid)
     body: dict[str, Any] = {
         "tenant": cid,
         "groups": norm_groups(cfg.get("synonyms")),
@@ -263,7 +289,7 @@ async def search_event(
     cid = str(data.get("client_id") or "").strip()[:64]
     if kind not in SEARCH_KINDS or not cid:
         return Response(status_code=204)
-    if not load_config(cid).get("enabled"):
+    if not (await get_config(session, cid)).get("enabled"):
         # ismeretlen vagy kikapcsolt tenant -> csendes eldobás (nem szemeteljük a táblát)
         return Response(status_code=204)
 

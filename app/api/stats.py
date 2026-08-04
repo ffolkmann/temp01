@@ -91,6 +91,74 @@ def _months_between(f_dt: datetime, t_dt: datetime) -> list[str]:
     return out
 
 
+SS_WINDOW = 30
+
+_SS_SEARCH = (
+    "SELECT meta->>'q' q, COUNT(*) n, "
+    "ROUND(AVG(CASE WHEN meta->>'total' ~ '^[0-9]+$' "
+    "THEN (meta->>'total')::numeric ELSE 0 END), 1) avg_total, "
+    "SUM(CASE WHEN COALESCE(meta->>'total','0') ~ '^[1-9][0-9]*$' THEN 0 ELSE 1 END) zero_n "
+    "FROM events WHERE client_id=:c AND kind='ss_search' "
+    "AND created_at > now() - (:d || ' days')::interval "
+    "AND COALESCE(meta->>'q','') <> '' GROUP BY 1 ORDER BY n DESC LIMIT 200"
+)
+
+_SS_CLICK = (
+    "SELECT meta->>'q' q, COUNT(*) n FROM events "
+    "WHERE client_id=:c AND kind='ss_click' "
+    "AND created_at > now() - (:d || ' days')::interval "
+    "AND COALESCE(meta->>'q','') <> '' GROUP BY 1"
+)
+
+_SS_DEV = (
+    "SELECT COALESCE(meta->>'extra','0') d, COUNT(*) n FROM events "
+    "WHERE client_id=:c AND kind='ss_search' "
+    "AND created_at > now() - (:d || ' days')::interval GROUP BY 1"
+)
+
+_SS_PUR = (
+    "SELECT COALESCE(meta->>'q','') ord, "
+    "CASE WHEN meta->>'total' ~ '^[0-9]+$' THEN (meta->>'total')::numeric ELSE 0 END val, "
+    "CASE WHEN meta->>'extra' ~ '^[0-9]+$' THEN (meta->>'extra')::int ELSE 0 END days, "
+    "created_at FROM events WHERE client_id=:c AND kind='ss_purchase' "
+    "AND created_at > now() - (:d || ' days')::interval ORDER BY created_at DESC LIMIT 50"
+)
+
+
+async def _ss_rows(session: AsyncSession, cid: str, days: int = SS_WINDOW):
+    """s3: a kereso-esemenyek nyers aggregatumai (hibara ures listak)."""
+    p = {"c": cid, "d": str(days)}
+    try:
+        return (
+            (await session.execute(text(_SS_SEARCH), p)).all(),
+            (await session.execute(text(_SS_CLICK), p)).all(),
+            (await session.execute(text(_SS_DEV), p)).all(),
+            (await session.execute(text(_SS_PUR), p)).all(),
+        )
+    except Exception:  # noqa: BLE001 - a kereso-blokk nem dontheti el a /stats-ot
+        logger.warning("stats: smartsearch aggregacio hiba (%s)", cid)
+        return [], [], [], []
+
+
+async def _smartsearch_block(session: AsyncSession, cid: str, days: int = SS_WINDOW) -> dict:
+    """s3: kereso-statisztika a stat.html SmartSearch kartyajahoz."""
+    from app.services import searchstats   # lazy: a fajl-betoltos tesztek stubjai miatt
+
+    s_rows, c_rows, d_rows, p_rows = await _ss_rows(session, cid, days)
+    st = searchstats.term_stats(s_rows, c_rows)
+    terms = st.pop("terms")
+    block = dict(st)
+    block["window_days"] = days
+    block["active"] = bool(st["searches"])
+    block["top"] = searchstats.top_by(terms, "n")
+    block["zero_terms"] = searchstats.top_by(terms, "zero")
+    block["clicked"] = searchstats.top_by(terms, "clicks")
+    block["devices"] = searchstats.devices(d_rows)
+    block["purchases"] = searchstats.purchases(
+        [(r[0], r[1], r[2], _iso(r[3])) for r in p_rows])
+    return block
+
+
 @router.get("/stats")
 async def stats(
     k: str = Query(...),
@@ -392,6 +460,7 @@ async def stats(
             "current_week_label": cw, "weekly": weekly, "questions": questions,
         },
     }
+    resp["smartsearch"] = await _smartsearch_block(session, cid)
     if period_block is not None:
         resp["period"] = period_block
     return resp
@@ -564,5 +633,31 @@ async def stats_conversations_export(
     return Response(
         content=data,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="%s"' % fname},
+    )
+
+
+@router.get("/stats/search/export")
+async def stats_search_export(
+    k: str = Query(...), session: AsyncSession = Depends(get_session),
+) -> Response:
+    """CSV-letoltes: a kereso-kifejezesek 30 napos statisztikaja (s3, stat.html gomb).
+
+    UTF-8 BOM + pontosvesszo -> az Excel egybol helyesen nyitja meg."""
+    from app.services import searchstats   # lazy: lasd _smartsearch_block
+
+    tenant = (await session.execute(text(
+        "SELECT client_id FROM tenants WHERE stat_key = :k"
+    ), {"k": k})).mappings().first()
+    if tenant is None:
+        raise HTTPException(status_code=404, detail="ismeretlen stat_key")
+    cid = tenant["client_id"]
+    s_rows, c_rows, _d, _p = await _ss_rows(session, cid)
+    terms = searchstats.term_stats(s_rows, c_rows)["terms"]
+    data = searchstats.csv_text(terms).encode("utf-8")
+    fname = "kereses-%s-%s.csv" % (cid, datetime.now(BUDAPEST).strftime("%Y%m%d-%H%M"))
+    return Response(
+        content=data,
+        media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": 'attachment; filename="%s"' % fname},
     )

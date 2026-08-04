@@ -73,6 +73,7 @@ class Tenant(Base):
     quick_questions_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")  # m52: gyorskerdesek be/ki
     chat_model: Mapped[str | None] = mapped_column(String)                                            # m55: tenant-szintu modell-felulbiralat (NULL = globalis default)
     recommend_out_of_stock: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")  # m73: raktaron nem levo termek ajanlasa engedelyezett-e
+    search_config: Mapped[dict | None] = mapped_column(JSONB)  # s3: SmartSearch tenant-config (igazsag-forras; data/smartsearch.json = fallback)
 
 
 class Plan(Base):

@@ -82,6 +82,9 @@ class _Rows:
     def all(self):
         return self._rows
 
+    def scalar(self):
+        return None
+
 
 class _Session:
     """Fake AsyncSession: az SQL szövege alapján adja vissza a sorokat."""
@@ -224,7 +227,7 @@ def test_settings_kezi_listak_nem_kerdezik_a_dbt(tmp_path):
         body = _body(asyncio.run(SS.search_settings(client_id="teslashop", session=sess)))
     finally:
         _clear_cfg()
-    assert sess.calls == 0
+    assert sess.calls == 1          # s3: csak a search_config lekerdezes
     assert body["groups"] == [["felni", "kerek"]]
     assert body["oneway"] == [{"f": "noti", "t": ["notebook"]}]
     assert body["popular_terms"] == ["felni"]
@@ -244,7 +247,7 @@ def test_settings_auto_listak_az_esemenyekbol(tmp_path):
         _clear_cfg()
     assert body["popular_terms"] == ["szonyeg"]        # a 0 talalatos kiesik
     assert body["popular_ids"] == ["101", "202"]        # az ures pid kiesik
-    assert sess.calls == 2
+    assert sess.calls == 3          # s3: +1 a search_config lekerdezes
 
 
 def test_settings_kikapcsolt_tenant_nem_kerdez(tmp_path):
@@ -254,7 +257,7 @@ def test_settings_kikapcsolt_tenant_nem_kerdez(tmp_path):
         body = _body(asyncio.run(SS.search_settings(client_id="teslashop", session=sess)))
     finally:
         _clear_cfg()
-    assert sess.calls == 0
+    assert sess.calls == 1          # s3: csak a search_config lekerdezes
     assert body["popular_terms"] == [] and body["groups"] == []
 
 
@@ -336,3 +339,100 @@ def test_event_hianyzo_meta_es_session(tmp_path):
     cid, sid, kind, meta = LOGGED[0]
     assert sid is None
     assert meta == {"q": "", "pid": "", "total": 0, "extra": 0}
+
+
+# --------------------------------------------------------------------------- #
+# S3: tenants.search_config (jsonb) az igazsag-forras, a fajl a fallback
+# --------------------------------------------------------------------------- #
+class _One:
+    def __init__(self, value):
+        self._v = value
+
+    def scalar(self):
+        return self._v
+
+
+class _CfgSession:
+    """Fake session: a search_config lekerdezes kulon agon, a tobbi mint a _Session."""
+
+    def __init__(self, cfg=None, boom=False, terms=None, ids=None):
+        self.cfg = cfg
+        self.boom = boom
+        self.terms = terms or []
+        self.ids = ids or []
+        self.calls = 0
+
+    async def execute(self, stmt, params=None):
+        self.calls += 1
+        s = str(stmt)
+        if "search_config" in s:
+            if self.boom:
+                raise RuntimeError("db down")
+            return _One(self.cfg)
+        return _Rows(self.terms if "ss_search" in s else self.ids)
+
+
+def test_s3_db_config_elsobbseget_elvez_a_fajl_felett(tmp_path):
+    _with_cfg(_write_cfg(tmp_path, {"teslashop": {"enabled": True, "popular_terms": ["fajlbol"]}}))
+    try:
+        sess = _CfgSession(cfg={"enabled": True, "popular_terms": ["dbbol"]})
+        body = _body(asyncio.run(SS.search_settings(client_id="teslashop", session=sess)))
+    finally:
+        _clear_cfg()
+    assert body["popular_terms"] == ["dbbol"]
+
+
+def test_s3_ures_vagy_rossz_db_config_eseten_a_fajl_jon(tmp_path):
+    _with_cfg(_write_cfg(tmp_path, {"teslashop": {"enabled": True, "popular_terms": ["fajlbol"]}}))
+    try:
+        for empty in (None, {}, "nem json", 42, []):
+            sess = _CfgSession(cfg=empty)
+            body = _body(asyncio.run(SS.search_settings(client_id="teslashop", session=sess)))
+            assert body["popular_terms"] == ["fajlbol"], empty
+    finally:
+        _clear_cfg()
+
+
+def test_s3_db_hiba_eseten_a_fajl_jon(tmp_path):
+    _with_cfg(_write_cfg(tmp_path, {"teslashop": {"enabled": True, "popular_terms": ["fajlbol"]}}))
+    try:
+        body = _body(asyncio.run(SS.search_settings(client_id="teslashop", session=_CfgSession(boom=True))))
+    finally:
+        _clear_cfg()
+    assert body["popular_terms"] == ["fajlbol"]
+
+
+def test_s3_db_config_string_jsonkent_is_jo(tmp_path):
+    _with_cfg(_write_cfg(tmp_path, {"teslashop": {"enabled": True}}))
+    try:
+        sess = _CfgSession(cfg=json.dumps({"enabled": True, "popular_terms": ["stringbol"]}))
+        body = _body(asyncio.run(SS.search_settings(client_id="teslashop", session=sess)))
+    finally:
+        _clear_cfg()
+    assert body["popular_terms"] == ["stringbol"]
+
+
+def test_s3_event_db_configbol_engedelyezve(tmp_path):
+    LOGGED.clear()
+    _with_cfg(_write_cfg(tmp_path, {}))            # a fajlban NINCS ilyen tenant
+    try:
+        sess = _CfgSession(cfg={"enabled": True})
+        raw = json.dumps({"client_id": "ujshop", "event": "ss_search", "meta": {}}).encode("utf-8")
+        resp = asyncio.run(SS.search_event(request=_Req(raw), session=sess))
+    finally:
+        _clear_cfg()
+    assert resp.status_code == 204
+    assert len(LOGGED) == 1 and LOGGED[0][0] == "ujshop"
+
+
+def test_s3_event_db_configban_kikapcsolva(tmp_path):
+    LOGGED.clear()
+    _with_cfg(_write_cfg(tmp_path, {"teslashop": {"enabled": True}}))   # a fajl szerint MENNE
+    try:
+        sess = _CfgSession(cfg={"enabled": False})
+        raw = json.dumps({"client_id": "teslashop", "event": "ss_search", "meta": {}}).encode("utf-8")
+        resp = asyncio.run(SS.search_event(request=_Req(raw), session=sess))
+    finally:
+        _clear_cfg()
+    assert resp.status_code == 204
+    assert LOGGED == []

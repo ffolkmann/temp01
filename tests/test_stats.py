@@ -25,6 +25,11 @@ def _load(modname, path):
     return m
 
 
+# s3: a stats.py lazy `from app.services import searchstats` importja -> a VALODI modult
+# regisztraljuk a fake app.services ala (nem stub: stdlib-only, a szamitas is valodi)
+_ss_mod = _load("app.services.searchstats", os.path.join(ROOT, "app", "services", "searchstats.py"))
+sys.modules["app.services"].searchstats = _ss_mod
+
 # --- fake fastapi ---
 ff = types.ModuleType("fastapi")
 class _Router:

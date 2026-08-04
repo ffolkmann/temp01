@@ -71,24 +71,30 @@ async def run_tenant(tenant, tcfg, out_root):
     return res
 
 
+def effective_config(tenant, filecfg):
+    """s3: az igazsag-forras a tenants.search_config; ures/hianyzo -> data/smartsearch.json."""
+    sc = getattr(tenant, "search_config", None)
+    if isinstance(sc, dict) and sc:
+        return sc
+    row = filecfg.get(tenant.client_id)
+    return row if isinstance(row, dict) else {}
+
+
 async def _run(client_id, do_all, out_root):
-    cfg = load_config()
-    enabled = {k for k, v in cfg.items() if isinstance(v, dict) and v.get("enabled")}
-    if not enabled:
-        print(json.dumps({"error": "nincs enabled tenant a smartsearch configban"}, ensure_ascii=False))
-        return
+    filecfg = load_config()
     async with SessionLocal() as session:
         stmt = select(Tenant).where(Tenant.active.is_(True))
         if not do_all:
             stmt = stmt.where(Tenant.client_id == client_id)
         tenants = (await session.execute(stmt)).scalars().all()
-    tenants = [t for t in tenants if t.client_id in enabled]
-    if not tenants:
+    pairs = [(t, effective_config(t, filecfg)) for t in tenants]
+    pairs = [(t, c) for t, c in pairs if c.get("enabled")]
+    if not pairs:
         print(json.dumps({"error": "nincs egyezo aktiv+enabled tenant"}, ensure_ascii=False))
         return
-    for t in tenants:
+    for t, cfg in pairs:
         try:
-            res = await run_tenant(t, cfg.get(t.client_id) or {}, out_root)
+            res = await run_tenant(t, cfg, out_root)
         except Exception as e:  # noqa: BLE001 — vedoernyo: a tenant-loop nem allhat meg
             res = {"client_id": t.client_id, "error": f"unexpected: {e}"}
         print(json.dumps(res, ensure_ascii=False))

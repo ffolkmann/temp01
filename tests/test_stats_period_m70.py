@@ -25,6 +25,14 @@ for n in ("app", "app.core", "app.api", "app.models", "app.services",
           "sqlalchemy", "sqlalchemy.ext"):
     sys.modules.setdefault(n, types.ModuleType(n)).__path__ = []
 
+# s3: valodi searchstats a fake app.services ala (lasd test_stats.py)
+_ss_spec = importlib.util.spec_from_file_location(
+    "app.services.searchstats", os.path.join(ROOT, "app", "services", "searchstats.py"))
+_ss_mod = importlib.util.module_from_spec(_ss_spec)
+sys.modules["app.services.searchstats"] = _ss_mod
+_ss_spec.loader.exec_module(_ss_mod)
+sys.modules["app.services"].searchstats = _ss_mod
+
 ff = types.ModuleType("fastapi")
 
 

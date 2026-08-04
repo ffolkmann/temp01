@@ -613,6 +613,45 @@ async def admin(request: Request, session: AsyncSession = Depends(get_session)) 
     if action == "delete_doc":
         return await _qdrant_delete_doc(cid, filename)
 
+    if action == "search_get":
+        from app.services import searchcfg   # lazy: a fajl-betoltos tesztek fake app.services-e miatt
+
+        # s3: SmartSearch tenant-beallitasok (igazsag-forras: tenants.search_config,
+        # ures/hianyzo eseten a data/smartsearch.json bootstrap-blokkja)
+        if not cid:
+            return {"error": "client_id required"}
+        t = await _get_tenant(session, cid)
+        if t is None:
+            return {"error": "not_found"}
+        cfg = t.search_config if isinstance(t.search_config, dict) else {}
+        source = "db"
+        if not cfg:
+            cfg = searchcfg.load_file_config(cid)
+            source = "file" if cfg else "empty"
+        return {"client_id": cid, "source": source,
+                "form": searchcfg.config_to_form(cfg),
+                "index": searchcfg.index_info(cid)}
+
+    if action == "search_save":
+        from app.services import searchcfg   # lazy: lasd search_get
+
+        if not cid:
+            return {"error": "client_id required"}
+        t = await _get_tenant(session, cid)
+        if t is None:
+            return {"error": "not_found"}
+        form = b.get("search") if isinstance(b.get("search"), dict) else {}
+        cfg = searchcfg.form_to_config(form)
+        old = t.search_config if isinstance(t.search_config, dict) else searchcfg.load_file_config(cid)
+        for _key in ("min_ratio", "only_available"):   # indexelo-kulcsok megorzese
+            if isinstance(old, dict) and _key in old:
+                cfg[_key] = old[_key]
+        t.search_config = cfg
+        await session.commit()
+        return {"ok": True, "client_id": cid, "source": "db",
+                "form": searchcfg.config_to_form(cfg),
+                "index": searchcfg.index_info(cid)}
+
     if action == "test_telegram":
         # m31: próbaüzenet a tenant chatId-jeire (saját bot, vagy a központi)
         cid = str(b.get("client_id") or "").strip().lower()
