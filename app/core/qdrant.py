@@ -25,6 +25,8 @@ _PAYLOAD_INDEXES: dict[str, str] = {
     "p_tipus": "keyword",    # m79c
     "p_szin": "keyword",     # m79c
     "p_max_meret": "float",  # m79c
+    "p_kijelzo": "integer",  # m81: kijelzo-meret cimke (173 = 17.3 col) -> range
+    "facets": "keyword",  # m82a: generikus bolt-szuro cimkek (marka:asus, ...)
 }
 
 
