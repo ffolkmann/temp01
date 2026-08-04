@@ -13,6 +13,27 @@ from app.core.settings import get_settings
 
 _settings = get_settings()
 
+# m82c/2: a kerdesbol felismert KATEGORIA-SZANDEK feloldasahoz a tenant VALODI
+# `category` payload-ertekei kellenek (a crawl-terkep csak slugokat ismer).
+# Qdrant facet API, tenantonkent gyorsitotarazva -- keresesenkent nem hivjuk.
+_CATALOG_TTL = 1800.0
+_catalog_cache: dict[str, tuple[float, list[str]]] = {}
+
+
+async def category_catalog(client_id: str) -> list[str]:
+    """A tenant kulonbozo `category` payload-ertekei (cache-elt; hiba -> [])."""
+    import time as _time
+    now = _time.monotonic()
+    hit = _catalog_cache.get(client_id)
+    if hit and (now - hit[0]) < _CATALOG_TTL:
+        return hit[1]
+    try:
+        vals = await get_qdrant().facet_values("category", client_id)
+    except Exception:  # noqa: BLE001 — katalogus nelkul csak a kategoria-szandek esik ki
+        return hit[1] if hit else []
+    _catalog_cache[client_id] = (now, vals)
+    return vals
+
 
 async def retrieve(
     embed_input: str,
@@ -94,11 +115,17 @@ async def retrieve(
             from app.services.linkfacet import load_map as _lm82
             _cats82 = [str((h.get("payload") or {}).get("category") or "") for h in hits]
             _fmap82 = _lm82(client_id)
-            _tags82 = _dft82(message, _cats82, _fmap82)
+            # m82c/2: a kapu ELSOSORBAN a kerdesbol feloldott kategoria; a
+            # talalatok top-kategoriaja csak fallback. E nelkul a
+            # notebook-dominans pool elnyomta a "gamer asztali szamitogep"-et
+            # (a kapu notebookra allt be -> a 6 asztali gamer gep sosem jott be).
+            from app.services.facetdict import detect_category as _dcat82
+            _qcat82 = _dcat82(message, await category_catalog(client_id))
+            _tags82 = _dft82(message, _cats82, _fmap82, category=_qcat82)
             if _tags82:
                 # m82c: KATEGORIA-KAPU a szuresen is (nem csak a felismeresen).
                 # A cimkek kategoria-agnosztikusak, a bolt szuro-oldala nem az.
-                _cat82 = _cv82(_cats82, _fmap82)
+                _cat82 = _cv82(_cats82, _fmap82, category=_qcat82)
                 _fc82 = _bfc82(_tags82, _cat82)
                 _fh82 = await qdrant.search(
                     vector=vector, client_id=client_id,

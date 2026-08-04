@@ -76,6 +76,28 @@ class QdrantClient:
         r.raise_for_status()
         return r.json().get("result", [])
 
+    async def facet_values(self, key: str, client_id: str, limit: int = 300) -> list[str]:
+        """m82c/2: egy payload-kulcs KULONBOZO ertekei (Qdrant facet API, 1.12+).
+
+        A kategoria-szandek feloldasahoz a tenant valodi `category` ertekei
+        kellenek: a crawl-terkep csak slugot ismer, a Qdrant-feltetelhez
+        viszont a pontos payload-ertek kell. Csak keyword-indexelt mezore megy
+        (a `category` m82c/1 ota az).
+        """
+        body = {
+            "key": key,
+            "limit": limit,
+            "exact": True,
+            "filter": {"must": [
+                {"key": "client_id", "match": {"value": client_id}},
+                {"key": "type", "match": {"value": "product"}},
+            ]},
+        }
+        r = await self._client.post(f"/collections/{self.collection}/facet", json=body)
+        r.raise_for_status()
+        hits = (r.json().get("result") or {}).get("hits") or []
+        return [str(h.get("value")) for h in hits if h.get("value")]
+
     async def find_by_url(self, client_id: str, url: str) -> dict[str, Any] | None:
         """Aktuális termék keresése a page_url_norm alapján (exact match).
 

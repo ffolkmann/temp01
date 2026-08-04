@@ -30,7 +30,10 @@ from __future__ import annotations
 import re
 import unicodedata
 
-__all__ = ["detect_facet_tags", "build_facet_conditions", "facet_tag_url", "category_value"]
+__all__ = [
+    "detect_facet_tags", "build_facet_conditions", "facet_tag_url", "category_value",
+    "detect_category",
+]
 
 # mar sajat aggal kezelt attributumok (m82c vezeti ki oket ide)
 _SKIP_ATTRS = frozenset({
@@ -51,7 +54,16 @@ _MIN_LEN = 3
 _COVER_MAX = 0.8   # ennel nagyobb lefedettsegnel az ertek nem szelektiv
 _MAX_ATTRS = 3     # egy kerdesbol legfeljebb ennyi attributumra szurunk
 
+# m82c/2: kategoria-szandek a KERDESBOL
+_CAT_MIN = 4       # ennel rovidebb kategoria-nev-reszt nem illesztunk
+_CAT_SUFFIX = 4    # ennyi ragozasi karakter engedett a talalat vegen
+_CAT_STOP = frozenset({
+    "egyeb", "kiegeszito", "kiegeszitok", "tartozek", "tartozekok",
+    "hasznalt", "termek", "termekek", "akcio", "akciok", "ujdonsag", "ujdonsagok",
+})
+
 _rx_cache: dict = {}
+_crx_cache: dict = {}
 
 
 def _fold(s):
@@ -146,9 +158,83 @@ def _cat_size(facets):
     return sums[len(sums) // 2]
 
 
-def _category_entry(categories, fmap):
-    """(slug, entry) a kontextus top-kategoriajara, vagy ("", None)."""
-    cat = _top_category(categories)
+def _cat_parts(category):
+    """A payload-kategoria LEVELNEVENEK illesztheto reszei (vesszo menten).
+
+    'Nyomtato > Tintapatron, toner' -> ['tintapatron', 'toner']
+    """
+    out = []
+    for part in _fold(_leaf(category)).split(","):
+        p = re.sub(r"\s+", " ", part).strip()
+        if len(p) < _CAT_MIN or _norm_key(p) in _CAT_STOP:
+            continue
+        out.append(p)
+    return out
+
+
+def _cat_rx(part):
+    """Kategoria-nev-resz -> illeszto regex, rovid magyar toldalekkal.
+
+    A zaro hatar SZANDEKOSAN nem szigoru (a facet-ertekekkel ellentetben):
+    'asztali szamitogepET', 'monitorT', 'nyomtatoK' meg talalat, de a
+    'monitorszuro' (5+ karakter ratoldva) mar NEM -- igy a ragozas nem esik
+    ki, a masik kategoriaba atcsuszas viszont igen.
+    """
+    hit = _crx_cache.get(part)
+    if hit is not None:
+        return hit
+    toks = [re.escape(t) for t in str(part).split(" ") if t]
+    if not toks:
+        return None
+    rx = re.compile(
+        r"(?<![a-z0-9])" + r"[\s\-]*".join(toks)
+        + r"(?![a-z0-9]{" + str(_CAT_SUFFIX + 1) + r",})"
+    )
+    _crx_cache[part] = rx
+    return rx
+
+
+def detect_category(message, catalog):
+    """A kerdesben megnevezett kategoria PAYLOAD-erteke, vagy "".
+
+    m82c/2: a kategoria-kaput eddig a TALALATOK top-kategoriaja adta, azaz
+    "hova estek a talalatok" -- helyesen viszont "mit kerdezett". Elo eset: a
+    "legolcsobb gamer ASZTALI szamitogep" poolja notebook-dominans, ezert a
+    kapu notebookra allt be, es a 6 gamer asztali gep sosem jutott be.
+
+    `catalog`: a tenant VALODI `category` payload-ertekei (Qdrant facet API) --
+    igy a talalat EGYBEN a Qdrant-feltetel erteke is, nincs slug->payload
+    forditas. Tobbertelmu illeszkedesnel "" -> marad a talalat-alapu kapu.
+    """
+    if not (message and catalog):
+        return ""
+    fm = _fold(message)
+    best = ""
+    best_len = 0
+    tie = False
+    for cat in catalog:
+        cat = str(cat or "")
+        if not cat:
+            continue
+        for p in _cat_parts(cat):
+            rx = _cat_rx(p)
+            if rx is None or not rx.search(fm):
+                continue
+            if len(p) > best_len:
+                best, best_len, tie = cat, len(p), False
+            elif len(p) == best_len and cat != best:
+                tie = True   # ket kulonbozo kategoria egyforma erossen -> nem dontunk
+    return "" if tie else best
+
+
+def _category_entry(categories, fmap, category=""):
+    """(slug, entry) a kategoriara, vagy ("", None).
+
+    m82c/2: `category` = a KERDESBOL feloldott payload-kategoria; ha van, az
+    eros a kontextus-talalatok top-kategoriajanal. A terkepben nem letezo
+    kategoria ("", None)-t ad -> a hivo nem szur (fail-safe).
+    """
+    cat = str(category or "") or _top_category(categories)
     if not cat:
         return "", None
     want = _norm_key(_leaf(cat))
@@ -158,7 +244,7 @@ def _category_entry(categories, fmap):
     return "", None
 
 
-def detect_facet_tags(message, categories, fmap, max_attrs=_MAX_ATTRS):
+def detect_facet_tags(message, categories, fmap, max_attrs=_MAX_ATTRS, category=""):
     """['operacios-rendszer:windows-11-professional', 'memoria-meret:16gb'] vagy [].
 
     `categories`: a kontextus-talalatok category payload-ertekei (a kapu).
@@ -167,7 +253,7 @@ def detect_facet_tags(message, categories, fmap, max_attrs=_MAX_ATTRS):
     """
     if not (message and fmap):
         return []
-    cat_slug, ent = _category_entry(categories, fmap)
+    cat_slug, ent = _category_entry(categories, fmap, category)
     if not ent:
         return []
     cat_key = _norm_key(cat_slug)
@@ -194,7 +280,7 @@ def detect_facet_tags(message, categories, fmap, max_attrs=_MAX_ATTRS):
     return out
 
 
-def category_value(categories, fmap):
+def category_value(categories, fmap, category=""):
     """A kontextus top-kategoriajanak PAYLOAD-erteke, ha a terkepben letezik ("" ha nem).
 
     m82c: a `facets` cimkek kategoria-agnosztikusak -- ugyanaz a tag tobb
@@ -203,15 +289,15 @@ def category_value(categories, fmap):
     szurest is oda kell kotni, kulonben a "legolcsobb gamer laptop" poolba
     gamer ASZTALI gep kerul (es ar-rendezes utan az is nyerhet).
     """
-    if not (categories and fmap):
+    if not (fmap and (categories or category)):
         return ""
-    slug, ent = _category_entry(categories, fmap)
+    slug, ent = _category_entry(categories, fmap, category)
     if not (slug and ent):
         return ""
-    return _top_category(categories)
+    return str(category or "") or _top_category(categories)
 
 
-def facet_tag_url(base_url, categories, tags, fmap):
+def facet_tag_url(base_url, categories, tags, fmap, category=""):
     """Az elso olyan felismert cimke szuro-URL-je, ami a kategoriaban letezik.
 
     A linkfacet _PRIORITY-lancaba a generikus cimkek nem fernek bele (nincs
@@ -220,7 +306,7 @@ def facet_tag_url(base_url, categories, tags, fmap):
     """
     if not (base_url and tags and fmap):
         return None
-    _slug, ent = _category_entry(categories, fmap)
+    _slug, ent = _category_entry(categories, fmap, category)
     if not ent or not ent.get("url"):
         return None
     facets = ent.get("facets") or {}

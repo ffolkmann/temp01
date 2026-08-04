@@ -377,10 +377,16 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
                 # m82c: a generikus facets-szures is Qdrant-szurt poolt jelent
                 # (a kivezetett m76-os usage-ag helyett) -- ez nyitja a gate-et
                 try:
+                    # m82c/2: ugyanaz a kategoria-kapu, mint a retrieval-oldalon
+                    # (kerdes-kategoria elsobbseggel), kulonben a gate mast lat,
+                    # mint amivel a pool tenylegesen szurve lett
+                    from app.services.facetdict import detect_category as _dcat80c
+                    from app.services.retrieval import category_catalog as _cc80c
                     _fdt80c = _dft80c(
                         _det_msg,
                         [str((_h.get("payload") or {}).get("category") or "") for _h in (hits or [])],
                         _lm80c(req.client_id),
+                        category=_dcat80c(_det_msg, await _cc80c(req.client_id)),
                     )
                 except Exception:  # noqa: BLE001
                     _fdt80c = []
@@ -481,10 +487,15 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
                     from app.services.facetdict import detect_facet_tags as _dft82
                     from app.services.facetdict import facet_tag_url as _ftu82
                     from app.services.linkfacet import load_map as _lm82
+                    from app.services.facetdict import detect_category as _dcat82  # m82c/2
+                    from app.services.retrieval import category_catalog as _cc82  # m82c/2
                     _fmap82 = _lm82(req.client_id)
+                    # m82c/2: a zaro-link is a kerdes kategoriajara mutat
+                    _qcat82 = _dcat82(_det_msg, await _cc82(req.client_id))
                     _fu82 = _ftu82(
                         str(getattr(tenant, "public_url", "") or ""),
-                        _hc, _dft82(_det_msg, _hc, _fmap82), _fmap82,
+                        _hc, _dft82(_det_msg, _hc, _fmap82, category=_qcat82), _fmap82,
+                        category=_qcat82,
                     )
                     if _fu82:
                         _more_url = _fu82
