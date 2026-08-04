@@ -216,6 +216,7 @@ _DEVICE_RE = re.compile(r"notebook|laptop")
 _ACC_RE = re.compile(
     r"taska|hatizsak|sleeve|hutopad|dokkol"
     r"|\btok\b|\btokok\b|\beger\b|\bkabel\b|\badapter\b|\btolto\b|\bpatron\b|\btoner\b|\ballvany\b"
+    r"|monitor|projektor"  # m80b: notebook-temanal az (olcso) Acer/HP monitor is zaj
 )
 
 

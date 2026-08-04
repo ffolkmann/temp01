@@ -93,3 +93,18 @@ def test_policy_embed_input_ures_embed_input_eseten_a_message_a_bazis():
     out = _pf.policy_embed_input("van házhozszállítás", "")
     assert out.startswith("van házhozszállítás")
     assert "szallitas" in out
+
+
+
+def test_policy_embed_follow_up_prepend_kizarva_m80b():
+    # m24-es prepend ("es Lenovo?. ...") nem mehet a policy-embedbe
+    out = _pf.policy_embed_input(
+        "\u00e9s mennyibe ker\u00fcl a sz\u00e1ll\u00edt\u00e1s?",
+        "\u00e9s Lenovo?. \u00e9s mennyibe ker\u00fcl a sz\u00e1ll\u00edt\u00e1s?",
+    )
+    assert "Lenovo" not in out and "lenovo" not in out
+    assert "aszf" in out  # expansion jelen
+
+
+def test_policy_embed_nem_policy_valtozatlan_m80b():
+    assert _pf.policy_embed_input("legolcs\u00f3bb laptop", "X. legolcs\u00f3bb laptop") == "X. legolcs\u00f3bb laptop"

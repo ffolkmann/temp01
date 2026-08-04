@@ -53,7 +53,11 @@ def policy_embed_input(message: str, embed_input: str) -> str:
     """
     if not is_policy_query(message):
         return embed_input
-    return (embed_input or message) + _POLICY_EXPANSION
+    # m80b: policy-kerdesnel CSAK a kerdes + expansion megy az embedbe -- a
+    # m24-es follow-up prepend (elozo user-kerdes / termeknev az embed_input
+    # elejen) termek-fele billentette a keresest ("es Lenovo?. es mennyibe
+    # kerul a szallitas?" -> Lenovo-pool, KB-doksi helyett)
+    return message + _POLICY_EXPANSION
 
 
 def _is_product(hit: dict) -> bool:

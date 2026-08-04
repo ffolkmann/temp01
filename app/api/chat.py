@@ -290,8 +290,12 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
                     str(getattr(h, "content", "") or "") for h in req.history
                     if str(getattr(h, "role", "") or "") == "user"
                 ]
-                if _prev_u and _dps80(_prev_u[-1]):
-                    _det_msg = _prev_u[-1].strip() + " " + message
+                # m80b: nem csak a kozvetlen elozo user-uzenet -- a lancolt
+                # follow-upnal ("uzleti notebook" -> "es ASUS?" -> "es Lenovo?")
+                # az utolso ar-szuperlativuszos user-kerdesig keresunk vissza
+                _anchor = next((u for u in reversed(_prev_u) if _dps80(u)), None)
+                if _anchor:
+                    _det_msg = _anchor.strip() + " " + message
                     logger.info("m80 follow-up merge client=%s: %r", req.client_id, _det_msg[:120])
     except Exception:  # noqa: BLE001 - a merge hibaja ne torje a chatet
         _det_msg = message
@@ -358,6 +362,7 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
                 # szuperlativusznal a helyes ar != pool-minimum, m78 bug). Regen
                 # TELJESEN ures historyval — a user-only regen arva user-kerdesekre
                 # valaszolgatott (irrelevans bevezeto bekezdesek).
+                from app.services.policy_filter import is_policy_query as _ipq80  # m80b
                 from app.services.selfrepeat import has_stale_price, is_self_repeat
                 _olds = []
                 for _t in req.history:
@@ -368,6 +373,7 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
                 if (
                     _minp is not None
                     and str(_minp) not in _nraw
+                    and not _ipq80(message)  # m80b: policy-valaszban nincs pool-min-ar
                     and (is_self_repeat(raw, _olds) or has_stale_price(raw, _olds))
                 ):
                     logger.info("m78 self-repeat guard: regen ures historyval (client=%s min=%s)", req.client_id, _minp)
