@@ -194,9 +194,9 @@ def _brand_variants(b: str) -> list[str]:
 def build_filter_conditions(cons: dict) -> list[dict]:
     """Qdrant must-feltetelek a detect_constraints kimenetebol. Ures dict -> ures lista.
 
-    A p_* kulcsokbol es a brand-bol epit feltetelt -- a notebook-agi
-    link-kulcsok (kijelzo_meret_gte, usage) szandekosan kimaradnak
-    (nincs payload-mezojuk; a usage-t a retrieval m76-os aga kezeli).
+    A p_* kulcsokbol, a brand-bol es (m81 ota) a kijelzo_meret_gte-bol epit
+    feltetelt. A usage szandekosan kimarad: azt a retrieval m76-os aga
+    kezeli (qdrant.search(usage=), sajat fallbackkal).
     """
     must: list[dict] = []
     if not cons:
@@ -210,4 +210,11 @@ def build_filter_conditions(cons: dict) -> list[dict]:
         must.append({"key": "p_szin", "match": {"value": cons["p_szin"]}})
     if cons.get("brand"):
         must.append({"key": "brand", "match": {"any": _brand_variants(cons["brand"])}})
+    # m81: kijelzo-meret mar Qdrant-szuro is (p_kijelzo payload, a
+    # usage_crawl kijelzo-meret JOB-ja irja a bolt szurojebol, egesz
+    # szamkent: 173 = 17.3"). Csak akkor szurunk, ha a kerdes tenyleg
+    # meretet ad meg -- a link-oldali viselkedes valtozatlan.
+    v = cons.get("kijelzo_meret_gte")
+    if isinstance(v, (int, float)):
+        must.append({"key": "p_kijelzo", "range": {"gte": int(round(float(v) * 10))}})
     return must

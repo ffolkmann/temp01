@@ -152,9 +152,11 @@ def test_q_nb_meret_es_usage_egyutt_m79bnb():
     assert c == {"kijelzo_meret_gte": 17.3, "usage": "gamer"}
 
 
-def test_conditions_nb_kulcsok_nem_szurnek_m79bnb():
-    # nb-kulcsokbol NEM lesz Qdrant-feltetel (nincs payload-mezojuk)
-    assert px.build_filter_conditions({"kijelzo_meret_gte": 17.0, "usage": "uzleti"}) == []
+def test_conditions_usage_nem_szur_meret_igen_m81():
+    # m81: a meretbol Qdrant-range lesz (p_kijelzo), a usage tovabbra sem
+    # ad must-feltetelt (azt a retrieval m76-os aga kezeli)
+    must = px.build_filter_conditions({"kijelzo_meret_gte": 17.0, "usage": "uzleti"})
+    assert must == [{"key": "p_kijelzo", "range": {"gte": 170}}]
 
 
 def test_q_brand_gate_nelkul_m80():
@@ -190,3 +192,21 @@ def test_conditions_brand_msi_alias_m80():
     must = px.build_filter_conditions({"brand": "msi"})
     vals = must[0]["match"]["any"]
     assert "MSI (Micro-Star International)" in vals and "MSI" in vals
+
+
+def test_conditions_meret_173_m81():
+    assert px.build_filter_conditions({"kijelzo_meret_gte": 17.3}) == [
+        {"key": "p_kijelzo", "range": {"gte": 173}}
+    ]
+
+
+def test_conditions_meret_es_brand_egyutt_m81():
+    must = px.build_filter_conditions({"kijelzo_meret_gte": 15.6, "brand": "asus"})
+    keys = [m["key"] for m in must]
+    assert keys == ["brand", "p_kijelzo"]
+
+
+def test_conditions_taska_meret_nem_kijelzo_m81():
+    # a taska-agi p_max_meret_gte NEM a kijelzo-kulcsra megy
+    must = px.build_filter_conditions({"p_max_meret_gte": 17.0})
+    assert must == [{"key": "p_max_meret", "range": {"gte": 17.0}}]
