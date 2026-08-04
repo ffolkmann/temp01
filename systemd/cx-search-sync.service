@@ -1,0 +1,13 @@
+[Unit]
+Description=CX SmartSearch index-sync (statikus kereso-index a webrootba)
+Documentation=file:///docker/chatbot-prod/app/search/__main__.py
+After=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/docker/chatbot-prod
+# A repo app-jat is mountoljuk (a kepben nem feltetlenul friss) + a webroot out-dirt.
+# A futo api-t nem erinti; flock a parhuzamos futas ellen.
+ExecStart=/bin/bash -c 'exec 9>/run/cx-search-sync.lock; flock -w 900 9 || { echo "lock timeout"; exit 1; }; exec /usr/bin/docker compose -f docker-compose.prod.yml run --rm -v /docker/chatbot-prod/app:/app/app -v /root/weboldal_fajlok/cx-search:/out api python -m app.search --all --out /out'
+TimeoutStartSec=3600
