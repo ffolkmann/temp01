@@ -79,6 +79,36 @@ async def retrieve(
     # 24-es listabol dobjuk ki, MEG a rerank elott — kulonben a lexikai atfedes a termeknevekben
     # ('...3 ev garancia...') kiszoritja a KB-doksit a top-8-bol. A top_score a szures ELOTTI
     # (a megvalaszolatlan-kuszob valtozatlan marad).
+    # m82b: generikus bolt-szuro (facets payload) — a kontextus-talalatok
+    # kategoriaja a KAPU, a crawl-olt facet-ertekek a szotar. Csak
+    # ar-szuperlativusznal fut (ott dont a pool-minimum), igy a KB/policy
+    # ut erintetlen; ures szurt talalat -> valtozatlan pool (fail-safe).
+    if superlative and hits:
+        try:
+            from app.services.facetdict import build_facet_conditions as _bfc82
+            from app.services.facetdict import detect_facet_tags as _dft82
+            from app.services.linkfacet import load_map as _lm82
+            _tags82 = _dft82(
+                message,
+                [str((h.get("payload") or {}).get("category") or "") for h in hits],
+                _lm82(client_id),
+            )
+            if _tags82:
+                _fc82 = _bfc82(_tags82)
+                _fh82 = await qdrant.search(
+                    vector=vector, client_id=client_id,
+                    limit=max(WIDE_LIMIT, _settings.retrieval_top_k),
+                    product_only=False, extra_must=(_pextra or []) + _fc82,
+                )
+                import logging as _lg82
+                _lg82.getLogger("cx.retrieval").info(
+                    "m82b facet filter %s -> %d hit (client=%s)", _tags82, len(_fh82), client_id
+                )
+                if _fh82:
+                    hits = _fh82
+                    _pextra = (_pextra or []) + _fc82
+        except Exception:  # noqa: BLE001 — a facet-szures hibaja ne torje a chatet
+            pass
     hits = filter_for_policy(message, hits)
     # m38: szuperlativusznal a rerank relevancia-sorrendje okozta az onellentmondast
     # (koronkent mas top-8 'legolcsobbja'). Determinisztikus ar-rendezes a szeles poolon:

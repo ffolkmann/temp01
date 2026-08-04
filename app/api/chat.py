@@ -443,6 +443,7 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
                 _hn = []
             _q2 = link_search_term(message, _hn, _hb) or (_topic_of(message) or "").strip() or (build_queries(message) or [message[:60]])[0]
             _more_url = _su2 + quote_plus(_q2)
+            _more_url_base = _more_url  # m82b: valtozott-e a m79b fasetta-linkre
             # m79b: ha a kerdesben felismert megkotes van (paramextract) es letezik
             # hozza fasetta/SEO-szuro-oldal a crawl-terkepben (linkfacet), arra
             # linkelunk; kulonben marad az m79a kereso-link (fail-safe).
@@ -459,6 +460,24 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
                     if _fu79b:
                         _more_url = _fu79b
                         logger.info("m79b facet link: %s client=%s", _fu79b, req.client_id)
+            except Exception:  # noqa: BLE001 - a facet-link hibaja ne torje a valaszt
+                pass
+            # m82b: ha a m79b-nek nem volt megkotese/linkje, de a generikus
+            # szotar felismert bolt-szurot, arra linkelunk (ugyanaz a
+            # kategoria-kapu, mint a retrieval-oldali szuresnel)
+            try:
+                if _more_url == _more_url_base and _hc:
+                    from app.services.facetdict import detect_facet_tags as _dft82
+                    from app.services.facetdict import facet_tag_url as _ftu82
+                    from app.services.linkfacet import load_map as _lm82
+                    _fmap82 = _lm82(req.client_id)
+                    _fu82 = _ftu82(
+                        str(getattr(tenant, "public_url", "") or ""),
+                        _hc, _dft82(_det_msg, _hc, _fmap82), _fmap82,
+                    )
+                    if _fu82:
+                        _more_url = _fu82
+                        logger.info("m82b facet link: %s client=%s", _fu82, req.client_id)
             except Exception:  # noqa: BLE001 - a facet-link hibaja ne torje a valaszt
                 pass
             _newreply2 = (
