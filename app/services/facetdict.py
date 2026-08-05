@@ -57,6 +57,15 @@ _MAX_ATTRS = 3     # egy kerdesbol legfeljebb ennyi attributumra szurunk
 # m82c/2: kategoria-szandek a KERDESBOL
 _CAT_MIN = 4       # ennel rovidebb kategoria-nev-reszt nem illesztunk
 _CAT_SUFFIX = 4    # ennyi ragozasi karakter engedett a talalat vegen
+# m82c/4: OSSZETETT SZO. A magyar a kategoria-fonevet gyakran a szo VEGERE
+# teszi ("lezerNYOMTATO", "gamerLAPTOP"), a kezdo hatar viszont szigoru volt,
+# ezert a kapu nem allt be, es a talalat-alapu fallbackre esett vissza.
+# Ezert HOSSZU kategoria-nev ele max _CAT_PREFIX_MAX betu tapadhat.
+# Biztonsagos, mert a detect_category a LEGHOSSZABB reszt valasztja, es
+# holtversenynel nem dont: a "cimkenyomtato" igy a Cimkenyomtatora megy,
+# nem a Nyomtatora.
+_CAT_COMPOUND_MIN = 6   # ennel rovidebb kategoria-nev ele nem engedunk elotagot
+_CAT_PREFIX_MAX = 12    # az elotag maximalis hossza
 _CAT_STOP = frozenset({
     "egyeb", "kiegeszito", "kiegeszitok", "tartozek", "tartozekok",
     "hasznalt", "termek", "termekek", "akcio", "akciok", "ujdonsag", "ujdonsagok",
@@ -248,7 +257,9 @@ def _cat_rx(part):
     if not toks:
         return None
     rx = re.compile(
-        r"(?<![a-z0-9])" + r"[\s\-]*".join(toks)
+        r"(?<![a-z0-9])"
+        + (r"(?:[a-z]{2,%d})?" % _CAT_PREFIX_MAX
+           if len(_norm_key(part)) >= _CAT_COMPOUND_MIN else r"") + r"[\s\-]*".join(toks)
         + r"(?![a-z0-9]{" + str(_CAT_SUFFIX + 1) + r",})"
     )
     _crx_cache[part] = rx
