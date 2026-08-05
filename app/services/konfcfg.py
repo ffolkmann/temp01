@@ -47,6 +47,7 @@ MAX_QUESTIONS = 12
 MAX_OPTIONS = 10
 MAX_CONDS = 12
 MAX_SKUS = 50
+SORTS = ("ajanlott", "ar_asc", "ar_desc", "nepszeru")
 
 
 def config_path():
@@ -202,6 +203,23 @@ def _http_url(v, maxlen=300):
     return s if s.startswith("http://") or s.startswith("https://") else ""
 
 
+def _sort_key(v):
+    s = _s(v, 20).lower()
+    return s if s in SORTS else ""
+
+
+def _sorts(v):
+    """Rendezes-modok whitelistelve, sorrend-tartoan, duplikatum nelkul."""
+    if not isinstance(v, list):
+        return list(SORTS)
+    out = []
+    for x in v[:len(SORTS)]:
+        k = _sort_key(x)
+        if k and k not in out:
+            out.append(k)
+    return out or list(SORTS)
+
+
 def normalize_ruleset(cfg):
     """A widgetnek szant, tisztitott konfiguracio (ismeretlen tenantra kikapcsolt)."""
     if not isinstance(cfg, dict):
@@ -210,6 +228,8 @@ def normalize_ruleset(cfg):
     prior_in = cfg.get("prior") if isinstance(cfg.get("prior"), dict) else {}
     res_in = cfg.get("result") if isinstance(cfg.get("result"), dict) else {}
     lead_in = cfg.get("lead") if isinstance(cfg.get("lead"), dict) else {}
+    stock_in = cfg.get("stock") if isinstance(cfg.get("stock"), dict) else {}
+    img_in = cfg.get("image") if isinstance(cfg.get("image"), dict) else {}
     questions = []
     for q in (cfg.get("questions") or [])[:MAX_QUESTIONS]:
         n = _norm_question(q)
@@ -231,7 +251,22 @@ def normalize_ruleset(cfg):
             "stock_w": _int(prior_in.get("stock_w"), 0, 1000, 25),
             "sale_w": _int(prior_in.get("sale_w"), 0, 1000, 8),
         },
-        "result": {"top_n": _int(res_in.get("top_n"), 1, 12, 4)},
+        "result": {
+            "top_n": _int(res_in.get("top_n"), 1, 12, 4),
+            "more_n": _int(res_in.get("more_n"), 0, 200, 60),
+            "sorts": _sorts(res_in.get("sorts")),
+            "sort_default": _sort_key(res_in.get("sort_default")) or "ajanlott",
+            "pin_label": _s(res_in.get("pin_label"), 30) or "Kiemelt",
+        },
+        "stock": {
+            "only_available": bool(stock_in.get("only_available")),
+            "label_in": _s(stock_in.get("label_in"), 30) or "K\u00e9szleten",
+            "label_out": _s(stock_in.get("label_out"), 30) or "Rendelhet\u0151",
+        },
+        "image": {
+            "prefix": _http_url(img_in.get("prefix")),
+            "suffix": _s(img_in.get("suffix"), 20),
+        },
         "lead": {
             "enabled": bool(lead_in.get("enabled")),
             "title": _s(lead_in.get("title"), 120),
@@ -259,6 +294,8 @@ def config_to_form(cfg):
         "pin": ", ".join(_sku_list(prior.get("pin"))),
         "boost": ", ".join(_sku_list(prior.get("boost"))),
         "top_n": _int(res.get("top_n"), 1, 12, 4),
+        "stock_only": bool((cfg.get("stock") or {}).get("only_available"))
+        if isinstance(cfg.get("stock"), dict) else False,
         "config_json": json.dumps(cfg, ensure_ascii=False, indent=2) if cfg else "",
     }
 
@@ -284,4 +321,7 @@ def form_to_config(form, fallback=None):
     res = base.get("result") if isinstance(base.get("result"), dict) else {}
     res["top_n"] = _int(form.get("top_n"), 1, 12, 4)
     base["result"] = res
+    stock = base.get("stock") if isinstance(base.get("stock"), dict) else {}
+    stock["only_available"] = bool(form.get("stock_only"))
+    base["stock"] = stock
     return base, None

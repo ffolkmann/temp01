@@ -434,7 +434,9 @@ async def fetch(tenant, tcfg=None):
     if not pub:
         raise RuntimeError("Shoprenter: nincs public_url")
     url_prefix = pub + "/"
-    img_prefix = pub + "/"
+    # SR: a nyers /uploads ut NEM kepet ad (0 bajtos HTML) - a kepek az
+    # image-cache utvonalon jonnek: /custom/<shop>/image/cache/<preset>/<ut>
+    img_prefix = pub + "/custom/" + shop + "/image/cache/w300h300wt1/"
 
     async with httpx.AsyncClient(timeout=_TIMEOUT, follow_redirects=True) as client:
         token = await shoprenter_token(client, shop, cid, sec)

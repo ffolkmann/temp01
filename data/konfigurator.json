@@ -5,9 +5,18 @@
       "index_base": "https://codexpress.cloud/cx-search/copygo",
       "ui": {
         "title": "Nyomtató-választó",
-        "intro": "Válaszolj néhány rövid kérdésre, és a teljes kínálatunkból kilistázzuk a hozzátok illő nyomtatókat.",
+        "intro": "Válaszolj néhány rövid kérdésre, és a raktárkészletünkből kilistázzuk a hozzátok illő nyomtatókat.",
         "accent": "#d02b20",
         "unit": "nyomtató"
+      },
+      "stock": {
+        "only_available": true,
+        "label_in": "Készleten",
+        "label_out": "Rendelhető"
+      },
+      "image": {
+        "prefix": "https://copygo.hu/custom/copygo/image/cache/w300h300wt1/",
+        "suffix": ""
       },
       "questions": [
         {
@@ -77,7 +86,8 @@
           "options": [
             {
               "id": "print",
-              "label": "Nem, csak nyomtasson"
+              "label": "Nem, csak nyomtasson",
+              "sub": "egyfunkciós nyomtató is megfelel"
             },
             {
               "id": "mfp",
@@ -88,14 +98,15 @@
             },
             {
               "id": "mfp_adf",
-              "label": "Igen, automata kétoldalas beolvasással",
-              "sub": "többoldalas, kétoldalas dokumentumok kezelése",
+              "label": "Igen, automata lapadagolóval",
+              "sub": "több lapot egyszerre húz be – kötegelt másolás, szkennelés",
               "filter": [
-                {"param": "funkciok", "op": "has_any", "value": ["Másolás", "Szkennelés"]}
+                {"param": "funkciok", "op": "has_any", "value": ["Másolás", "Szkennelés"]},
+                {"param": "lapadagolo", "op": "has_any", "value": ["ADF", "DADF", "DSDF", "RADF"]}
               ],
               "boost": [
                 {"param": "duplex_szken", "op": "eq", "value": "Igen", "w": 40},
-                {"param": "lapadagolo", "op": "has_any", "value": ["DADF", "DSDF", "RADF"], "w": 15}
+                {"param": "lapadagolo", "op": "has_any", "value": ["DADF", "DSDF", "RADF"], "w": 20}
               ]
             }
           ]
@@ -147,7 +158,13 @@
         "stock_w": 25,
         "sale_w": 8
       },
-      "result": {"top_n": 4},
+      "result": {
+        "top_n": 4,
+        "more_n": 60,
+        "sorts": ["ajanlott", "ar_asc", "ar_desc", "nepszeru"],
+        "sort_default": "ajanlott",
+        "pin_label": "Kiemelt"
+      },
       "lead": {
         "enabled": true,
         "title": "Kérj személyre szabott ajánlatot!",

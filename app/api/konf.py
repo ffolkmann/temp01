@@ -28,10 +28,37 @@ from app.services.events import log_event
 logger = logging.getLogger("cx.konf")
 router = APIRouter()
 
-KONF_KINDS = {"kf_start", "kf_done", "kf_lead"}
+KONF_KINDS = {"kf_start", "kf_done", "kf_lead", "kf_click"}
+POPULAR_DAYS = 30
+POPULAR_LIMIT = 60
 CACHE_SECONDS = 300
 
 _SQL_TENANT_CFG = text("SELECT konf_config FROM tenants WHERE client_id = :cid")
+
+# nepszeruseg = a widgetbol jott termek-kattintasok (kf_click) az utolso
+# POPULAR_DAYS napban; a widget ez alapjan kinal "Nepszeruseg" rendezest
+_SQL_POPULAR = text(
+    "SELECT meta->>'sku' AS sku, count(*) AS c FROM events "
+    "WHERE client_id = :cid AND kind = 'kf_click' "
+    "AND created_at > now() - make_interval(days => :days) "
+    "AND coalesce(meta->>'sku', '') <> '' "
+    "GROUP BY 1 ORDER BY c DESC, 1 LIMIT :lim"
+)
+
+
+async def popular_skus(session: Any, client_id: str) -> list[str]:
+    """Legtobbet kattintott cikkszamok (hibara ures lista)."""
+    if not client_id:
+        return []
+    try:
+        rows = (await session.execute(
+            _SQL_POPULAR,
+            {"cid": client_id, "days": POPULAR_DAYS, "lim": POPULAR_LIMIT},
+        )).all()
+    except Exception:  # noqa: BLE001 - a nepszeruseg sosem torheti a widgetet
+        logger.warning("konf: popular lekerdezes sikertelen (%s)", client_id)
+        return []
+    return [str(r[0])[:64] for r in rows if r and r[0]]
 
 
 def _konfcfg():
@@ -81,6 +108,7 @@ async def konf_settings(
     cid = (client_id or "").strip().lower()
     body = _konfcfg().normalize_ruleset(await get_config(session, cid))
     body["tenant"] = cid
+    body["popular"] = await popular_skus(session, cid) if body.get("enabled") else []
     return JSONResponse(body, headers={"Cache-Control": f"public, max-age={CACHE_SECONDS}"})
 
 
@@ -119,6 +147,8 @@ async def konf_event(
         "n": _meta_int(meta_in.get("n")),
         "answers": str(meta_in.get("answers") or "")[:400],
         "top": str(meta_in.get("top") or "")[:200],
+        "sku": str(meta_in.get("sku") or "")[:64],
+        "pos": _meta_int(meta_in.get("pos"), 0, 999),
     }
     sid = str(data.get("session_id") or "")[:64] or None
     await log_event(session, cid, sid, kind, meta)
