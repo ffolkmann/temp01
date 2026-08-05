@@ -254,6 +254,8 @@ def normalize_ruleset(cfg):
         "result": {
             "top_n": _int(res_in.get("top_n"), 1, 12, 4),
             "more_n": _int(res_in.get("more_n"), 0, 200, 60),
+            "more_open": _int(res_in.get("more_open"), 0, 50, 10),
+            "more_step": _int(res_in.get("more_step"), 1, 50, 10),
             "sorts": _sorts(res_in.get("sorts")),
             "sort_default": _sort_key(res_in.get("sort_default")) or "ajanlott",
             "pin_label": _s(res_in.get("pin_label"), 30) or "Kiemelt",

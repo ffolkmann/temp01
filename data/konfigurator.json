@@ -160,7 +160,9 @@
       },
       "result": {
         "top_n": 4,
-        "more_n": 60,
+        "more_n": 200,
+        "more_open": 10,
+        "more_step": 10,
         "sorts": ["ajanlott", "ar_asc", "ar_desc", "nepszeru"],
         "sort_default": "ajanlott",
         "pin_label": "Kiemelt"

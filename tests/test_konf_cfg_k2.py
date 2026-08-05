@@ -84,3 +84,13 @@ def test_form_roundtrip_stock_only():
     assert back["stock"]["only_available"] is False
     assert back["result"]["top_n"] == 3
     assert back["index_base"] == cfg["index_base"]
+
+
+def test_more_open_es_step():
+    d = konfcfg.normalize_ruleset(_base())["result"]
+    assert d["more_open"] == 10 and d["more_step"] == 10
+    r = konfcfg.normalize_ruleset(_base(result={
+        "more_n": 200, "more_open": 25, "more_step": 5}))["result"]
+    assert r["more_n"] == 200 and r["more_open"] == 25 and r["more_step"] == 5
+    hi = konfcfg.normalize_ruleset(_base(result={"more_open": 999, "more_step": 0}))["result"]
+    assert hi["more_open"] == 50 and hi["more_step"] == 1
