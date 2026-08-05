@@ -1,5 +1,45 @@
 {
   "tenants": {
-    "teslashop": {"enabled": true}
+    "teslashop": {
+      "enabled": true,
+      "synonyms": [
+        ["karbon", "karbonszalas", "szenszalas", "carbon"],
+        ["kormanykerek", "kormany", "yoke"],
+        ["szonyeg", "padloszonyeg", "szonyegek"],
+        ["uleshuzat", "huzat", "ulesvedo"],
+        ["felni", "kerek", "kereklemez"],
+        ["boritas", "borito", "burkolat"],
+        ["matrica", "emblema", "sticker"],
+        ["kozepkonzol", "konzol"],
+        ["csomagtarto", "trunk"],
+        ["tarolodoboz", "tarolo", "doboz"],
+        ["lampa", "fenyszoro"],
+        ["kulcskartya", "kulcstarto", "kartyatarto"]
+      ],
+      "oneway": [
+        {"f": "felnik", "t": ["felni"]},
+        {"f": "matricak", "t": ["matrica"]},
+        {"f": "lampak", "t": ["lampa"]},
+        {"f": "dobozok", "t": ["doboz"]},
+        {"f": "huzatok", "t": ["huzat"]},
+        {"f": "ct", "t": ["cybertruck"]}
+      ],
+      "popular_terms": [
+        "üléshuzat",
+        "padlószőnyeg",
+        "kormánykerék",
+        "felnikupak",
+        "tárolódoboz",
+        "kulcskártya tok"
+      ],
+      "popular_skus": [
+        "TFM004-3BR",
+        "TSL2902-A",
+        "TSL5620-black-A",
+        "TKC007-GN",
+        "TSL0508-A"
+      ],
+      "merch": []
+    }
   }
 }

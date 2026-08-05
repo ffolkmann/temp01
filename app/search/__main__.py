@@ -26,12 +26,13 @@ from sqlalchemy import select
 
 from app.core.db import SessionLocal
 from app.models.db_models import Tenant
-from app.search import indexcore, sellvio
+from app.search import indexcore, sellvio, shoprenter
 
 CONFIG_PATH = os.environ.get("SS_CONFIG", "data/smartsearch.json")
 
 _FETCHERS = {
     "sellvio": sellvio.fetch,
+    "shoprenter": shoprenter.fetch,
 }
 
 
@@ -53,9 +54,9 @@ async def run_tenant(tenant, tcfg, out_root):
     fetch = _FETCHERS.get(platform)
     if fetch is None:
         return {"client_id": client_id, "platform": platform,
-                "skipped": f"platform '{platform}' nincs portolva (S1: sellvio)"}
+                "skipped": f"platform '{platform}' nincs portolva (S1: sellvio, K1: shoprenter)"}
     try:
-        products, url_prefix, img_prefix = await fetch(tenant)
+        products, url_prefix, img_prefix = await fetch(tenant, tcfg)
     except Exception as e:  # noqa: BLE001 — fetch-hiba: regi index marad, manifest error
         indexcore.write_error_manifest(out_dir, client_id, f"fetch: {e}")
         return {"client_id": client_id, "platform": platform, "error": f"fetch: {e}"}

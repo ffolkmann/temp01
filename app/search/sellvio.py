@@ -180,7 +180,7 @@ async def _pages(client, base, headers, path, limit):
         page += 1
 
 
-async def fetch(tenant):
+async def fetch(tenant, tcfg=None):
     """(products_feed_alaku, url_prefix, img_prefix) egy Sellvio tenantra."""
     base = str(tenant.api_base or "").strip().rstrip("/")
     cid = str(tenant.api_client_id or "").strip()
