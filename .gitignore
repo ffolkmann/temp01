@@ -13,3 +13,10 @@ qdrant_data/
 *.bak_*
 backups/
 logs/
+
+# --- derivalt data/ (a data/ bind-mount: /docker/chatbot-prod/data -> /app/data,
+#     a Dockerfile NEM masolja az image-be, a crawl naponta ujragenerlja) ---
+data/*.log
+data/onboarding_report_*.html
+data/facet_map_*.json
+data/m82*
