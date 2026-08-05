@@ -1,0 +1,160 @@
+{
+  "tenants": {
+    "copygo": {
+      "enabled": true,
+      "index_base": "https://codexpress.cloud/cx-search/copygo",
+      "ui": {
+        "title": "Nyomtató-választó",
+        "intro": "Válaszolj néhány rövid kérdésre, és a teljes kínálatunkból kilistázzuk a hozzátok illő nyomtatókat.",
+        "accent": "#d02b20",
+        "unit": "nyomtató"
+      },
+      "questions": [
+        {
+          "id": "lapszam",
+          "title": "Havonta körülbelül hány oldalt nyomtattok?",
+          "type": "single",
+          "skip_label": "Nem tudom / mindegy",
+          "options": [
+            {
+              "id": "kis",
+              "label": "Legfeljebb néhány száz oldal",
+              "sub": "otthoni, alkalmi használat",
+              "boost": [
+                {"param": "technologia", "op": "eq", "value": "Tintasugaras", "w": 12}
+              ]
+            },
+            {
+              "id": "kozepes",
+              "label": "Néhány száz – 1500 oldal",
+              "sub": "kisiroda, rendszeres használat",
+              "boost": [
+                {"param": "technologia", "op": "eq", "value": "Lézer", "w": 12},
+                {"param": "sebesseg_ppm", "op": "gte", "value": 20, "w": 10}
+              ]
+            },
+            {
+              "id": "nagy",
+              "label": "1500 oldal felett",
+              "sub": "irodai munkacsoport, nagy terhelés",
+              "boost": [
+                {"param": "technologia", "op": "eq", "value": "Lézer", "w": 20},
+                {"param": "sebesseg_ppm", "op": "gte", "value": 30, "w": 18},
+                {"param": "duplex", "op": "eq", "value": "Automata", "w": 8},
+                {"param": "memoria_mb", "op": "gte", "value": 256, "w": 5}
+              ]
+            }
+          ]
+        },
+        {
+          "id": "szin",
+          "title": "Színes nyomtatásra is szükség van?",
+          "type": "single",
+          "skip_label": "Mindegy",
+          "options": [
+            {
+              "id": "szines",
+              "label": "Igen, színesben is nyomtatnánk",
+              "filter": [
+                {"param": "szinkezeles", "op": "eq", "value": "Színes"}
+              ]
+            },
+            {
+              "id": "mono",
+              "label": "Elég a fekete-fehér",
+              "sub": "olcsóbb üzemeltetés, irodai dokumentumok",
+              "filter": [
+                {"param": "szinkezeles", "op": "eq", "value": "Mono"}
+              ]
+            }
+          ]
+        },
+        {
+          "id": "funkcio",
+          "title": "Másolni, szkennelni is szeretnétek vele?",
+          "type": "single",
+          "skip_label": "Mindegy",
+          "options": [
+            {
+              "id": "print",
+              "label": "Nem, csak nyomtasson"
+            },
+            {
+              "id": "mfp",
+              "label": "Igen, másoljon és szkenneljen is",
+              "filter": [
+                {"param": "funkciok", "op": "has_any", "value": ["Másolás", "Szkennelés"]}
+              ]
+            },
+            {
+              "id": "mfp_adf",
+              "label": "Igen, automata kétoldalas beolvasással",
+              "sub": "többoldalas, kétoldalas dokumentumok kezelése",
+              "filter": [
+                {"param": "funkciok", "op": "has_any", "value": ["Másolás", "Szkennelés"]}
+              ],
+              "boost": [
+                {"param": "duplex_szken", "op": "eq", "value": "Igen", "w": 40},
+                {"param": "lapadagolo", "op": "has_any", "value": ["DADF", "DSDF", "RADF"], "w": 15}
+              ]
+            }
+          ]
+        },
+        {
+          "id": "extrak",
+          "title": "Milyen kényelmi funkciók fontosak?",
+          "sub": "Többet is választhatsz.",
+          "type": "multi",
+          "skip_label": "Egyik sem / kihagyom",
+          "options": [
+            {
+              "id": "duplex",
+              "label": "Automata kétoldalas nyomtatás (duplex)",
+              "boost": [
+                {"param": "duplex", "op": "eq", "value": "Automata", "w": 35},
+                {"param": "duplex", "op": "eq", "value": "Valószínű", "w": 10}
+              ]
+            },
+            {
+              "id": "lan",
+              "label": "Vezetékes hálózat (LAN)",
+              "filter": [
+                {"param": "halozat", "op": "has_any", "value": ["LAN"]}
+              ]
+            },
+            {
+              "id": "wifi",
+              "label": "WiFi",
+              "filter": [
+                {"param": "halozat", "op": "has_any", "value": ["WiFi"]}
+              ]
+            },
+            {
+              "id": "foto",
+              "label": "Fényképnyomtatás",
+              "boost": [
+                {"param": "technologia", "op": "eq", "value": "Tintasugaras", "w": 18},
+                {"field": "c", "op": "eq", "value": "Fotónyomtató", "w": 25},
+                {"param": "felbontas_dpi", "op": "gte", "value": 2400, "w": 12}
+              ]
+            }
+          ]
+        }
+      ],
+      "prior": {
+        "pin": [],
+        "boost": [],
+        "stock_w": 25,
+        "sale_w": 8
+      },
+      "result": {"top_n": 4},
+      "lead": {
+        "enabled": true,
+        "title": "Kérj személyre szabott ajánlatot!",
+        "text": "Hagyd meg az elérhetőséged, és kollégánk 24 órán belül személyre szabott ajánlatot küld a kiválasztott gépekre.",
+        "post_url": "https://n8n.codexpress.cloud/webhook/cx-konf-lead-b4e7a19c53f02d68",
+        "fallback_email": "info@copygo.hu"
+      }
+    }
+  }
+}

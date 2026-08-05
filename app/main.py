@@ -10,6 +10,7 @@ from app.api.config import router as config_router
 from app.api.ingest import router as ingest_router
 from app.api.operator import router as operator_router
 from app.api.search import router as search_router
+from app.api.konf import router as konf_router
 from app.core.cors import TenantCORSMiddleware
 from app.core.qdrant import get_qdrant
 
@@ -27,6 +28,7 @@ app.include_router(config_router)
 app.include_router(ingest_router)
 app.include_router(operator_router)
 app.include_router(search_router)
+app.include_router(konf_router)
 
 
 @app.get("/health")

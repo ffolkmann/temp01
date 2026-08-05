@@ -652,6 +652,41 @@ async def admin(request: Request, session: AsyncSession = Depends(get_session)) 
                 "form": searchcfg.config_to_form(cfg),
                 "index": searchcfg.index_info(cid)}
 
+    if action == "konf_get":
+        from app.services import konfcfg   # lazy: a fajl-betoltos tesztek fake app.services-e miatt
+
+        # k2: CX Konfigurator tenant-ruleset (igazsag-forras: tenants.konf_config,
+        # ures/hianyzo eseten a data/konfigurator.json blokkja)
+        if not cid:
+            return {"error": "client_id required"}
+        t = await _get_tenant(session, cid)
+        if t is None:
+            return {"error": "not_found"}
+        cfg = getattr(t, "konf_config", None)
+        cfg = cfg if isinstance(cfg, dict) else {}
+        source = "db"
+        if not cfg:
+            cfg = konfcfg.load_file_config(cid)
+            source = "file" if cfg else "empty"
+        return {"client_id": cid, "source": source, "form": konfcfg.config_to_form(cfg)}
+
+    if action == "konf_save":
+        from app.services import konfcfg   # lazy: lasd konf_get
+
+        if not cid:
+            return {"error": "client_id required"}
+        t = await _get_tenant(session, cid)
+        if t is None:
+            return {"error": "not_found"}
+        form = b.get("konf") if isinstance(b.get("konf"), dict) else {}
+        old = t.konf_config if isinstance(getattr(t, "konf_config", None), dict) else konfcfg.load_file_config(cid)
+        cfg, err = konfcfg.form_to_config(form, fallback=old)
+        if err:
+            return {"error": err}
+        t.konf_config = cfg
+        await session.commit()
+        return {"ok": True, "client_id": cid, "source": "db", "form": konfcfg.config_to_form(cfg)}
+
     if action == "test_telegram":
         # m31: próbaüzenet a tenant chatId-jeire (saját bot, vagy a központi)
         cid = str(b.get("client_id") or "").strip().lower()
