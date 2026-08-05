@@ -51,7 +51,9 @@ async def retrieve(
     - `message`: a rerank token-számításhoz az EREDETI kérdés kell (nem az embed-input)
     """
     from app.services.rerank import rerank  # késleltetett import a körkörösség elkerülésére
-    from app.services.policy_filter import filter_for_policy, policy_embed_input  # m34
+    from app.services.policy_filter import (  # m34 / m82d
+        _is_product as _isprod82, filter_for_policy, is_policy_query, policy_embed_input,
+    )
     from app.services.query_cleanup import product_query_cleanup  # m36: zaj-tisztitas
     from app.services.paramextract import build_filter_conditions, detect_constraints  # m79c
     from app.services.superlative import (  # m38/m39/m40/m58/m64
@@ -107,7 +109,14 @@ async def retrieve(
     # kategoriaja a KAPU, a crawl-olt facet-ertekek a szotar. Csak
     # ar-szuperlativusznal fut (ott dont a pool-minimum), igy a KB/policy
     # ut erintetlen; ures szurt talalat -> valtozatlan pool (fail-safe).
-    if superlative and hits:
+    # m82d: a szures a NEM-szuperlativusz termek-kerdesekre is fut. Eloméres
+    # (tools/m82d_nonsuper.py, notebookstore, 12 kerdes): a mai szuretlen top-24-bol
+    # atlagosan CSAK 20% felelt meg annak a bolti szuronek, amit a kerdes megnevezett
+    # ("gamer laptop" es "otthoni notebook": 0/24 -- a modell olyan halmazbol valaszolt,
+    # amiben egyetlen megfelelo termek sem volt). KAPU: policy-kerdesnel SOHA nem fut,
+    # mert a `facets` must-feltetel a KB-chunkokat kizarna a poolbol.
+    _plain82 = not superlative and not is_policy_query(message)
+    if hits and (superlative or _plain82):
         try:
             from app.services.facetdict import build_facet_conditions as _bfc82
             from app.services.facetdict import category_value as _cv82
@@ -127,25 +136,37 @@ async def retrieve(
                 # A cimkek kategoria-agnosztikusak, a bolt szuro-oldala nem az.
                 _cat82 = _cv82(_cats82, _fmap82, category=_qcat82)
                 _fc82 = _bfc82(_tags82, _cat82)
+                # m82d: szuperlativusznal szeles pool kell (ott ar szerint rendezunk),
+                # sima termek-kerdesnel viszont a megszokott top-k -- igy a pool
+                # TARTALMA valtozik, a merete nem (a rerank valtozatlan koltseggel fut).
+                _lim82 = max(WIDE_LIMIT, _settings.retrieval_top_k) if superlative \
+                    else _settings.retrieval_top_k
                 _fh82 = await qdrant.search(
-                    vector=vector, client_id=client_id,
-                    limit=max(WIDE_LIMIT, _settings.retrieval_top_k),
+                    vector=vector, client_id=client_id, limit=_lim82,
                     product_only=False, extra_must=(_pextra or []) + _fc82,
                 )
                 if not _fh82 and _cat82:  # fail-safe: kategoria-kapu nelkul ujra
                     _fc82 = _bfc82(_tags82)
                     _fh82 = await qdrant.search(
-                        vector=vector, client_id=client_id,
-                        limit=max(WIDE_LIMIT, _settings.retrieval_top_k),
+                        vector=vector, client_id=client_id, limit=_lim82,
                         product_only=False, extra_must=(_pextra or []) + _fc82,
                     )
                 import logging as _lg82
                 _lg82.getLogger("cx.retrieval").info(
-                    "m82b facet filter %s cat=%r -> %d hit (client=%s)",
-                    _tags82, _cat82, len(_fh82), client_id,
+                    "m82b facet filter %s cat=%r mode=%s -> %d hit (client=%s)",
+                    _tags82, _cat82, ("super" if superlative else "plain"),
+                    len(_fh82), client_id,
                 )
                 if _fh82:
-                    hits = _fh82
+                    if superlative:
+                        hits = _fh82
+                    else:
+                        # m82d: plain modban a szuro csak a TERMEK-halmazt csereli le --
+                        # a KB/doksi-talalatok bennmaradnak, kulonben egy vegyes kerdes
+                        # ("van 4K monitorotok, es mennyi a szallitas?") elveszitene a
+                        # KB-reszt. Atfedes nincs: a KB-chunknak nincs `facets` payloadja,
+                        # tehat a szurt keresesbe eleve nem kerulhet bele.
+                        hits = _fh82 + [h for h in hits if not _isprod82(h)]
                     _pextra = (_pextra or []) + _fc82
                     _wide82 = True
         except Exception:  # noqa: BLE001 — a facet-szures hibaja ne torje a chatet
