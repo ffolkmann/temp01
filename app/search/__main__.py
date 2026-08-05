@@ -15,7 +15,7 @@ ezert a repo app-jat is mountoljuk):
 
 Hiba-izolacio: tenantonkent try/except — egy tenant hibaja nem allitja meg a
 tobbit; hibanal a regi index marad, a manifest error-t kap (indexcore).
-S1: sellvio portolva; a tobbi platform "nincs portolva" skippel.
+Portolt platformok: sellvio (S1), shoprenter (K1), webdoc (S4); a tobbi "nincs portolva" skippel.
 """
 import argparse
 import asyncio
@@ -26,13 +26,14 @@ from sqlalchemy import select
 
 from app.core.db import SessionLocal
 from app.models.db_models import Tenant
-from app.search import indexcore, sellvio, shoprenter
+from app.search import indexcore, sellvio, shoprenter, webdoc
 
 CONFIG_PATH = os.environ.get("SS_CONFIG", "data/smartsearch.json")
 
 _FETCHERS = {
     "sellvio": sellvio.fetch,
     "shoprenter": shoprenter.fetch,
+    "webdoc": webdoc.fetch,
 }
 
 
@@ -54,7 +55,7 @@ async def run_tenant(tenant, tcfg, out_root):
     fetch = _FETCHERS.get(platform)
     if fetch is None:
         return {"client_id": client_id, "platform": platform,
-                "skipped": f"platform '{platform}' nincs portolva (S1: sellvio, K1: shoprenter)"}
+                "skipped": f"platform '{platform}' nincs portolva (S1: sellvio, K1: shoprenter, S4: webdoc)"}
     try:
         products, url_prefix, img_prefix = await fetch(tenant, tcfg)
     except Exception as e:  # noqa: BLE001 — fetch-hiba: regi index marad, manifest error
