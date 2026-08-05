@@ -55,7 +55,40 @@ def shoprenter_resource_id(entity: str, value: str) -> str:
     return base64.b64encode(f"{entity}-{entity}_id={value}".encode()).decode()
 
 
-async def shoprenter_token(
+# --- m83: Shoprenter token-cache -------------------------------------------
+# Eddig MINDEN hivo uj tokent kert (termekmegtekintesenkent 2 API-hivas). A
+# Shoprenter 3 req/s/app/shop limitje mellett ez parhuzamos hivasoknal
+# versenyhelyzet volt a token-vegponton -> tranziens 401 (fishingoutlet,
+# ~128e termek). A cache felezi a hivasokat, a lock pedig single-flight.
+import asyncio as _asyncio
+import base64 as _b64
+import json as _json
+import time as _time
+
+_SR_TOKEN_CACHE: dict = {}   # (shop, client_id) -> (token, lejarat monotonic-ban)
+_SR_TOKEN_LOCKS: dict = {}   # (shop, client_id) -> asyncio.Lock
+_SR_SKEW = 60.0              # ennyivel korabban jaratjuk le, mint a JWT exp
+_SR_FALLBACK_TTL = 600.0     # ha a JWT exp nem olvashato
+
+
+def _sr_jwt_ttl(token: str) -> float:
+    """A JWT `exp`-bol szamolt hatralevo ido masodpercben.
+
+    Nem-JWT vagy exp nelkuli token -> konzervativ fallback (nem vegtelen!).
+    Mar lejart token -> 0.0, azaz nem kerul cache-be.
+    """
+    try:
+        payload = str(token or "").split(".")[1]
+        payload += "=" * (-len(payload) % 4)
+        exp = float((_json.loads(_b64.urlsafe_b64decode(payload)) or {}).get("exp") or 0)
+    except Exception:  # noqa: BLE001 - barmilyen alaki hiba -> fallback
+        return _SR_FALLBACK_TTL
+    if exp <= 0:
+        return _SR_FALLBACK_TTL
+    return max(exp - _time.time(), 0.0)
+
+
+async def _shoprenter_token_fetch(
     client: httpx.AsyncClient, shop: str, client_id: str, client_secret: str
 ) -> str:
     resp = await client.post(
@@ -64,6 +97,45 @@ async def shoprenter_token(
     )
     resp.raise_for_status()
     return str((resp.json() or {}).get("access_token") or "")
+
+
+async def shoprenter_token(
+    client: httpx.AsyncClient,
+    shop: str,
+    client_id: str,
+    client_secret: str,
+    force: bool = False,
+) -> str:
+    """Shoprenter OAuth2 access token, tenantonkent cache-elve a JWT exp-ig.
+
+    A hivoi API valtozatlan (`force` opcionalis) - a live_product, order_status,
+    shop_search es a search/shoprenter ingest mind ugyanigy hivja.
+    `force=True`: megkeruli a cache-t (401 utani egyszeri re-auth).
+    """
+    key = (str(shop or ""), str(client_id or ""))
+    if not force:
+        hit = _SR_TOKEN_CACHE.get(key)
+        if hit and hit[1] > _time.monotonic():
+            return hit[0]
+    lock = _SR_TOKEN_LOCKS.get(key)
+    if lock is None:
+        lock = _SR_TOKEN_LOCKS.setdefault(key, _asyncio.Lock())
+    async with lock:
+        # dupla ellenorzes: amig a lockra vartunk, egy masik hivo mar frissithetett
+        if not force:
+            hit = _SR_TOKEN_CACHE.get(key)
+            if hit and hit[1] > _time.monotonic():
+                return hit[0]
+        token = await _shoprenter_token_fetch(client, shop, client_id, client_secret)
+        if token:
+            ttl = max(_sr_jwt_ttl(token) - _SR_SKEW, 0.0)
+            if ttl > 0:
+                _SR_TOKEN_CACHE[key] = (token, _time.monotonic() + ttl)
+            else:
+                _SR_TOKEN_CACHE.pop(key, None)
+        else:
+            _SR_TOKEN_CACHE.pop(key, None)
+        return token
 
 
 # --- Unas (login -> token; XML) ---------------------------------------------

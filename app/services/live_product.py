@@ -168,11 +168,23 @@ async def _shoprenter_live(tenant: "Tenant", sku: str) -> LivePriceStock | None:
         token = await shoprenter_token(client, shop, cid, secret)
         if not token:
             return None
-        resp = await client.get(
-            f"{api_base}/products",
-            params={"sku": sku, "full": "1"},
-            headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
-        )
+        async def _get(tok: str):
+            return await client.get(
+                f"{api_base}/products",
+                params={"sku": sku, "full": "1"},
+                headers={"Authorization": f"Bearer {tok}", "Accept": "application/json"},
+            )
+
+        resp = await _get(token)
+        # getattr: a fake/teszt response-oknak nincs mindig status_code-ja,
+        # es a hianya nem eshet a 401-ag ala (fail-safe: nincs re-auth)
+        if getattr(resp, "status_code", None) == 401:
+            # m83: a cache-elt token lejarhatott vagy visszavonhattak -> EGYSZERI
+            # re-auth friss tokennel (a SR hivatalos hibakezelese is ezt irja elo).
+            token = await shoprenter_token(client, shop, cid, secret, force=True)
+            if not token:
+                return None
+            resp = await _get(token)
         resp.raise_for_status()
         data = resp.json()
     items = data.get("items") if isinstance(data, dict) else None
