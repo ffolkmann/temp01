@@ -30,7 +30,12 @@
               "label": "Legfeljebb néhány száz oldal",
               "sub": "otthoni, alkalmi használat",
               "boost": [
-                {"param": "technologia", "op": "eq", "value": "Tintasugaras", "w": 12}
+                {
+                  "param": "technologia",
+                  "op": "eq",
+                  "value": "Tintasugaras",
+                  "w": 12
+                }
               ]
             },
             {
@@ -38,8 +43,18 @@
               "label": "Néhány száz – 1500 oldal",
               "sub": "kisiroda, rendszeres használat",
               "boost": [
-                {"param": "technologia", "op": "eq", "value": "Lézer", "w": 12},
-                {"param": "sebesseg_ppm", "op": "gte", "value": 20, "w": 10}
+                {
+                  "param": "technologia",
+                  "op": "eq",
+                  "value": "Lézer",
+                  "w": 12
+                },
+                {
+                  "param": "sebesseg_ppm",
+                  "op": "gte",
+                  "value": 20,
+                  "w": 10
+                }
               ]
             },
             {
@@ -47,13 +62,34 @@
               "label": "1500 oldal felett",
               "sub": "irodai munkacsoport, nagy terhelés",
               "boost": [
-                {"param": "technologia", "op": "eq", "value": "Lézer", "w": 20},
-                {"param": "sebesseg_ppm", "op": "gte", "value": 30, "w": 18},
-                {"param": "duplex", "op": "eq", "value": "Automata", "w": 8},
-                {"param": "memoria_mb", "op": "gte", "value": 256, "w": 5}
+                {
+                  "param": "technologia",
+                  "op": "eq",
+                  "value": "Lézer",
+                  "w": 20
+                },
+                {
+                  "param": "sebesseg_ppm",
+                  "op": "gte",
+                  "value": 30,
+                  "w": 18
+                },
+                {
+                  "param": "duplex",
+                  "op": "eq",
+                  "value": "Automata",
+                  "w": 8
+                },
+                {
+                  "param": "memoria_mb",
+                  "op": "gte",
+                  "value": 256,
+                  "w": 5
+                }
               ]
             }
-          ]
+          ],
+          "help": "Nagyjából hány oldalt nyomtattok egy hónapban? Egy csomag papír 500 oldal — ebből érdemes kiindulni. Néhány száz oldalig a tintasugaras gép a jó választás, mert olcsóbb a beszerzése. Havi ezer oldal felett a lézernyomtató éri meg: az egy oldalra jutó költsége töredéke, és bírja a folyamatos terhelést."
         },
         {
           "id": "szin",
@@ -65,7 +101,11 @@
               "id": "szines",
               "label": "Igen, színesben is nyomtatnánk",
               "filter": [
-                {"param": "szinkezeles", "op": "eq", "value": "Színes"}
+                {
+                  "param": "szinkezeles",
+                  "op": "eq",
+                  "value": "Színes"
+                }
               ]
             },
             {
@@ -73,10 +113,15 @@
               "label": "Elég a fekete-fehér",
               "sub": "olcsóbb üzemeltetés, irodai dokumentumok",
               "filter": [
-                {"param": "szinkezeles", "op": "eq", "value": "Mono"}
+                {
+                  "param": "szinkezeles",
+                  "op": "eq",
+                  "value": "Mono"
+                }
               ]
             }
-          ]
+          ],
+          "help": "Fekete-fehér (mono) gép: számla, szerződés, lista, belső dokumentum — olcsóbb a gép is, a festék is, és gyorsabban nyomtat. Színes gép: ajánlat, prezentáció, marketinganyag, fotó, színes grafikon. A színes gép fekete-fehérben is tud nyomtatni, de a beszerzési ára és a festékköltsége magasabb."
         },
         {
           "id": "funkcio",
@@ -93,7 +138,14 @@
               "id": "mfp",
               "label": "Igen, másoljon és szkenneljen is",
               "filter": [
-                {"param": "funkciok", "op": "has_any", "value": ["Másolás", "Szkennelés"]}
+                {
+                  "param": "funkciok",
+                  "op": "has_any",
+                  "value": [
+                    "Másolás",
+                    "Szkennelés"
+                  ]
+                }
               ]
             },
             {
@@ -101,15 +153,46 @@
               "label": "Igen, automata lapadagolóval",
               "sub": "több lapot egyszerre húz be – kötegelt másolás, szkennelés",
               "filter": [
-                {"param": "funkciok", "op": "has_any", "value": ["Másolás", "Szkennelés"]},
-                {"param": "lapadagolo", "op": "has_any", "value": ["ADF", "DADF", "DSDF", "RADF"]}
+                {
+                  "param": "funkciok",
+                  "op": "has_any",
+                  "value": [
+                    "Másolás",
+                    "Szkennelés"
+                  ]
+                },
+                {
+                  "param": "lapadagolo",
+                  "op": "has_any",
+                  "value": [
+                    "ADF",
+                    "DADF",
+                    "DSDF",
+                    "RADF"
+                  ]
+                }
               ],
               "boost": [
-                {"param": "duplex_szken", "op": "eq", "value": "Igen", "w": 40},
-                {"param": "lapadagolo", "op": "has_any", "value": ["DADF", "DSDF", "RADF"], "w": 20}
+                {
+                  "param": "duplex_szken",
+                  "op": "eq",
+                  "value": "Igen",
+                  "w": 40
+                },
+                {
+                  "param": "lapadagolo",
+                  "op": "has_any",
+                  "value": [
+                    "DADF",
+                    "DSDF",
+                    "RADF"
+                  ],
+                  "w": 20
+                }
               ]
             }
-          ]
+          ],
+          "help": "Egyfunkciós gép: csak nyomtat. Multifunkciós (MFP): nyomtat, másol és szkennel is, tehát nem kell külön szkenner vagy fénymásoló. Automata lapadagoló (ADF): a szkenner tetején lévő tálcából a gép magától húzza be egyesével a lapokat, így egy egész köteget lehet egyben másolni vagy szkennelni — nem kell laponként az üveglapra tenni."
         },
         {
           "id": "extrak",
@@ -122,34 +205,72 @@
               "id": "duplex",
               "label": "Automata kétoldalas nyomtatás (duplex)",
               "boost": [
-                {"param": "duplex", "op": "eq", "value": "Automata", "w": 35},
-                {"param": "duplex", "op": "eq", "value": "Valószínű", "w": 10}
+                {
+                  "param": "duplex",
+                  "op": "eq",
+                  "value": "Automata",
+                  "w": 35
+                },
+                {
+                  "param": "duplex",
+                  "op": "eq",
+                  "value": "Valószínű",
+                  "w": 10
+                }
               ]
             },
             {
               "id": "lan",
               "label": "Vezetékes hálózat (LAN)",
               "filter": [
-                {"param": "halozat", "op": "has_any", "value": ["LAN"]}
+                {
+                  "param": "halozat",
+                  "op": "has_any",
+                  "value": [
+                    "LAN"
+                  ]
+                }
               ]
             },
             {
               "id": "wifi",
               "label": "WiFi",
               "filter": [
-                {"param": "halozat", "op": "has_any", "value": ["WiFi"]}
+                {
+                  "param": "halozat",
+                  "op": "has_any",
+                  "value": [
+                    "WiFi"
+                  ]
+                }
               ]
             },
             {
               "id": "foto",
               "label": "Fényképnyomtatás",
               "boost": [
-                {"param": "technologia", "op": "eq", "value": "Tintasugaras", "w": 18},
-                {"field": "c", "op": "eq", "value": "Fotónyomtató", "w": 25},
-                {"param": "felbontas_dpi", "op": "gte", "value": 2400, "w": 12}
+                {
+                  "param": "technologia",
+                  "op": "eq",
+                  "value": "Tintasugaras",
+                  "w": 18
+                },
+                {
+                  "field": "c",
+                  "op": "eq",
+                  "value": "Fotónyomtató",
+                  "w": 25
+                },
+                {
+                  "param": "felbontas_dpi",
+                  "op": "gte",
+                  "value": 2400,
+                  "w": 12
+                }
               ]
             }
-          ]
+          ],
+          "help": "Duplex: a gép magától nyomtat a papír mindkét oldalára, így feleannyi papír fogy. LAN: hálózati kábeles csatlakozás, több gép is használhatja — irodában ez a legstabilabb. WiFi: vezeték nélküli nyomtatás laptopról, telefonról. Fényképnyomtatás: fotópapírra is szép eredményt adó, jellemzően tintasugaras gépek."
         }
       ],
       "prior": {
@@ -163,7 +284,12 @@
         "more_n": 200,
         "more_open": 10,
         "more_step": 10,
-        "sorts": ["ajanlott", "ar_asc", "ar_desc", "nepszeru"],
+        "sorts": [
+          "ajanlott",
+          "ar_asc",
+          "ar_desc",
+          "nepszeru"
+        ],
         "sort_default": "ajanlott",
         "pin_label": "Kiemelt"
       },

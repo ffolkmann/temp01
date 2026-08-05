@@ -47,6 +47,7 @@ MAX_QUESTIONS = 12
 MAX_OPTIONS = 10
 MAX_CONDS = 12
 MAX_SKUS = 50
+MAX_HELP = 800
 SORTS = ("ajanlott", "ar_asc", "ar_desc", "nepszeru")
 
 
@@ -180,6 +181,10 @@ def _norm_question(q):
     skip = _s(q.get("skip_label"), 60)
     if skip:
         out["skip_label"] = skip
+    # kerdes-sugo: a widget "i" buborekban mutatja, tenantonkent szerkesztheto
+    help_txt = _s(q.get("help"), MAX_HELP)
+    if help_txt:
+        out["help"] = help_txt
     return out
 
 

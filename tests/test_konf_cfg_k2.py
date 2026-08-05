@@ -94,3 +94,15 @@ def test_more_open_es_step():
     assert r["more_n"] == 200 and r["more_open"] == 25 and r["more_step"] == 5
     hi = konfcfg.normalize_ruleset(_base(result={"more_open": 999, "more_step": 0}))["result"]
     assert hi["more_open"] == 50 and hi["more_step"] == 1
+
+
+def test_question_help():
+    cfg = _base()
+    cfg["questions"][0]["help"] = "  Ez egy   magyarazo\n szoveg. "
+    q = konfcfg.normalize_ruleset(cfg)["questions"][0]
+    assert q["help"] == "Ez egy magyarazo szoveg."
+    hosszu = _base()
+    hosszu["questions"][0]["help"] = "x" * 2000
+    assert len(konfcfg.normalize_ruleset(hosszu)["questions"][0]["help"]) == konfcfg.MAX_HELP
+    ures = konfcfg.normalize_ruleset(_base())["questions"][0]
+    assert "help" not in ures
