@@ -62,6 +62,56 @@ _CAT_STOP = frozenset({
     "hasznalt", "termek", "termekek", "akcio", "akciok", "ujdonsag", "ujdonsagok",
 })
 
+# m82c/3: ragozas-tures. A zaro hatar csak HOSSZU ertekeknel lazul: rovid
+# ertekeknel a toldalek-engedmeny mas szot csinalna belole --
+#   intel (5) + "ligens" -> "intelligens"   (496 termek szurese egy KB-kerdesre)
+#   pla   (3) + "zma"    -> "plazma"
+# ezert _SUF_MIN a normalizalt ertek MINIMALIS hossza, es max _SUF_MAX
+# karakter tapadhat a vegere. Az elejen a hatar VALTOZATLANUL szigoru.
+_SUF_MIN = 7
+_SUF_MAX = 3
+
+# m82c/3: koznyelvi szinonimak attributumonkent -> a crawl-olt ertek.
+# Kezi lista, SZANDEKOSAN rovid: csak olyan alak, ami a slugbol semmilyen
+# szabaly szerint nem vezetheto le. A szinonima ugyanazon a higienian
+# (kategoria-kapu, szelektivitas, kat-fonev) megy at, mint a nyers ertek.
+_SYNONYMS = {
+    "felbontas": {
+        "3840x2160": ("4k", "uhd"),
+        "2560x1440": ("2k", "qhd", "wqhd"),
+        "1920x1080": ("full-hd", "fullhd", "fhd", "1080p"),
+    },
+    "erintokepernyo": {
+        "10-point-multi-touch": ("erintokepernyo", "erinto-kijelzo", "touchscreen", "multitouch"),
+    },
+    "nyomtatasi-technologia": {
+        "lezer": ("lezernyomtato", "lezeres"),
+        "tintasugaras": ("tintasugarasnyomtato",),
+    },
+}
+
+# m82c/3: ertek-csapdak. Egy-egy ertek olyan ALLANDO SZOKAPCSOLATBAN is
+# szerepel, ahol nem szuro-szandek. A kimerito FP-scan (20 negativ kerdes x
+# 85 kategoria = 1700 par) PONTOSAN egy ilyet talalt: a "fekete pentek" a
+# nyomtato-kategoriaban a szinkeszlet:fekete-re illeszkedett volna, es
+# kizarta volna a szines gepeket. Ha az ertek ilyen frazis reszekent all,
+# nem szamit talalatnak.
+_VALUE_TRAPS = {
+    "fekete": r"fekete[\s-]*pentek|black[\s-]*friday",
+}
+_trap_cache: dict = {}
+
+
+def _is_trap(val, folded_message):
+    pat = _VALUE_TRAPS.get(str(val))
+    if not pat:
+        return False
+    rx = _trap_cache.get(pat)
+    if rx is None:
+        rx = _trap_cache[pat] = re.compile(pat)
+    return bool(rx.search(folded_message))
+
+
 _rx_cache: dict = {}
 _crx_cache: dict = {}
 
@@ -113,9 +163,20 @@ def _rx(val):
             toks.append(re.escape(part))
     if not toks:
         return None
-    rx = re.compile(r"(?<![a-z0-9])" + r"[\s\-]*".join(toks) + r"(?![a-z0-9])")
+    tail = (r"(?![a-z0-9]{%d,})" % (_SUF_MAX + 1)) if len(_norm_key(val)) >= _SUF_MIN \
+        else r"(?![a-z0-9])"
+    rx = re.compile(r"(?<![a-z0-9])" + r"[\s\-]*".join(toks) + tail)
     _rx_cache[val] = rx
     return rx
+
+
+def _syn_hit(attr, val, folded_message):
+    """Illeszkedik-e az `attr:val` valamelyik koznyelvi szinonimaja a kerdesre."""
+    for syn in (_SYNONYMS.get(attr) or {}).get(val, ()):
+        rx = _rx(syn)
+        if rx is not None and rx.search(folded_message):
+            return True
+    return False
 
 
 def _usable(val, count, cat_size, cat_key=""):
@@ -271,7 +332,12 @@ def detect_facet_tags(message, categories, fmap, max_attrs=_MAX_ATTRS, category=
             if not _usable(val, n, cat_size, cat_key):
                 continue
             rx = _rx(val)
-            if rx is not None and rx.search(fm) and len(str(val)) > len(best):
+            hit = rx is not None and rx.search(fm)
+            if not hit:
+                hit = _syn_hit(attr, val, fm)   # m82c/3: koznyelvi alak
+            if hit and _is_trap(val, fm):
+                hit = False                     # m82c/3: allando szokapcsolat
+            if hit and len(str(val)) > len(best):
                 best = str(val)
         if best:
             out.append("%s:%s" % (attr, best))
