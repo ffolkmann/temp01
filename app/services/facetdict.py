@@ -78,7 +78,12 @@ _CAT_STOP = frozenset({
 # ezert _SUF_MIN a normalizalt ertek MINIMALIS hossza, es max _SUF_MAX
 # karakter tapadhat a vegere. Az elejen a hatar VALTOZATLANUL szigoru.
 _SUF_MIN = 7
-_SUF_MAX = 3
+# m82d/2: 3 -> 4. A m82d elomeres buktatta ki: "Milyen lezernyomtatoITOK vannak?" es
+# "milyen tintasugarasOKAT arultok?" nem illeszkedett, pedig ezek gyakori bolti alakok
+# (targyeset tobbes -okat/-eket/-akat, birtokos tobbes -itok/-atok mind 4 betu).
+# A hatokor 243 ertek a 470-bol (>= _SUF_MIN); a rovidebbeket valtozatlanul a _SUF_MIN
+# vedi. Kimerito FP-scan (26 negativ kerdes x 85 kategoria = 2210 par): 0 talalat.
+_SUF_MAX = 4
 
 # m82c/3: koznyelvi szinonimak attributumonkent -> a crawl-olt ertek.
 # Kezi lista, SZANDEKOSAN rovid: csak olyan alak, ami a slugbol semmilyen
@@ -92,6 +97,9 @@ _SYNONYMS = {
     },
     "erintokepernyo": {
         "10-point-multi-touch": ("erintokepernyo", "erinto-kijelzo", "touchscreen", "multitouch"),
+    },
+    "operacios-rendszer": {
+        "windows-11-professional": ("windows-11-pro",),
     },
     "nyomtatasi-technologia": {
         "lezer": ("lezernyomtato", "lezeres"),
