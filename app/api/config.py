@@ -688,6 +688,26 @@ async def admin(request: Request, session: AsyncSession = Depends(get_session)) 
         await session.commit()
         return {"ok": True, "client_id": cid, "source": "db", "form": konfcfg.config_to_form(cfg)}
 
+    if action == "konf_text_gen":
+        # k3: a kerdes-epito NYERS tervezetebol emberi szoveg (cim, opcio-cimke,
+        # sugo) AI-val. A feltetelekhez NEM nyul (konftext.apply_texts id-k
+        # szerint parosit), es NEM ment DB-be — a valaszt az admin nezi at.
+        from app.services import konfcfg, konftext   # lazy: lasd konf_get
+
+        if not cid:
+            return {"error": "client_id required"}
+        t = await _get_tenant(session, cid)
+        if t is None:
+            return {"error": "not_found"}
+        raw = b.get("konf") if isinstance(b.get("konf"), dict) else {}
+        cfg = raw.get("config") if isinstance(raw.get("config"), dict) else None
+        if cfg is None:
+            cfg = t.konf_config if isinstance(t.konf_config, dict) else konfcfg.load_file_config(cid)
+        new_cfg, err = await konftext.generate(cfg, model=getattr(t, "chat_model", None))
+        if err:
+            return {"error": err}
+        return {"ok": True, "client_id": cid, "config": new_cfg}
+
     if action == "test_telegram":
         # m31: próbaüzenet a tenant chatId-jeire (saját bot, vagy a központi)
         cid = str(b.get("client_id") or "").strip().lower()
