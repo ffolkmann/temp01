@@ -19,6 +19,7 @@ MAX_LABEL = 120
 MAX_SUB = 160
 MAX_HELP = 800
 MAX_QUESTIONS = 12
+MAX_OUT_TOKENS = 8000   # 12 kerdes sugoval bo keret
 
 SYSTEM = (
     "Magyar e-kereskedelmi szovegiro vagy. Egy webaruhaz termekvalaszto "
@@ -198,10 +199,28 @@ async def generate(cfg, model=None):
     """(uj_cfg, hiba) — a ruleset szovegei ujrairva. Hibara (cfg, uzenet)."""
     if not isinstance(cfg, dict) or not (cfg.get("questions") or []):
         return cfg, "nincs kerdes a konfiguracioban"
-    from app.core.llm import generate_reply   # lazy: a fajl-betoltos tesztek miatt
+    # SAJAT hivas, NEM a chat generate_reply-ja: a globalis max_tokens (2048) a
+    # chat-valaszra van meretezve, es itt bizonyitottan felbevagta a JSON-t
+    # (860 karakter utan, az elso kerdes kozepen).
+    from anthropic import AsyncAnthropic   # lazy: a fajl-betoltos tesztek miatt
 
+    from app.core.settings import get_settings
+
+    st = get_settings()
+    mdl = (model or "").strip() or st.chat_model
     try:
-        text = await generate_reply(SYSTEM, [], build_user_prompt(cfg), model=model)
+        resp = await AsyncAnthropic(api_key=st.anthropic_api_key).messages.create(
+            model=mdl,
+            max_tokens=MAX_OUT_TOKENS,
+            system=SYSTEM,
+            messages=[{"role": "user", "content": build_user_prompt(cfg)}],
+        )
+        text = "".join(b.text for b in resp.content
+                       if getattr(b, "type", None) == "text")
+        stop = getattr(resp, "stop_reason", None)
+        if stop == "max_tokens":
+            logger.warning("konftext: a valasz elerte a token-keretet (%s kerdes)",
+                           len(cfg.get("questions") or []))
     except Exception as e:  # noqa: BLE001 — az admin sosem eshet el ettol
         logger.warning("konftext: LLM hiba: %s", e)
         return cfg, "a szoveggeneralas nem sikerult (%s)" % type(e).__name__
