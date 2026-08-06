@@ -5,6 +5,9 @@
   ``loadSyn()``-je, hibára némán).
 - ``POST /search/event`` — ``ss_search`` | ``ss_click`` | ``ss_purchase`` az
   ``events`` táblába (ugyanaz az infra, amit a chat-widget használ).
+- ``POST /search/answer`` — AI-válasz a keresésre (S6/2): a widget felküldi a
+  kérdést és a saját top jelöltjeit, az LLM csak VÁLOGAT közülük és indokol.
+  Alapból kikapcsolva; a ``?cxai=1`` demó-kapcsoló (``force``) nyitja.
 
 A tenant-konfiguráció forrása a ``data/smartsearch.json`` — ugyanaz a fájl, amit
 az ``app/search`` indexelő CLI olvas, és ami a compose-ban be van mountolva
@@ -33,6 +36,7 @@ kezelni) — ezért a body-t nyersen parse-oljuk, nem a content-type alapján.
 import json
 import logging
 import os
+import time
 from datetime import date
 from typing import Any
 
@@ -304,3 +308,155 @@ async def search_event(
     sid = str(data.get("session_id") or "")[:64] or None
     await log_event(session, cid, sid, kind, meta)
     return Response(status_code=204)
+
+
+# --------------------------------------------------------------------------- #
+# S6/2 — AI-válasz a keresőben: POST /search/answer
+#
+# "Válaszd ki és indokold", nem RAG: a jelölteket a widget küldi fel a kliens-
+# oldali indexből, az LLM csak VÁLOGAT közülük. Az ár és a készlet ezért mindig
+# az indexből jön — a generált szövegben szám/ár nem lehet (``strip_prices``).
+#
+# Költség-kapuk (Redis NINCS az infrán, ezért minden in-process):
+#   1. tenant-kapu: csak engedélyezett tenant, és csak ``ai_answer`` VAGY ``force``
+#      (a ``?cxai=1`` demó-kapcsoló) — ismeretlen client_id sosem hív LLM-et;
+#   2. trigger: ``needs_answer`` (kérdés-jellegű VAGY nulla találat);
+#   3. cache: (tenant, normalizált kérdés) → válasz, 24 h;
+#   4. napi plafon tenantonként (``search_config.ai_daily_cap``, alap 200).
+# --------------------------------------------------------------------------- #
+AI_CACHE_TTL = 24 * 3600
+AI_CACHE_MAX = 500
+AI_DAILY_CAP = 200
+AI_MAX_INPUT = 60          # ennyi NYERS jelöltnél tovább nem olvasunk
+
+_ai_cache: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
+_ai_calls: dict[tuple[str, str], int] = {}
+
+_SQL_CHAT_MODEL = text("SELECT chat_model FROM tenants WHERE client_id = :cid")
+
+
+def ai_cache_get(key: tuple[str, str]) -> dict[str, Any] | None:
+    """Cache-találat, ha még nem járt le (különben None)."""
+    row = _ai_cache.get(key)
+    if not row:
+        return None
+    born, value = row
+    if time.time() - born > AI_CACHE_TTL:
+        _ai_cache.pop(key, None)
+        return None
+    return value
+
+
+def ai_cache_put(key: tuple[str, str], value: dict[str, Any]) -> None:
+    """Csak SIKERES választ cache-elünk; teltségnél a legrégebbi felét dobjuk."""
+    if len(_ai_cache) >= AI_CACHE_MAX:
+        for old in sorted(_ai_cache, key=lambda k: _ai_cache[k][0])[: AI_CACHE_MAX // 2]:
+            _ai_cache.pop(old, None)
+    _ai_cache[key] = (time.time(), value)
+
+
+def ai_cap(cfg: dict[str, Any]) -> int:
+    """Napi plafon a configból: hiányzó/üres = alap, 0 = teljesen kikapcsolva."""
+    raw = cfg.get("ai_daily_cap")
+    if raw is None or str(raw).strip() == "":
+        return AI_DAILY_CAP
+    return _int(raw)
+
+
+def ai_take(client_id: str, cap: int) -> bool:
+    """Foglal egy hívást a napi keretből (naponta nullázódik). Konténer-újraindításnál
+    a számláló elveszik — a plafon így felső korlát, nem könyvelés."""
+    if cap <= 0:
+        return False
+    today = date.today().isoformat()
+    used = _ai_calls.get((client_id, today), 0)
+    if used >= cap:
+        return False
+    for stale in [k for k in _ai_calls if k[1] != today]:
+        _ai_calls.pop(stale, None)
+    _ai_calls[(client_id, today)] = used + 1
+    return True
+
+
+async def chat_model(session: Any, client_id: str) -> str | None:
+    """Tenant-szintű modell-felülbírálat (hibára None = globális alapmodell)."""
+    try:
+        row = (await session.execute(_SQL_CHAT_MODEL, {"cid": client_id})).scalar()
+    except Exception:  # noqa: BLE001
+        return None
+    value = str(row or "").strip()
+    return value or None
+
+
+@router.post("/search/answer")
+async def search_answer(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+) -> JSONResponse:
+    """AI-válasz a kereséshez.
+
+    Siker: ``{"answer": "...", "pids": [...], "cached": 0|1}``; minden más esetben
+    ``{}`` (nincs válasz-sáv). MINDIG 200 — a widget sosem törhet el emiatt.
+    """
+    try:
+        from app.services import searchanswer as sa   # lazy: fake app.services a tesztekben
+    except Exception:  # noqa: BLE001
+        logger.warning("search/answer: searchanswer modul nem toltheto")
+        return JSONResponse({})
+
+    try:
+        raw = await request.body()
+        data = json.loads((raw or b"").decode("utf-8", "replace") or "{}")
+    except Exception:  # noqa: BLE001
+        return JSONResponse({})
+    if not isinstance(data, dict):
+        return JSONResponse({})
+
+    cid = str(data.get("client_id") or "").strip()[:64]
+    q = " ".join(str(data.get("q") or "").split())[:200]
+    force = bool(data.get("force"))
+    if not cid or not q:
+        return JSONResponse({})
+
+    cfg = await get_config(session, cid)
+    if not cfg.get("enabled"):
+        # ismeretlen vagy kikapcsolt tenant: a végpont nyilvános, LLM-et nem hívunk
+        return JSONResponse({})
+    if not (cfg.get("ai_answer") or force):
+        return JSONResponse({})
+    if not sa.needs_answer(q, _int(data.get("total")), force):
+        return JSONResponse({})
+
+    key = (cid, sa.norm_q(q))
+    hit = ai_cache_get(key)
+    if hit is not None:
+        return JSONResponse(dict(hit, cached=1))
+
+    items = data.get("candidates")
+    cands = sa.clean_candidates(items[:AI_MAX_INPUT] if isinstance(items, list) else None)
+    if not cands:
+        return JSONResponse({})
+
+    if not ai_take(cid, ai_cap(cfg)):
+        logger.warning("search/answer: napi plafon elerve (%s)", cid)
+        return JSONResponse({})
+
+    try:
+        from app.core.llm import generate_reply   # lazy: nehéz import (Anthropic SDK)
+
+        reply = await generate_reply(
+            sa.SYSTEM_PROMPT,
+            [],
+            sa.build_user_prompt(q, cands),
+            model=await chat_model(session, cid),
+        )
+    except Exception:  # noqa: BLE001 — LLM 5xx/timeout: nincs sáv, de nincs 500 sem
+        logger.warning("search/answer: LLM hiba (%s)", cid, exc_info=True)
+        return JSONResponse({})
+
+    out = sa.finalize(reply, cands)
+    if not out:
+        logger.info("search/answer: nincs sav (%s) q=%r", cid, key[1])
+        return JSONResponse({})
+    ai_cache_put(key, out)
+    return JSONResponse(dict(out, cached=0))
