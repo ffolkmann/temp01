@@ -508,6 +508,26 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
                         logger.info("m82b facet link: %s client=%s", _fu82, req.client_id)
             except Exception:  # noqa: BLE001 - a facet-link hibaja ne torje a valaszt
                 pass
+            # m82f/2: ha se megkotes-, se cimke-link nincs, de a KERDESBOL
+            # feloldodott a kategoria, a kategoria-oldalra linkelunk (a m79a
+            # kereso-link egy talalatnevbol vett kulcsszoval dolgozik).
+            try:
+                if _more_url == _more_url_base:
+                    from app.services.facetdict import category_url as _cu82f
+                    from app.services.facetdict import detect_category as _dcat82f
+                    from app.services.linkfacet import load_map as _lm82f
+                    from app.services.retrieval import category_catalog as _cc82f
+                    _qc82f = _dcat82f(_det_msg, await _cc82f(req.client_id))
+                    _fu82f = _cu82f(
+                        str(getattr(tenant, "public_url", "") or ""),
+                        [], _lm82f(req.client_id), category=_qc82f,
+                    ) if _qc82f else None
+                    if _fu82f:
+                        _more_url = _fu82f
+                        logger.info("m82f category link: %s client=%s",
+                                    _fu82f, req.client_id)
+            except Exception:  # noqa: BLE001 - a link hibaja ne torje a valaszt
+                pass
             if _more_url and _more_url not in parsed.reply:  # m82e/2
                 _newreply2 = (
                     parsed.reply.rstrip()

@@ -32,7 +32,7 @@ import unicodedata
 
 __all__ = [
     "detect_facet_tags", "build_facet_conditions", "facet_tag_url", "category_value",
-    "detect_category",
+    "detect_category", "category_url",
 ]
 
 # mar sajat aggal kezelt attributumok (m82c vezeti ki oket ide)
@@ -493,6 +493,22 @@ def facet_tag_url(base_url, categories, tags, fmap, category=""):
         if int((facets.get(attr) or {}).get(val) or 0) > 0:
             return base + str(ent["url"]) + "/" + attr + ":" + val
     return None
+
+
+def category_url(base_url, categories, fmap, category=""):
+    """A kategoria sajat oldalanak URL-je a crawl-terkepbol (vagy None).
+
+    m82f/2: ha se megkotes-link (m79b), se cimke-link (m82b) nincs, de a
+    KERDESBOL feloldodott a kategoria (m82c/2 + m82f), akkor a zaro-link a
+    kategoria-oldalra mutasson -- ez mindig jobb, mint a m79a kereso-link, ami
+    egy talalatnevbol vett kulcsszoval dolgozik ("...?k=FullHD").
+    """
+    if not (base_url and fmap):
+        return None
+    _slug, ent = _category_entry(categories, fmap, category)
+    if not ent or not ent.get("url"):
+        return None
+    return str(base_url).rstrip("/") + str(ent["url"])
 
 
 def build_facet_conditions(tags, category=""):

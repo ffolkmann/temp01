@@ -103,3 +103,27 @@ def test_parent_head_match_alakok():
 def test_egy_szintu_kategoria_nem_ad_szulot():
     """'>' nelkuli kategoria-ertek nem general szulo-jeloltet (nincs mibol)."""
     assert _fd._single_leaf_parents(["Tablet"]) == {}
+
+
+FMAP = {
+    "client_id": "t",
+    "categories": {
+        "uj-notebook": {"url": "/laptop-notebook/uj-notebook-c100", "facets": {}},
+    },
+}
+
+
+def test_category_url_a_kategoria_oldalra_mutat():
+    """m82f/2: cimke nelkul is legyen ertelmes zaro-link (a kategoria-oldal)."""
+    assert _fd.category_url("https://bolt.hu", [], FMAP, category=NB) \
+        == "https://bolt.hu/laptop-notebook/uj-notebook-c100"
+    # a base_url zaro perjele nem duplikalodik
+    assert _fd.category_url("https://bolt.hu/", [], FMAP, category=NB) \
+        == "https://bolt.hu/laptop-notebook/uj-notebook-c100"
+
+
+def test_category_url_fail_safe_none():
+    assert _fd.category_url("https://bolt.hu", [], FMAP, category=TASKA) is None
+    assert _fd.category_url("https://bolt.hu", [], FMAP, category="") is None
+    assert _fd.category_url("", [], FMAP, category=NB) is None
+    assert _fd.category_url("https://bolt.hu", [], None, category=NB) is None
