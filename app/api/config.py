@@ -708,6 +708,37 @@ async def admin(request: Request, session: AsyncSession = Depends(get_session)) 
             return {"error": err}
         return {"ok": True, "client_id": cid, "config": new_cfg}
 
+    if action == "konf_stats":
+        # kf/11: konfigurator-tolcser (megjelent -> elkezdte -> vegigment ->
+        # kattintott -> ajanlatot kert) + kerdesenkenti kieses. A nyers SQL es a
+        # szamolas a konfstats modulban van, itt csak futtatjuk.
+        from sqlalchemy import text as _sa_text
+
+        from app.services import konfcfg, konfstats   # lazy: lasd konf_get
+
+        if not cid:
+            return {"error": "client_id required"}
+        t = await _get_tenant(session, cid)
+        if t is None:
+            return {"error": "not_found"}
+        days = konfstats.clamp_days(b.get("days"))
+        kcfg = t.konf_config if isinstance(getattr(t, "konf_config", None), dict) else None
+        if not kcfg:
+            kcfg = konfcfg.load_file_config(cid)
+        prm = {"cid": cid, "days": days}
+        try:
+            fr = (await session.execute(_sa_text(konfstats.SQL_FUNNEL), prm)).all()
+            sr = (await session.execute(_sa_text(konfstats.SQL_STEPS), prm)).all()
+            tr = (await session.execute(_sa_text(konfstats.SQL_TOP), prm)).all()
+            ln = (await session.execute(_sa_text(konfstats.SQL_LEADS), prm)).scalar() or 0
+        except Exception:  # noqa: BLE001 - a statisztika sosem torheti az admint
+            logging.getLogger("cx.konf").exception("konf_stats: lekerdezes hiba (%s)", cid)
+            return {"error": "query_failed"}
+        out = konfstats.shape(fr, sr, tr, ln, (kcfg or {}).get("questions"), days)
+        out["ok"] = True
+        out["client_id"] = cid
+        return out
+
     if action == "test_telegram":
         # m31: próbaüzenet a tenant chatId-jeire (saját bot, vagy a központi)
         cid = str(b.get("client_id") or "").strip().lower()

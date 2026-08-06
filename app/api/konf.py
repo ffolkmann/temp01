@@ -3,7 +3,7 @@
 - ``GET  /konf/settings?client_id=...`` — a tenant kerdes->szuro rulesetje a
   widgetnek (konfcfg.normalize_ruleset-tel tisztitva; kikapcsolt/ismeretlen
   tenantra {"enabled": false}).
-- ``POST /konf/event`` — ``kf_start`` | ``kf_done`` | ``kf_lead`` az ``events``
+- ``POST /konf/event`` — ``kf_start`` | ``kf_step`` | ``kf_done`` | ``kf_lead`` az ``events``
   tablaba (funnel-statisztika; a widget sendBeacon-nel, text/plain-nel kuld,
   ezert a body-t nyersen parse-oljuk — az S2 search_event mintaja).
 
@@ -35,7 +35,7 @@ from app.services.events import log_event
 logger = logging.getLogger("cx.konf")
 router = APIRouter()
 
-KONF_KINDS = {"kf_start", "kf_done", "kf_lead", "kf_click"}
+KONF_KINDS = {"kf_start", "kf_step", "kf_done", "kf_lead", "kf_click"}
 POPULAR_DAYS = 30
 POPULAR_LIMIT = 60
 CACHE_SECONDS = 300
@@ -180,6 +180,8 @@ async def konf_event(
         "top": str(meta_in.get("top") or "")[:200],
         "sku": str(meta_in.get("sku") or "")[:64],
         "pos": _meta_int(meta_in.get("pos"), 0, 999),
+        # kf/11: melyik kerdesnel tart (kf_step) - ebbol lesz a tolcser kieses-sora
+        "q": str(meta_in.get("q") or "")[:40],
     }
     sid = str(data.get("session_id") or "")[:64] or None
     await log_event(session, cid, sid, kind, meta)
