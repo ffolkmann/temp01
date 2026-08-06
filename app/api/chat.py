@@ -437,7 +437,13 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
     # (mint az m25-os zarolink) — a latogato egy kattintassal a bolt keresojeben folytathatja.
     if _rmode and not shop_hits:
         _su2 = _shop_search_url(tenant)
-        if _su2 and _su2 not in parsed.reply and u"További találatok a webáruházban" not in parsed.reply:
+        # m82e/2: a dedup korabban a KERESO-alap URL-re nezett, ezert ha a modell
+        # sajat maga beirt egy /termek-kereses?k=... linket a szovegbe, az EGESZ
+        # blokk kimaradt -- vele a m79b/m82b fasetta-link is (eles eset: az
+        # onboarding B, "es ASUS markajuak kozul?" -> nem jott a .../asus link).
+        # Mostantol a kapu csak a markert nezi, a tenyleges URL-re valo dedup
+        # pedig lentebb, a MAR KISZAMOLT _more_url ellen tortenik.
+        if _su2 and u"További találatok a webáruházban" not in parsed.reply:
             from app.services.superlative import topic_of as _topic_of  # pure fuggveny
             # m79a: a zaro link keresoterme a kontextus-talalatok nevebol jon
             # (a bolt sajat elnevezese -> garantalt talalat a keresoben),
@@ -502,15 +508,16 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
                         logger.info("m82b facet link: %s client=%s", _fu82, req.client_id)
             except Exception:  # noqa: BLE001 - a facet-link hibaja ne torje a valaszt
                 pass
-            _newreply2 = (
-                parsed.reply.rstrip()
-                + u"\n\n[További találatok a webáruházban](" + _more_url + u")"
-            )
-            try:
-                parsed.reply = _newreply2
-            except Exception:  # noqa: BLE001 — frozen dataclass eseten
-                from dataclasses import replace as _dc_replace2
-                parsed = _dc_replace2(parsed, reply=_newreply2)
+            if _more_url and _more_url not in parsed.reply:  # m82e/2
+                _newreply2 = (
+                    parsed.reply.rstrip()
+                    + u"\n\n[További találatok a webáruházban](" + _more_url + u")"
+                )
+                try:
+                    parsed.reply = _newreply2
+                except Exception:  # noqa: BLE001 — frozen dataclass eseten
+                    from dataclasses import replace as _dc_replace2
+                    parsed = _dc_replace2(parsed, reply=_newreply2)
     # m25: search_fallback zaro-link determinisztikusan (az LLM nem mindig teszi be magatol)
     if shop_hits:
         _su = _shop_search_url(tenant)
