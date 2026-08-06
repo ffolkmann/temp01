@@ -160,6 +160,28 @@ def test_created_day():
     assert sv.created_day("nem-datum") is None
 
 
+def test_canon_url_platform_aldomain():
+    root = "https://teslashop.hu/"
+    # a platform-aldomaint a bolt sajat domainjere cserelyuk
+    assert sv.canon_url("https://teslashop.mysellvio.com/hu/termek-1", root) == "https://teslashop.hu/hu/termek-1"
+    assert sv.canon_url("//teslashop.mysellvio.com/hu/a", root) == "https://teslashop.hu/hu/a"
+    # a kep is a GYOKERRE megy (nem az img_prefixre), hogy az utvonal ne duplazodjon
+    assert (sv.canon_url("https://teslashop.mysellvio.com/tenancy/assets/products/1/a.webp", root)
+            == "https://teslashop.hu/tenancy/assets/products/1/a.webp")
+    # a mar kanonikus es a relativ ertek valtozatlan
+    assert sv.canon_url("https://teslashop.hu/hu/x", root) == "https://teslashop.hu/hu/x"
+    assert sv.canon_url("hu/x", root) == "hu/x"
+    assert sv.canon_url("", root) == "" and sv.canon_url(None, root) == ""
+
+
+def test_canon_url_az_indexcore_prefix_vagassal_egyutt():
+    root, img = "https://teslashop.hu/", "https://teslashop.hu/tenancy/assets/products/"
+    u = sv.canon_url("https://teslashop.mysellvio.com/hu/termek-1", root)
+    m = sv.canon_url("https://teslashop.mysellvio.com/tenancy/assets/products/1/a.webp", root)
+    r = ic.compact({"id": 1, "available": True, "price_gross": 1, "url": u, "image_url": m}, root, img)
+    assert r["u"] == "hu/termek-1" and r["m"] == "1/a.webp"      # relativ lett -> a widget jol fuzi
+
+
 def test_map_product():
     tree = {1003: None, 1008: 1003}
     depth = sv.build_depth(tree)

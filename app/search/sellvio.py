@@ -22,6 +22,7 @@ fajl-betoltos fallback a fake-app-os tesztkornyezetek ellen (m79c minta).
 from __future__ import annotations
 
 import datetime
+import re
 
 import httpx
 
@@ -140,6 +141,25 @@ def created_day(s):
         return None
 
 
+_ABS_HOST = re.compile(r"^(?:https?:)?//[^/]+/?", re.I)
+
+
+def canon_url(value, root):
+    """Abszolut URL sema+host reszet a bolt kanonikus gyokerere csereli.
+
+    A Sellvio a pretty_url-t (es nehany kep-URL-t) a platform-aldomainnel adja vissza
+    (pl. https://<bolt>.mysellvio.com/...), nem a bolt sajat domainjen. Egy bolt
+    indexeben minden URL aze a bolte, ezert a hostot a public_url-bol szamolt gyokerre
+    cserelyuk - kulonben az indexcore nem tudja levagni a prefixet, es a widget
+    prefix + abszolut URL osszefuzesbol torott link lesz.
+    """
+    v = str(value or "")
+    if not v or v.startswith(root):
+        return v
+    m = _ABS_HOST.match(v)
+    return root + v[m.end():] if m else v
+
+
 def map_product(p, pmap, depth):
     """Nyers Sellvio termek -> feed-alaku rekord (indexcore-bemenet)."""
     price, orig = extract_price(p)
@@ -217,5 +237,9 @@ async def fetch(tenant, tcfg=None):
         async for page in _pages(client, base, headers, "/api/v2/products", 100):
             for p in page:
                 products.append(map_product(p, pmap, depth))
+
+    for row in products:          # platform-aldomaines URL-ek a bolt sajat domainjere
+        row["url"] = canon_url(row.get("url"), url_prefix)
+        row["image_url"] = canon_url(row.get("image_url"), url_prefix)
 
     return products, url_prefix, img_prefix
