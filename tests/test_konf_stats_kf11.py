@@ -76,6 +76,21 @@ def test_shape_ures_adat_nem_szall_el():
     assert len(out["steps"]) == 3
 
 
+def test_shape_atmenet_a_megjelenes_sosem_kevesebb_az_inditasoknal():
+    """A kf_step bevezetese kozben a regi sessionoknek nincs step-adata.
+
+    Eles meres (kf/11 E2E) 425%-os "elkezdte" aranyt adott, mert a megjelenes
+    csak az uj sessionoket szamolta, az inditas viszont a regieket is.
+    """
+    out = ks.shape(_funnel(start=17, done=12),
+                   step_rows=[("lapszam", "0", 4)], questions=QS)
+    assert out["funnel"]["shown"] == 17
+    assert out["rates"]["start"] == 100.0
+    assert out["rates"]["done"] == 70.6
+    assert out["has_step_data"] is True
+    assert out["steps"][0]["reach"] == 4      # a kieses-tabla a reszadatot mutatja
+
+
 def test_shape_regi_widget_nincs_kf_step():
     """kf_step nelkul a megjelenes az inditasok szamara esik vissza."""
     out = ks.shape(_funnel(start=13, done=10), questions=QS)

@@ -147,13 +147,12 @@ def shape(funnel_rows, step_rows=None, top_rows=None, leads_n=0, questions=None,
             f[kind] = {"n": _i(c), "s": _i(s)}
 
     steps = _steps(step_rows, questions, f["kf_done"]["s"])
-    # megjelenes: az elso kerdest latok szama; ha meg nincs kf_step adat (regi
-    # widget), az inditasok szama az elerheto legjobb kozelites
-    shown = steps[0]["reach"] if steps else 0
-    if not shown:
-        shown = f["kf_start"]["s"]
-
     start_s = f["kf_start"]["s"]
+    # Megjelenes = az elso kerdest latok szama. MERT MAX: a kf_step bevezetese
+    # elotti sessionoknel nincs step-adat, az inditasuk viszont megvan - enelkul
+    # az "elkezdte" arany 100% fole szaladna az atmeneti idoszakban (merve: 425%).
+    # Aki elkezdte kitolteni, az definicio szerint latta is az elso kerdest.
+    shown = max(steps[0]["reach"] if steps else 0, start_s)
     done_s = f["kf_done"]["s"]
     lead_s = max(f["kf_lead"]["s"], _i(leads_n))
 
