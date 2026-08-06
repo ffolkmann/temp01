@@ -124,7 +124,7 @@ def _sandbox(responder):
         _mod("app.services.rerank",
              rerank=lambda message, hits, page_url="", page_url_norm="", top_n=8: list(hits)[:top_n])
         _mod("app.services.paramextract",
-             detect_constraints=lambda m: {},
+             detect_constraints=lambda m, *a, **k: {},
              build_filter_conditions=lambda c, *a, **k: [])
         _mod("app.services.linkfacet", load_map=lambda cid: FMAP)
         _mod("app.services.query_cleanup", product_query_cleanup=lambda s: s)

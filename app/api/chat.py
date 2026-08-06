@@ -285,7 +285,7 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
         if req.history and len(message) <= 60:
             from app.services.paramextract import detect_constraints as _dc80
             from app.services.superlative import detect_price_superlative as _dps80
-            if _dc80(message) and not _dps80(message):
+            if _dc80(message, req.client_id) and not _dps80(message):
                 _prev_u = [
                     str(getattr(h, "content", "") or "") for h in req.history
                     if str(getattr(h, "role", "") or "") == "user"
@@ -405,7 +405,7 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
                         # helyett). A link-only meret-kulcsok NEM nyitjak a gate-et.
                         or (
                             _rmode == "stock_filtered"
-                            and bool(_bfc80c(_dc80c(_det_msg)) or _fdt80c)
+                            and bool(_bfc80c(_dc80c(_det_msg, req.client_id)) or _fdt80c)
                         )
                     )
                 ):
@@ -474,7 +474,7 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
                 from app.services.linkfacet import facet_link as _fl79b
                 from app.services.linkfacet import load_map as _lm79b
                 from app.services.paramextract import detect_constraints as _dc79b
-                _cons79b = _dc79b(_det_msg)  # m80: follow-up merge-elt szoveg
+                _cons79b = _dc79b(_det_msg, req.client_id)  # m80: follow-up merge-elt szoveg
                 if _cons79b and _hc:
                     _fu79b = _fl79b(
                         str(getattr(tenant, "public_url", "") or ""),

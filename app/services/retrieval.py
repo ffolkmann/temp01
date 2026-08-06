@@ -75,7 +75,14 @@ async def retrieve(
     # m82c: a kulon m76-os `usage` payload-ag KIVEZETVE -- a felhasznalas-jelleget
     # (uzleti/otthoni/gamer/...) a generikus, crawl-olt facets-szotar kezeli
     # (facetdict), kategoria-kapuval; igy nincs ket parhuzamos cimke-ut.
-    _pextra = build_filter_conditions(detect_constraints(message))  # m79c: param-szures (bag-gate, konzervativ)
+    _cons79c = detect_constraints(message, client_id)  # m79c + m82h/2 (tenant marka-szotar)
+    _pextra = build_filter_conditions(_cons79c)  # m79c: param-szures (bag-gate, konzervativ)
+    if _cons79c.get("brand"):  # m82h/2: merheto legyen, hogy a marka-szuro tenyleg lefutott
+        import logging as _lg82h
+        _lg82h.getLogger("cx.retrieval").info(
+            "m82h2 brand filter: %s vals=%s client=%s",
+            _cons79c.get("brand"), _cons79c.get("brand_vals") or "(kezi lista)", client_id,
+        )
     _wide82 = False  # m82c: facets-szurt poolnal a TELJES cimkezett halmaz kell (USAGE_WIDE_LIMIT)
     _topic = topic_of(message) if superlative else ""
     if superlative and len(_topic) >= 3:

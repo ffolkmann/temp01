@@ -19,4 +19,5 @@ logs/
 data/*.log
 data/onboarding_report_*.html
 data/facet_map_*.json
+data/brand_map_*.json
 data/m82*

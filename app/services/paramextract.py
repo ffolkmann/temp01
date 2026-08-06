@@ -101,7 +101,9 @@ _RE_MERET_Q = re.compile(
 # crawl-olt generikus szotar (facetdict) ismeri fel, kategoria-kapuval, es a
 # zaro-linket is az adja (chat.py m82b fallback-aga).
 # m80: gyakori markak (fold-olt) -- a payload brand-ertekek iras-valtozatait a
-# build_filter_conditions kepzi; a linkfacet a marka-szuro slugjaval matchel
+# build_filter_conditions kepzi; a linkfacet a marka-szuro slugjaval matchel.
+# m82h/2 ota ez CSAK FALLBACK: ha van tenant-terkep (data/brand_map_<client>.json),
+# a felismeres onnan jon (branddict) -- ez a lista terkep/client_id nelkul fut.
 _BRANDS = (
     "asus", "acer", "lenovo", "dell", "apple", "msi", "samsung", "huawei",
     "microsoft", "fujitsu", "toshiba", "xiaomi", "gigabyte", "honor",
@@ -132,7 +134,38 @@ def _meret_from_q(fm: str) -> float | None:
     return None
 
 
-def detect_constraints(message: str) -> dict:
+def _brand_from_dict(message: str, client_id: str):
+    """m82h/2: (kulcs, nyers payload-ertekek) a tenant marka-terkepebol.
+
+    VAN terkep -> (kulcs, ertekek) vagy ("", []) ha a kerdesben nincs a bolt
+    markai kozul valo. NINCS terkep / nincs client_id / barmi hiba -> None,
+    es a hivo a mai kezi _BRANDS listara esik vissza (fail-safe).
+    """
+    if not client_id:
+        return None
+    try:
+        from app.services.branddict import detect_brand, load_map
+    except Exception:  # noqa: BLE001 - fajl-betoltes (sync-oldali import-fuggetlenseg)
+        try:
+            import importlib.util as _ilu
+            import pathlib as _pl
+            _p = _pl.Path(__file__).resolve().parent / "branddict.py"
+            _spec = _ilu.spec_from_file_location("cx_branddict_dyn", _p)
+            _mod = _ilu.module_from_spec(_spec)
+            _spec.loader.exec_module(_mod)
+            detect_brand, load_map = _mod.detect_brand, _mod.load_map
+        except Exception:  # noqa: BLE001
+            return None
+    try:
+        bmap = load_map(client_id)
+        if not bmap:
+            return None
+        return detect_brand(message, bmap)
+    except Exception:  # noqa: BLE001 - a szotar hibaja ne torje a retrievalt
+        return None
+
+
+def detect_constraints(message: str, client_id: str = "") -> dict:
     """Egyertelmu megkotesek a kerdesbol.
 
     Taska-temanal (bag-gate, elsobbseg): p_max_meret_gte / p_tipus -- ezek a
@@ -162,7 +195,19 @@ def detect_constraints(message: str) -> dict:
         if v is not None:
             out["kijelzo_meret_gte"] = v
 
-    # m80: marka tema-gate nelkul
+    # m82h/2: a marka-szotar a tenant VALODI Qdrant brand-ertekeibol jon
+    # (branddict + data/brand_map_<client_id>.json, tools/brand_map_crawl.py).
+    # A SZURO-UT valtozatlan: a brand payload must-feltetel szur.
+    _bd = _brand_from_dict(message, client_id)
+    if _bd is not None:
+        # VAN terkep -> AZ dont (a kezi listara nem esunk vissza): amit a bolt
+        # nem arul, arra ne szurjunk (a mai listaval az 0 talalat + fallback volt)
+        _bk, _bvals = _bd
+        if _bk:
+            out["brand"] = _bk.replace(" ", "-")  # slug-alak: a linkfacet igy matchel
+            out["brand_vals"] = _bvals
+        return out
+    # m80: marka tema-gate nelkul (FALLBACK: nincs terkep / nincs client_id)
     for b in _BRANDS:
         if re.search(r"\b" + re.escape(b) + r"\b", fm):
             out["brand"] = b
@@ -198,7 +243,9 @@ def build_filter_conditions(cons: dict) -> list[dict]:
         must.append({"key": "p_tipus", "match": {"value": cons["p_tipus"]}})
     if cons.get("p_szin"):
         must.append({"key": "p_szin", "match": {"value": cons["p_szin"]}})
-    if cons.get("brand"):
+    if cons.get("brand_vals"):  # m82h/2: a terkepbol jott VALODI payload-ertekek
+        must.append({"key": "brand", "match": {"any": list(cons["brand_vals"])}})
+    elif cons.get("brand"):
         must.append({"key": "brand", "match": {"any": _brand_variants(cons["brand"])}})
     # m81: kijelzo-meret mar Qdrant-szuro is (p_kijelzo payload, a
     # usage_crawl kijelzo-meret JOB-ja irja a bolt szurojebol, egesz
