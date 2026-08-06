@@ -643,10 +643,10 @@ async def admin(request: Request, session: AsyncSession = Depends(get_session)) 
         form = b.get("search") if isinstance(b.get("search"), dict) else {}
         cfg = searchcfg.form_to_config(form)
         old = t.search_config if isinstance(t.search_config, dict) else searchcfg.load_file_config(cid)
-        for _key in ("min_ratio", "only_available", "ai_answer", "ai_daily_cap"):
-            # az urlapon nem szereplo kulcsok megorzese (indexelo + S6 AI-valasz)
-            if isinstance(old, dict) and _key in old:
-                cfg[_key] = old[_key]
+        # az urlapon nem szereplo kulcsok megorzese - whitelist helyett teljes
+        # megorzes (lasd searchcfg.merge_preserving docstring: a kategoria-lista
+        # elvesztese leallitotta a copygo index-buildet)
+        cfg = searchcfg.merge_preserving(old, cfg)
         t.search_config = cfg
         await session.commit()
         return {"ok": True, "client_id": cid, "source": "db",

@@ -189,6 +189,24 @@ def merch_to_text(rules):
 # --------------------------------------------------------------------------- #
 # urlap <-> config
 # --------------------------------------------------------------------------- #
+def merge_preserving(old, new):
+    """Az urlapon NEM szereplo kulcsok atmentese a mentett configba.
+
+    Whitelist helyett "amit a form nem allit elo, az marad": 2026-08-06-on a
+    shoprenter.categories blokk veszett el egy admin-mentessel, es a copygo
+    index-build masnap hajnalban elhasalt ("nincs kategoria-lista"). Minden uj
+    nem-urlap kulcs (platform-blokkok, indexelo- es AI-beallitasok) automatikusan
+    vedett.
+    """
+    if not isinstance(old, dict):
+        return new
+    out = dict(new) if isinstance(new, dict) else {}
+    for k, v in old.items():
+        if k not in out:
+            out[k] = v
+    return out
+
+
 def form_to_config(form):
     """Admin-urlap (szoveges mezok) -> kanonikus config-dict."""
     f = form if isinstance(form, dict) else {}
