@@ -76,7 +76,11 @@ def test_q_idezojel_os():
 
 def test_q_fekete_hatizsak():
     c = px.detect_constraints("legolcs\u00f3bb fekete h\u00e1tizs\u00e1k")
-    assert c["p_tipus"] == "hatizsak" and c["p_szin"] == "fekete"
+    # m82g TUDATOSAN MODOSITOTT VARAKOZAS: a p_szin MAR NEM innen jon -- a kezi
+    # _COLORS lista kivezetve, a szint a generikus szotar (facetdict `szin`
+    # attributum) ismeri fel kategoria- ES tema-kapuval, es a zaro-linket is az
+    # adja. Lasd tests/test_facetdict_szin_m82g.py. A tipus-detektor valtozatlan.
+    assert c["p_tipus"] == "hatizsak" and "p_szin" not in c
 
 
 def test_q_nb_ag_laptop_kijelzo_m79bnb():

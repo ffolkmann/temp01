@@ -41,7 +41,10 @@ _SKIP_ATTRS = frozenset({
     "kijelzo-meret",              # m81: p_kijelzo range
     "maximalis-notebook-meret",   # m79c: p_max_meret
     "taska-tipusa",               # m79c: p_tipus
-    "szin",                       # m79c: p_szin (bag-gate)
+    # m82g: a "szin" INNEN KIVEZETVE -- a kezi _COLORS lista es a bag-gate
+    # megszunt a kerdes-oldalon, a szint a crawl-olt generikus szotar ismeri
+    # fel. Nyereseg: a 3D filament 103 crawl-olt szine, amire eddig SEMMI nem
+    # szurt (a bag-gate oda sosem ert el). Extra kapu: _TOPIC_REQ_ATTRS.
     # m82c: a "felhasznalas-jellege" INNEN KIVEZETVE -- a crawl-olt generikus
     # szotar ismeri fel (a kezi _USAGE_WORDS lista es a m76-os kulon usage
     # payload-ag megszunt a kerdes-oldalon).
@@ -53,6 +56,21 @@ _STOP_VALUES = frozenset({"nem", "igen", "van", "nincs", "mas", "egyeb", "egyeb-
 _MIN_LEN = 3
 _COVER_MAX = 0.8   # ennel nagyobb lefedettsegnel az ertek nem szelektiv
 _MAX_ATTRS = 3     # egy kerdesbol legfeljebb ennyi attributumra szurunk
+
+# m82g: TEMA-KAPU. Nehany attributum ERTEKEI koznyelvi szavak, amik allando
+# szokapcsolatokban is szerepelnek ("zold energia", "zold ut", "szurke zona",
+# "piros lampa", "sarga csekk", "arany garanciacsomag"). A kategoria-kapu
+# ONMAGABAN nem eleg, mert az a talalatok top-kategoriajara is visszaeshet:
+# a mero (tools/m82g_sweep.py) a sima kivezetesre 18/2210 FP-t adott.
+# _VALUE_TRAPS-szal foltozni whack-a-mole (= a kezi lista visszahozasa),
+# ezert ATTRIBUTUM-OSZTALY szintu a szabaly: ilyen attributum csak akkor
+# szur, ha a kerdes a KAPU-KATEGORIAROL szol, azaz tartalmazza a kategoria-
+# slug legalabb egy >= _TOPIC_MIN karakteres tokenjet ("fekete FILAMENTetek",
+# "szurke HATIZSAKotok", "ezust KULSO dvd iro").
+# NEM altalanosithato minden attributumra: a m82f "32 GB memoriaval
+# laptopotok" esete elbukna rajta (a kapu "UJ Notebook", a kerdesben "laptop").
+_TOPIC_REQ_ATTRS = frozenset({"szin"})
+_TOPIC_MIN = 4
 
 # m82c/2: kategoria-szandek a KERDESBOL
 _CAT_MIN = 4       # ennel rovidebb kategoria-nev-reszt nem illesztunk
@@ -414,6 +432,21 @@ def _category_entry(categories, fmap, category=""):
     return "", None
 
 
+def _topic_hit(cat_slug, folded_message):
+    """A kerdes tenyleg a kapu-kategoriarol szol-e? (m82g tema-kapu)
+
+    A slug tokenjeit SZANDEKOSAN lazan, reszszokent illesztjuk (nem a szigoru
+    _cat_rx-szel): itt nem kategoriat DONTUNK el, csak ENGEDELYT adunk egy
+    amugy is kategoria-kapun es ertek-higienian atment cimkenek. A szigoru
+    illesztes regresszio lenne: a "kek laptopTASKA" osszetett szoban a "taska"
+    (5 betu) ala nem fer be a _CAT_COMPOUND_MIN=6 elotag-engedmeny.
+    """
+    for tok in str(cat_slug or "").split("-"):
+        if len(tok) >= _TOPIC_MIN and tok in folded_message:
+            return True
+    return False
+
+
 def detect_facet_tags(message, categories, fmap, max_attrs=_MAX_ATTRS, category=""):
     """['operacios-rendszer:windows-11-professional', 'memoria-meret:16gb'] vagy [].
 
@@ -433,9 +466,15 @@ def detect_facet_tags(message, categories, fmap, max_attrs=_MAX_ATTRS, category=
     cat_size = _cat_size(facets)
     fm = _fold(message)
     out = []
+    topic = None   # m82g: lusta kiertekeles, csak ha kell
     for attr in sorted(facets):
         if attr in _SKIP_ATTRS:
             continue
+        if attr in _TOPIC_REQ_ATTRS:
+            if topic is None:
+                topic = _topic_hit(cat_slug, fm)
+            if not topic:
+                continue
         best = ""
         for val, n in (facets[attr] or {}).items():
             if not _usable(val, n, cat_size, cat_key):

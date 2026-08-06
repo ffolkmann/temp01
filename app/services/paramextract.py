@@ -36,11 +36,11 @@ _RE_MERET_NAME = re.compile(r"maximum\s+(\d{1,2}(?:[.,]\d)?)\s*[\"\u2033']?\s*me
 # text-minta: 'Kategoria: Kiegeszitok > Notebook taska, hatizsak.' (eredeti, ekezetes)
 _RE_CATEGORY = re.compile(r"kateg[o\u00f3]ria:[ \t]*([^\n]+)", re.IGNORECASE)
 
-_COLORS = (
-    "fekete", "feher", "szurke", "acelszurke", "kek", "zold", "piros", "sarga",
-    "barna", "lila", "rozsaszin", "pink", "narancssarga", "narancs", "bordo",
-    "bezs", "arany", "ezust", "turkiz",
-)
+# m82g: a kezi _COLORS lista KIVEZETVE -- a kerdes-oldali szint a crawl-olt
+# generikus szotar (facetdict, `szin` attributum) ismeri fel, kategoria-kapuval
+# + tema-kapuval, es a zaro-linket is az adja (chat.py m82b aga ugyanazt az
+# URL-alakot epiti, mint a linkfacet szin-moda). A SYNC-oldali extract_params
+# p_szin-je VALTOZATLAN: az a termeknevbol olvas, nem a kerdesbol.
 
 
 def _parse_num(whole: str, frac: str | None = None) -> float:
@@ -135,8 +135,10 @@ def _meret_from_q(fm: str) -> float | None:
 def detect_constraints(message: str) -> dict:
     """Egyertelmu megkotesek a kerdesbol.
 
-    Taska-temanal (bag-gate, elsobbseg): p_max_meret_gte / p_tipus / p_szin --
-    ezek a Qdrant-szurest IS hajtjak (build_filter_conditions).
+    Taska-temanal (bag-gate, elsobbseg): p_max_meret_gte / p_tipus -- ezek a
+    Qdrant-szurest IS hajtjak (build_filter_conditions). A p_szin m82g ota
+    NEM innen jon (generikus szotar), de a build_filter_conditions tovabbra is
+    lefordit egy kivulrol kapott p_szin-t.
     Notebook-temanal (m79b-nb): kijelzo_meret_gte / usage -- CSAK a zaro
     fasetta-linkhez (linkfacet).
     Marka (m80): tema-gate nelkul -- Qdrant brand-szures ES zaro-link is.
@@ -155,11 +157,6 @@ def detect_constraints(message: str) -> dict:
         elif "sleeve" in fm or re.search(r"\btok\b", fm):
             out["p_tipus"] = "tok"
         # generikus 'taska' -> NINCS tipus-szures (a hatizsak is taska)
-
-        for c in _COLORS:
-            if re.search(r"\b" + c + r"\b", fm):
-                out["p_szin"] = c
-                break
     elif _RE_NB_TOPIC.search(fm):
         v = _meret_from_q(fm)
         if v is not None:
