@@ -154,6 +154,12 @@ def test_gyarto_a_parameterbol_es_kiesik_a_facetekbol():
     assert rec["brand"] == "Epson"
     assert rec["parameters"] == [{"name": "Sz\u00edn", "value": "fekete"}]   # marka + ures kiesik
     assert UN.map_product(one(product_xml()))["brand"] == ""
+    # Id NELKULI marka-parameter: nev szerint is ki kell esnie, kulonben duplan latszik
+    p2 = ("<Params><Param><Name>Gy\u00e1rt\u00f3</Name><Value>YATO</Value></Param>"
+          "<Param><Name>Anyag</Name><Value>acel</Value></Param></Params>")
+    rec2 = UN.map_product(one(product_xml(params=p2)))
+    assert rec2["brand"] == "YATO"
+    assert [x["name"] for x in rec2["parameters"]] == ["Anyag"]
 
 
 def test_alap_kategoria_es_kep_valasztasa():

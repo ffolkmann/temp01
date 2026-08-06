@@ -215,13 +215,19 @@ def params_of(prod, skip_ids=(), skip_names=()):
 
 
 def brand_of(prod):
-    """(marka, a marka-parameter Id-ja) - a Unasban nincs dedikalt marka-mezo."""
+    """(marka, param-Id, param-nev kisbetuvel) - a Unasban nincs marka-mezo.
+
+    A nevet is visszaadjuk, mert a param Id-ja hianyozhat: a kiszurest NEV
+    szerint is el kell vegezni, kulonben a marka ketszer latszana (GYARTO facet
+    + "Gyarto" parameter-facet) - az eles boltban pont ez tortent.
+    """
     for p in prod.findall("./Params/Param"):
-        if _t(p, "Name").strip().lower() in BRAND_PARAMS:
+        name = _t(p, "Name").strip().lower()
+        if name in BRAND_PARAMS:
             value = _t(p, "Value")
             if value:
-                return value, _t(p, "Id")
-    return "", ""
+                return value, _t(p, "Id"), name
+    return "", "", ""
 
 
 def leaf_category(name):
@@ -284,9 +290,9 @@ def map_product(prod, skip_names_extra=()):
     name = _t(prod, "Name")
     if not pid or not name:
         return None
-    brand, brand_id = brand_of(prod)
+    brand, brand_id, brand_name = brand_of(prod)
     price, orig = price_of(prod)
-    skip_names = tuple(skip_names_extra or ())
+    skip_names = tuple(skip_names_extra or ()) + ((brand_name,) if brand_name else ())
     return {
         "id": pid,
         "sku": _t(prod, "Sku"),
