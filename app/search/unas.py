@@ -63,8 +63,11 @@ def skip_param(name, extra=()):
     n = " ".join(str(name or "").split()).strip().lower()
     if not n or n in SKIP_PARAM_EXACT or n in extra:
         return True
-    return (n.startswith(SKIP_PARAM_PREFIX)
-            or any(tok in n for tok in SKIP_PARAM_SUBSTR))
+    if n.startswith(SKIP_PARAM_PREFIX) or any(tok in n for tok in SKIP_PARAM_SUBSTR):
+        return True
+    # gepi azonosito-mezok (CONNESTIC_ID, productid, sku_kod...): egyetlen szo,
+    # amiben alahuzas van vagy "id"-re vegzodik - vasarloi szempontnak sosem az
+    return " " not in n and ("_" in n or n.endswith("id"))
 
 _XML_HEAD = '<?xml version="1.0" encoding="UTF-8" ?>'
 
