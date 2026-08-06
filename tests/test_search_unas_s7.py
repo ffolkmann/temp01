@@ -172,6 +172,39 @@ def test_alap_kategoria_es_kep_valasztasa():
         images="<Images><DefaultFilename>d.jpg</DefaultFilename></Images>"))) == "d.jpg"
 
 
+def test_kategoria_a_legmelyebb_szint():
+    """A Unas a TELJES utvonalat adja a nevben, a facethez a level kell."""
+    assert UN.leaf_category("Otthon \u00e9s kert |Kerti g\u00e9pek| Lombsz\u00edv\u00f3") == "Lombsz\u00edv\u00f3"
+    assert UN.leaf_category("Aggreg\u00e1tor") == "Aggreg\u00e1tor"
+    assert UN.leaf_category(" A |  | B ") == "B"
+    assert UN.leaf_category("") == "" and UN.leaf_category(None) == ""
+    cats = ('<Categories><Category><Type>base</Type>'
+            '<Name>Otthon | Kerti g\u00e9pek | Lombsz\u00edv\u00f3</Name></Category></Categories>')
+    assert UN.map_product(one(product_xml(cats=cats)))["category"] == "Lombsz\u00edv\u00f3"
+
+
+def test_export_technikai_parameterek_kiesnek():
+    """Eles boltbol: EAN (termekenkent egyedi), basketdisabled, Arukereso-blokk."""
+    assert UN.skip_param("EAN") and UN.skip_param(" ean ")
+    assert UN.skip_param("basketdisabled")
+    assert UN.skip_param("\u00c1rukeres\u0151.hu Gy\u00e1rt\u00f3")
+    assert UN.skip_param("Google term\u00e9kkateg\u00f3ria")
+    assert UN.skip_param("Csomagolt magass\u00e1g")
+    assert not UN.skip_param("Sz\u00edn") and not UN.skip_param("Teljes\u00edtm\u00e9ny")
+    assert UN.skip_param("Saj\u00e1t szemet", extra=("saj\u00e1t szemet",))   # bolt-szintu bovites
+
+    params = ("<Params>"
+              "<Param><Id>1</Id><Name>EAN</Name><Value>5901234</Value></Param>"
+              "<Param><Id>2</Id><Name>\u00c1rukeres\u0151.hu Gy\u00e1rt\u00f3</Name><Value>YATO</Value></Param>"
+              "<Param><Id>3</Id><Name>Teljes\u00edtm\u00e9ny</Name><Value>1200 W</Value></Param>"
+              "</Params>")
+    rec = UN.map_product(one(product_xml(params=params)))
+    assert rec["parameters"] == [{"name": "Teljes\u00edtm\u00e9ny", "value": "1200 W"}]
+    # a bolt-szintu bovites a parse_products-on at is hat
+    recs = UN.parse_products(products_xml(product_xml(params=params)), ("teljes\u00edtm\u00e9ny",))
+    assert recs[0]["parameters"] == []
+
+
 def test_parse_products_es_hibauzenet():
     xml = products_xml(product_xml(pid="1", sku="A"), product_xml(pid="2", sku="B", status="0"))
     recs = UN.parse_products(xml)

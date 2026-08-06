@@ -47,6 +47,25 @@ STATUS_BUYABLE = ("1", "2")
 
 BRAND_PARAMS = ("gyarto", "gyártó", "marka", "márka", "brand", "manufacturer")
 
+# Export-/feed-technikai parameterek: a boltok ezeket is termek-parameterkent
+# viszik, de vasarloi szempontnak ertelmetlenek (az EAN ráadásul termekenkent
+# egyedi -> szaz erteku facet lenne). A lista boltonkent bovitheto a
+# search_config.unas.skip_params kulcsbol.
+SKIP_PARAM_EXACT = {"ean", "ean kod", "ean kód", "eankod", "vtsz", "cikkszam",
+                    "cikkszám", "basketdisabled", "basket disabled"}
+SKIP_PARAM_PREFIX = ("arukereso", "árukereső", "google", "facebook", "glami",
+                     "emag", "pepita", "csomagolt ")
+SKIP_PARAM_SUBSTR = ("disabled", "export", "feed")
+
+
+def skip_param(name, extra=()):
+    """Kiszurendo-e ez a parameter-nev (kis/nagybetu- es szokoz-turo)."""
+    n = " ".join(str(name or "").split()).strip().lower()
+    if not n or n in SKIP_PARAM_EXACT or n in extra:
+        return True
+    return (n.startswith(SKIP_PARAM_PREFIX)
+            or any(tok in n for tok in SKIP_PARAM_SUBSTR))
+
 _XML_HEAD = '<?xml version="1.0" encoding="UTF-8" ?>'
 
 
@@ -170,13 +189,19 @@ def is_available(prod):
     return True
 
 
-def params_of(prod, skip_ids=()):
-    """Params.Param -> [{'name','value'}] (ures ertek es a marka-param kiesik)."""
+def params_of(prod, skip_ids=(), skip_names=()):
+    """Params.Param -> [{'name','value'}].
+
+    Kiesik: az ures ertek, a markakent mar felhasznalt parameter (kulonben
+    duplan latszana) es az export-/feed-technikai mezo (skip_param).
+    """
     out = []
     for p in prod.findall("./Params/Param"):
         name = _t(p, "Name")
         value = _t(p, "Value")
         if not name or not value or _t(p, "Id") in skip_ids:
+            continue
+        if skip_param(name, skip_names):
             continue
         out.append({"name": name, "value": value})
     return out
@@ -192,11 +217,23 @@ def brand_of(prod):
     return "", ""
 
 
+def leaf_category(name):
+    """'Otthon es kert |Kerti gepek| Lombszivo' -> 'Lombszivo'.
+
+    A Unas a kategoria-nevben a TELJES utvonalat adja (a pipe-ok korul a szokoz
+    nem konzisztens), a facethez viszont a legmelyebb szint kell - ugyanaz a
+    szabaly, mint a Sellvio kategoria-fajanal.
+    """
+    parts = [" ".join(p.split()) for p in str(name or "").split("|")]
+    parts = [p for p in parts if p]
+    return parts[-1] if parts else ""
+
+
 def category_of(prod):
-    """Az ALAP kategoria neve (a Unas tobb kategoriat is enged; alt = masodlagos)."""
+    """Az ALAP kategoria LEGMELYEBB szintje (alt = masodlagos, csak fallback)."""
     first = ""
     for c in prod.findall("./Categories/Category"):
-        name = _t(c, "Name")
+        name = leaf_category(_t(c, "Name"))
         if not name:
             continue
         if _t(c, "Type") == "base":
@@ -226,7 +263,7 @@ def created_day(prod):
     return int(ts // 86400)
 
 
-def map_product(prod):
+def map_product(prod, skip_names_extra=()):
     """Egy <Product> elem -> feed-alaku rekord; None = nem kerul az indexbe.
 
     Kiesik: az inaktiv termek es az, amit a bolt szandekosan elrejtett a
@@ -242,6 +279,7 @@ def map_product(prod):
         return None
     brand, brand_id = brand_of(prod)
     price, orig = price_of(prod)
+    skip_names = tuple(skip_names_extra or ())
     return {
         "id": pid,
         "sku": _t(prod, "Sku"),
@@ -253,12 +291,13 @@ def map_product(prod):
         "available": is_available(prod),
         "url": _t(prod, "Url") or _t(prod, "SefUrl"),
         "image_url": image_of(prod),
-        "parameters": params_of(prod, skip_ids=(brand_id,) if brand_id else ()),
+        "parameters": params_of(prod, skip_ids=(brand_id,) if brand_id else (),
+                                skip_names=skip_names),
         "created_day": created_day(prod),
     }
 
 
-def parse_products(xml_text):
+def parse_products(xml_text, skip_names_extra=()):
     """getProduct valasz -> feed-alaku rekordok (a kiszurtek nelkul)."""
     root = _root(xml_text)
     err = _t(root, ".//Error")
@@ -266,7 +305,7 @@ def parse_products(xml_text):
         raise RuntimeError("Unas getProduct: %s" % err)
     out = []
     for prod in root.findall(".//Product"):
-        rec = map_product(prod)
+        rec = map_product(prod, skip_names_extra)
         if rec is not None:
             out.append(rec)
     return out
@@ -321,6 +360,8 @@ async def fetch(tenant, tcfg=None):
     cfg = (tcfg or {}).get("unas") or {}
     lang = str(cfg.get("lang") or "hu").strip() or "hu"
     page = max(1, min(int(cfg.get("page_size") or _PAGE), 1000))
+    skip_extra = tuple(" ".join(str(x).split()).lower()
+                       for x in (cfg.get("skip_params") or []) if str(x).strip())
     base = base_url(tenant)
     url_prefix, img_prefix = prefixes(tenant, tcfg)
 
@@ -347,7 +388,7 @@ async def fetch(tenant, tcfg=None):
 
             got = count_products(resp.text)
             fresh = 0
-            for rec in parse_products(resp.text):
+            for rec in parse_products(resp.text, skip_extra):
                 if rec["id"] in seen:
                     continue
                 seen.add(rec["id"])
