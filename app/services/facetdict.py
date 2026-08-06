@@ -300,6 +300,46 @@ def _head_match(rx, folded_message):
     return False
 
 
+def _single_leaf_parents(catalog):
+    """Szulo-ut -> az EGYETLEN levele; a tobb-levelu szulok kimaradnak.
+
+    m82f: a szulo-ut csak akkor hasznalhato kategoria-jeloltnek, ha alatta
+    pontosan egy level van -- kulonben a detect_category holtversenybe futna
+    (ez volt a m82d/2 zsakutca-jelolt). A notebookstore-nal a "Laptop,
+    Notebook" szulo alatt egyetlen level all (UJ Notebook, 6416 termek).
+    """
+    par = {}
+    for c in catalog or []:
+        c = str(c or "")
+        parts = [x.strip() for x in c.split(">")]
+        if len(parts) < 2:
+            continue
+        par.setdefault(" > ".join(parts[:-1]), []).append(c)
+    return {k: v[0] for k, v in par.items() if len(v) == 1}
+
+
+def _parent_head_match(rx, folded_message):
+    """A SZULO-nev fej-alakban all-e? (szigorubb, mint a level-nevnel)
+
+    A szulo-nev koznyelvi szo ("laptop", "notebook"), ezert csak akkor
+    kategoria-szandek, ha esetrag all utana ("laptopOTOK", "laptopOT") vagy
+    tagmondat-veg zarja ("...a legolcsobb laptop?"). A csupasz to + masik szo
+    OSSZETETELI JELZO ("laptop taskatok" -> a fej a taska), a -s kepzos alak
+    pedig m82e ota eleve nem jelolt.
+    """
+    for m in rx.finditer(folded_message):
+        t = _CAT_TAIL.match(folded_message, m.end())
+        t = t.group(0) if t else ""
+        if t:
+            if _CAT_ADJ.match(t):
+                continue
+            return True
+        rest = folded_message[m.end():].lstrip(" -")
+        if not rest or not rest[:1].isalpha():
+            return True
+    return False
+
+
 def detect_category(message, catalog):
     """A kerdesben megnevezett kategoria PAYLOAD-erteke, vagy "".
 
@@ -314,6 +354,10 @@ def detect_category(message, catalog):
 
     m82e: a JELZOI (-s kepzos) illeszkedes nem szamit kategoria-szandeknak
     (_head_match) -- "NVIDIA videokartyas notebookotok" a notebookrol szol.
+
+    m82f: ha egyetlen LEVEL-nev sem illeszkedik, az EGY-LEVELU szulok nevei
+    is jeloltek (_single_leaf_parents + _parent_head_match) -- "laptopotok"
+    igy jut el az "UJ Notebook" levelig.
     """
     if not (message and catalog):
         return ""
@@ -333,7 +377,24 @@ def detect_category(message, catalog):
                 best, best_len, tie = cat, len(p), False
             elif len(p) == best_len and cat != best:
                 tie = True   # ket kulonbozo kategoria egyforma erossen -> nem dontunk
-    return "" if tie else best
+    if best or tie:
+        return "" if tie else best
+
+    # m82f: SZULO-SZINTU feloldas -- csak ha egyetlen LEVEL-nev sem illeszkedett.
+    # Elo eset: "Van 32 GB memoriaval laptopotok?" -- a level neve "UJ Notebook",
+    # a "laptop" szo nem illeszkedik ra, ezert a kapu a talalat-alapu fallbackre
+    # esett, ami RAM-MODULOKAT adott.
+    pbest, pbest_len, ptie = "", 0, False
+    for _par, _leafcat in _single_leaf_parents(catalog).items():
+        for p in _cat_parts(_par):
+            rx = _cat_rx(p)
+            if rx is None or not _parent_head_match(rx, fm):
+                continue
+            if len(p) > pbest_len:
+                pbest, pbest_len, ptie = _leafcat, len(p), False
+            elif len(p) == pbest_len and _leafcat != pbest:
+                ptie = True
+    return "" if ptie else pbest
 
 
 def _category_entry(categories, fmap, category=""):

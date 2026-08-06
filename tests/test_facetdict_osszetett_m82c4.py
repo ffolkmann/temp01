@@ -79,9 +79,15 @@ def test_tul_hosszu_elotag_mar_nem_osszetett_szo_m82c4():
 
 
 def test_nem_letezo_kategoriara_nincs_talalat_m82c4():
-    # a boltban nincs 'laptop' nevu kategoria (az 'UJ Notebook') -> fallback
-    assert detect_category("Melyik a legolcsobb gamerlaptop?", CATALOG) == ""
-    assert detect_category("Melyik a legolcsobb gamer laptop?", CATALOG) == ""
+    """m82f ELOTT: a boltban nincs 'laptop' nevu LEVEL (az 'UJ Notebook'),
+    ezert ez "" volt. m82f UTAN a szulo-ut ("Laptop, Notebook") oldja fel --
+    az osszetett alak (gamerLAPTOP) is, a m82c/4 elotag-szabalya szerint.
+    Valoban nem letezo kategoria-nevre tovabbra is "" jar.
+    """
+    nb = next(c for c in CATALOG if c.startswith("Laptop") and "Notebook" in c)
+    assert detect_category("Melyik a legolcsobb gamerlaptop?", CATALOG) == nb
+    assert detect_category("Melyik a legolcsobb gamer laptop?", CATALOG) == nb
+    assert detect_category("Melyik a legolcsobb kavefozotok?", CATALOG) == ""
 
 
 def test_ures_bemenet_fail_safe_m82c4():

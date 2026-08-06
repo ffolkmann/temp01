@@ -47,8 +47,14 @@ CATALOG = [
 
 
 def test_jelzoi_alak_nem_viszi_el_a_kaput():
-    """A kivalto eles eset: a -s kepzos kategoria-nev jelzo, nem a kerdes targya."""
-    assert _fd.detect_category("Van NVIDIA videokartyas notebookotok?", CATALOG) == ""
+    """A kivalto eles eset: a -s kepzos kategoria-nev jelzo, nem a kerdes targya.
+
+    m82f ota a kapu nem "" marad: a szulo-uton keresztul a FEJ (notebook)
+    kategoriajara all be. A lenyeg valtozatlan -- NEM a Videokartyara.
+    """
+    got = _fd.detect_category("Van NVIDIA videokartyas notebookotok?", CATALOG)
+    assert got != "Kiegeszitok > Videokartya"
+    assert got == "Laptop, Notebook > UJ Notebook"   # m82f: szulo-szintu feloldas
 
 
 def test_fej_jelolt_nyer_a_jelzoi_felett():

@@ -80,12 +80,21 @@ def test_nem_csuszik_at_masik_kategoriaba_m82c2():
 
 def test_nincs_kategorianev_a_kerdesben_m82c2():
     for q in (
-        "legolcsobb gamer laptop",
-        "Melyik a legolcsobb 17 colos laptop?",
         "mennyibe kerul a szallitas?",
         "van ra 3 ev garancia?",
     ):
         assert _fd.detect_category(q, CATALOG) == "", q
+
+
+def test_laptop_szo_a_szulo_uton_oldodik_fel_m82f():
+    """m82f: a "laptop" nem levelnev, de a szulo-ute ("Laptop, Notebook")
+    igen -- es a szulo alatt egyetlen level van, tehat egyertelmu.
+
+    A m82c/2 ota ez "" volt (talalat-alapu fallback); a fallback viszont a
+    "32 GB memoriaval laptopotok" kerdesnel RAM-modulokra vitte a kaput.
+    """
+    for q in ("legolcsobb gamer laptop", "Melyik a legolcsobb 17 colos laptop?"):
+        assert _fd.detect_category(q, CATALOG) == CAT_NB, q
 
 
 def test_toltelek_kategorianev_kimarad_m82c2():
