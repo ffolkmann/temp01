@@ -66,6 +66,16 @@ _CAT_SUFFIX = 4    # ennyi ragozasi karakter engedett a talalat vegen
 # nem a Nyomtatora.
 _CAT_COMPOUND_MIN = 6   # ennel rovidebb kategoria-nev ele nem engedunk elotagot
 _CAT_PREFIX_MAX = 12    # az elotag maximalis hossza
+# m82e: MELLEKNEVI KEPZO -- ott a kategoria-nev JELZO, nem a kerdes targya.
+# "Van NVIDIA videokartyaS notebookotok?" a NOTEBOOKrol szol, a kapu megis a
+# Videokartyara allt be (a -s belefert a _CAT_SUFFIX-be), es a notebook-cimkek
+# sosem jutottak el a szuresig. Ha az illeszkedes utan mellekevi kepzo all
+# (-s/-os/-es/-as + max 3 betu esetrag), az a jelolt nem viheti el a kaput; ha
+# CSAK ilyen jelolt van, "" -> marad a talalat-alapu fallback (mai, konzervativ ut).
+# Kockazat-terkep (tools/m82e_catdiag.py, 100 valodi kategoria): fej-alakban
+# 0/333 valtozas, jelzoi alakban 111/111 jelolt esik ki helyesen.
+_CAT_ADJ = re.compile(r"^(?:[oea]?s)[a-z]{0,3}$")
+_CAT_TAIL = re.compile(r"[a-z0-9]{0,%d}" % _CAT_SUFFIX)
 _CAT_STOP = frozenset({
     "egyeb", "kiegeszito", "kiegeszitok", "tartozek", "tartozekok",
     "hasznalt", "termek", "termekek", "akcio", "akciok", "ujdonsag", "ujdonsagok",
@@ -274,6 +284,22 @@ def _cat_rx(part):
     return rx
 
 
+def _head_match(rx, folded_message):
+    """Van-e olyan illeszkedes, ahol a kategoria-nev FEJ (nem jelzo)?
+
+    m82e: a magyarban a jelzo elol all es kepzot kap ("videokartyaS notebook"),
+    a fej pedig esetragot ("notebookOTOK", "monitorT", "nyomtatoK"). Csak a
+    fej-illeszkedes szamit kategoria-szandeknak; tobbszori elofordulasnal EGY
+    fej-alak is eleg (fail-safe irany: inkabb jelolt maradjon).
+    """
+    for m in rx.finditer(folded_message):
+        t = _CAT_TAIL.match(folded_message, m.end())
+        t = t.group(0) if t else ""
+        if not (t and _CAT_ADJ.match(t)):
+            return True
+    return False
+
+
 def detect_category(message, catalog):
     """A kerdesben megnevezett kategoria PAYLOAD-erteke, vagy "".
 
@@ -285,6 +311,9 @@ def detect_category(message, catalog):
     `catalog`: a tenant VALODI `category` payload-ertekei (Qdrant facet API) --
     igy a talalat EGYBEN a Qdrant-feltetel erteke is, nincs slug->payload
     forditas. Tobbertelmu illeszkedesnel "" -> marad a talalat-alapu kapu.
+
+    m82e: a JELZOI (-s kepzos) illeszkedes nem szamit kategoria-szandeknak
+    (_head_match) -- "NVIDIA videokartyas notebookotok" a notebookrol szol.
     """
     if not (message and catalog):
         return ""
@@ -298,7 +327,7 @@ def detect_category(message, catalog):
             continue
         for p in _cat_parts(cat):
             rx = _cat_rx(p)
-            if rx is None or not rx.search(fm):
+            if rx is None or not _head_match(rx, fm):
                 continue
             if len(p) > best_len:
                 best, best_len, tie = cat, len(p), False
