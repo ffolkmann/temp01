@@ -299,8 +299,14 @@ def prefixes(tenant, tcfg=None):
 
 
 def base_url(tenant):
+    """A Unas API host.
+
+    A tenants.api_base-ben tobb boltnal a SAJAT shop-domain van beirva (a
+    smartzillanal emiatt a /login 302-t adott es ertelmezhetetlen valaszt) -
+    ezert csak akkor fogadjuk el, ha tenyleg unas.eu API-host.
+    """
     base = str(getattr(tenant, "api_base", "") or "").strip().rstrip("/")
-    return base or DEFAULT_BASE
+    return base if "unas.eu" in base else DEFAULT_BASE
 
 
 # --------------------------------------------------------------------------- #

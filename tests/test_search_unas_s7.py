@@ -201,6 +201,8 @@ def test_api_kulcs_es_prefixek_feloldasa():
 
     assert UN.base_url(_Tenant()) == UN.DEFAULT_BASE
     assert UN.base_url(_Tenant(api_base="https://api11.unas.eu/shop/")) == "https://api11.unas.eu/shop"
+    # a bolt sajat domainje NEM API-host (elesben ez 302-t adott a /login-ra)
+    assert UN.base_url(_Tenant(api_base="https://smartzilla.hu/")) == UN.DEFAULT_BASE
 
 
 # --------------------------------------------------------------------------- #
