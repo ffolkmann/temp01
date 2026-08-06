@@ -289,6 +289,34 @@ def test_settings_ai_flag_a_db_configbol(tmp_path):
     assert body["ai"] is True
 
 
+def test_settings_ai_examples_a_configbol(tmp_path):
+    _with_cfg(_write_cfg(tmp_path, {}))
+    try:
+        sess = _CfgSession(cfg={
+            "enabled": True, "ai_answer": True, "popular_terms": ["a"], "popular_skus": ["s"],
+            "ai_examples": ["  melyik uleshuzat illik a Model Y-hoz?  ", "milyen felni jo telre?",
+                            "melyik uleshuzat illik a Model Y-hoz?", "x" * 200, "otodik", "hatodik"],
+        })
+        body = _body(asyncio.run(SS.search_settings(client_id="teslashop", session=sess)))
+    finally:
+        _clear_cfg()
+    ex = body["ai_examples"]
+    assert len(ex) == 4                       # max 4
+    assert ex[0] == "melyik uleshuzat illik a Model Y-hoz?"   # osszevont whitespace
+    assert ex[1] == "milyen felni jo telre?"
+    assert len(ex[2]) == 80                   # 80 karakterre vagva
+    assert ex[3] == "otodik"                  # a duplikatum kiesett
+
+
+def test_settings_ai_examples_alapbol_ures(tmp_path):
+    _with_cfg(_write_cfg(tmp_path, {"teslashop": {"enabled": True, "popular_terms": ["a"], "popular_skus": ["s"]}}))
+    try:
+        body = _body(asyncio.run(SS.search_settings(client_id="teslashop", session=_Session())))
+    finally:
+        _clear_cfg()
+    assert body["ai_examples"] == []
+
+
 def test_settings_cache_header(tmp_path):
     _with_cfg(_write_cfg(tmp_path, {"teslashop": {"enabled": True, "popular_terms": ["a"], "popular_skus": ["s"]}}))
     try:

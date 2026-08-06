@@ -149,6 +149,22 @@ def norm_oneway(value: Any) -> list[dict[str, Any]]:
     return out
 
 
+def ai_examples(raw: Any) -> list[str]:
+    """Peldakerdesek a kereso ures allapotahoz: max 4 db, egysoros, egyedi.
+
+    Boltonkent a `search_config.ai_examples` adja - igy a webshop szakmajahoz illo
+    peldat mutatunk, es widget-deploy nelkul hangolhato.
+    """
+    out: list[str] = []
+    for item in raw if isinstance(raw, list) else []:
+        value = " ".join(str(item or "").split())[:80]
+        if value and value not in out:
+            out.append(value)
+        if len(out) >= 4:
+            break
+    return out
+
+
 def active_merch(rules: Any, today: date | None = None) -> list[dict[str, Any]]:
     """Csak az időablakban lévő merch-szabályok (from/to inkluzív, hiányzó = nyitott)."""
     out: list[dict[str, Any]] = []
@@ -269,6 +285,7 @@ async def search_settings(
         # S6: a widget ebbol tudja, hogy kerjen-e AI-valaszt (a ?cxai=1 demo-kapcsolo
         # ettol fuggetlenul mindig kerdez, a szerver ott a `force`-szal enged at)
         "ai": bool(cfg.get("ai_answer")),
+        "ai_examples": ai_examples(cfg.get("ai_examples")),
     }
     if cfg.get("enabled"):
         if not body["popular_terms"]:
