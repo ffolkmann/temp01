@@ -192,6 +192,8 @@ def test_export_technikai_parameterek_kiesnek():
     assert UN.skip_param("Csomagolt magass\u00e1g")
     # gepi azonosito-mezok (eles boltbol): egy szo, alahuzassal vagy id-vegzodessel
     assert UN.skip_param("CONNESTIC_ID") and UN.skip_param("productid")
+    assert UN.skip_param("EAN code") and UN.skip_param("EAN-13")
+    assert UN.skip_param("List\u00e1\u00e1r".replace("\u00e1\u00e1", "a\u00e1")) and UN.skip_param("Fogyaszt\u00f3i \u00e1r")
     assert not UN.skip_param("Sz\u00edn") and not UN.skip_param("Teljes\u00edtm\u00e9ny")
     assert not UN.skip_param("Csomag m\u00e9lys\u00e9g")   # tobb szo: valodi jellemzo maradhat
     assert UN.skip_param("Saj\u00e1t szemet", extra=("saj\u00e1t szemet",))   # bolt-szintu bovites

@@ -54,7 +54,7 @@ BRAND_PARAMS = ("gyarto", "gyártó", "marka", "márka", "brand", "manufacturer"
 SKIP_PARAM_EXACT = {"ean", "ean kod", "ean kód", "eankod", "vtsz", "cikkszam",
                     "cikkszám", "basketdisabled", "basket disabled"}
 SKIP_PARAM_PREFIX = ("arukereso", "árukereső", "google", "facebook", "glami",
-                     "emag", "pepita", "csomagolt ")
+                     "emag", "pepita", "csomagolt ", "ean")
 SKIP_PARAM_SUBSTR = ("disabled", "export", "feed")
 
 
@@ -64,6 +64,10 @@ def skip_param(name, extra=()):
     if not n or n in SKIP_PARAM_EXACT or n in extra:
         return True
     if n.startswith(SKIP_PARAM_PREFIX) or any(tok in n for tok in SKIP_PARAM_SUBSTR):
+        return True
+    # ar-mezok parameterkent (Listaar, Fogyasztoi ar): termekenkent egyedi szam,
+    # az arat amugy is az index price_gross mezoje adja
+    if n.endswith("\u00e1r"):
         return True
     # gepi azonosito-mezok (CONNESTIC_ID, productid, sku_kod...): egyetlen szo,
     # amiben alahuzas van vagy "id"-re vegzodik - vasarloi szempontnak sosem az
