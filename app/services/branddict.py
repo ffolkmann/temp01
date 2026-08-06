@@ -30,7 +30,7 @@ import os
 import re
 import unicodedata
 
-__all__ = ["load_map", "detect_brand", "clean_message", "MAX_WORDS_DEFAULT"]
+__all__ = ["load_map", "detect_brand", "strip_brand", "clean_message", "MAX_WORDS_DEFAULT"]
 
 MAX_WORDS_DEFAULT = 4
 _cache: dict = {}  # path -> (mtime, data)
@@ -114,3 +114,42 @@ def detect_brand(message, bmap):
     ent = brands.get(best) or {}
     vals = ent.get("vals") if isinstance(ent, dict) else None
     return best, [str(v) for v in (vals or []) if str(v).strip()]
+
+
+# --- m82h/3: a markanev kivezetese az EMBEDELT kerdesbol ---------------------
+# A marka mar Qdrant must-feltetel, ezert a szurt poolban MINDEN termek
+# ugyanattol a markatol van -> a marka NEVE nulla informacio, viszont elnyomja
+# az ALTIPUST ("sator", "szaraz tap", "furo"). Meres (tools/m82h3_sweep.py):
+# "Milyen Delphin satratok van?" -> a rerank top-8-ban 0 sator; a markanev
+# nelkuli embeddel 6 (a bolt 21 elerheto sator-termeke kozul).
+_SPLIT = re.compile(r"([^0-9A-Za-z\u00c0-\u00ff]+)")
+_MIN_REST = 3
+
+
+def strip_brand(message, brand_key):
+    """A marka szavainak kivetele a szovegbol, TOKEN-szinten.
+
+    A maradek EKEZETES marad (ekezet nelkul gyenge az embed). Ha nem marad
+    ertelmes szoveg (< _MIN_REST alfanumerikus karakter, pl. tiszta
+    marka-kerdes: "Van Ryobi termeketek?" -> "Van termeketek?" meg jo, de
+    "Ryobi" -> ""), akkor "" a valasz es a hivo a mai embedet hasznalja.
+    """
+    words = {w for w in re.split(r"[^0-9a-z]+", _fold(brand_key)) if w}
+    if not words:
+        return ""
+    parts = _SPLIT.split(str(message or ""))
+    toks, seps = parts[0::2], parts[1::2]
+    keep = [_fold(t) not in words for t in toks]
+    out = []
+    for i, t in enumerate(toks):
+        if keep[i]:
+            out.append(t)
+        if i < len(seps):
+            # a szeparatort (pl. a "TP-Link" kotojelet) CSAK akkor tartjuk meg,
+            # ha mindket szomszedos szo megmaradt -- kulonben szokoz
+            nxt = keep[i + 1] if i + 1 < len(keep) else True
+            out.append(seps[i] if (keep[i] and nxt) else " ")
+    rest = "".join(out)
+    if len(re.sub(r"[^0-9A-Za-z\u00c0-\u00ff]+", "", rest)) < _MIN_REST:
+        return ""
+    return re.sub(r"\s{2,}", " ", rest).strip(" ,.-")

@@ -85,10 +85,30 @@ async def retrieve(
         )
     _wide82 = False  # m82c: facets-szurt poolnal a TELJES cimkezett halmaz kell (USAGE_WIDE_LIMIT)
     _topic = topic_of(message) if superlative else ""
+    # m82h/3: ha a marka mar MUST-feltetel, a marka NEVE kikerul az embedelt
+    # szovegbol -- a szurt poolban minden termek ugyanattol a markatol van,
+    # tehat a marka-jel nulla informacio, viszont elnyomja az ALTIPUST.
+    # Meres (tools/m82h3_sweep.py): "Milyen Delphin satratok van?" a top-8-ban
+    # 0 -> 6 sator; a pool-limit emelese NEM segit (300-nal 4 -- higitja a
+    # rerank lexikai jelet), ezert csak az embed valtozik.
+    _ein82h3 = embed_input
+    if _cons79c.get("brand") and not superlative:
+        try:
+            from app.services.branddict import strip_brand as _sb82h3
+            _rest82h3 = _sb82h3(embed_input, str(_cons79c.get("brand") or ""))
+            if _rest82h3:
+                _ein82h3 = _rest82h3
+                import logging as _lg82h3
+                _lg82h3.getLogger("cx.retrieval").info(
+                    "m82h3 brand-free embed: %r -> %r client=%s",
+                    embed_input[:80], _rest82h3[:80], client_id,
+                )
+        except Exception:  # noqa: BLE001 - fail-safe: marad a mai embed
+            pass
     if superlative and len(_topic) >= 3:
         vector = await embed_query(_topic)
     else:
-        vector = await embed_query(policy_embed_input(message, product_query_cleanup(embed_input)))
+        vector = await embed_query(policy_embed_input(message, product_query_cleanup(_ein82h3)))
     qdrant = get_qdrant()
     hits = await qdrant.search(
         vector=vector,
