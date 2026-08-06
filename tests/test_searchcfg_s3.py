@@ -92,7 +92,8 @@ def _form():
 
 def test_form_to_config_kanonikus_kulcsok():
     cfg = SC.form_to_config(_form())
-    assert set(cfg) == {"enabled", "synonyms", "oneway", "popular_terms", "popular_skus", "merch"}
+    assert set(cfg) == {"enabled", "synonyms", "oneway", "popular_terms", "popular_skus", "merch",
+                        "ai_answer", "ai_daily_cap", "ai_examples"}   # s6: AI-mezok
     assert cfg["enabled"] is True
     assert cfg["synonyms"] == [["karbon", "carbon"], ["felni", "kerek"]]
     assert cfg["popular_skus"] == ["TFM004-3BR", "TSL2902-A"]

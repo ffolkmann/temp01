@@ -270,6 +270,20 @@ def test_settings_db_hiba_eseten_is_valid_valasz(tmp_path):
     assert body["popular_terms"] == [] and body["popular_ids"] == []
 
 
+def test_event_atengedi_az_s6_esemenyeket(tmp_path):
+    """A fehérlista bovitese nelkul az AI-statisztika orokre nulla lenne."""
+    assert {"ss_answer", "ss_answer_click", "ss_hint"} <= SS.SEARCH_KINDS
+    for kind, meta in (
+        ("ss_answer", {"q": "melyik uleshuzat jo?", "total": 1, "extra": 1}),
+        ("ss_answer_click", {"q": "melyik uleshuzat jo?", "pid": "2400"}),
+        ("ss_hint", {"q": "melyik uleshuzat jo?", "extra": 2}),
+    ):
+        resp = _post({"client_id": "teslashop", "session_id": "ss-6",
+                      "event": kind, "meta": meta}, tmp_path)
+        assert resp.status_code == 204
+        assert len(LOGGED) == 1 and LOGGED[0][2] == kind
+
+
 def test_settings_ai_flag_alapbol_hamis(tmp_path):
     _with_cfg(_write_cfg(tmp_path, {"teslashop": {"enabled": True, "popular_terms": ["a"], "popular_skus": ["s"]}}))
     try:

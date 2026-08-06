@@ -187,6 +187,30 @@ def merch_to_text(rules):
 
 
 # --------------------------------------------------------------------------- #
+# AI-valasz (S6)
+# --------------------------------------------------------------------------- #
+MAX_EXAMPLES = 4
+DEFAULT_DAILY_CAP = 200
+
+
+def parse_examples(text):
+    """Soronkent egy peldakerdes a kereso ures allapotahoz (max 4)."""
+    return [_one(x, 80) for x in _lines(text)][:MAX_EXAMPLES]
+
+
+def parse_cap(value):
+    """Napi LLM-plafon: ures -> alapertelmezes, 0 = teljesen ki, felso hatar 5000."""
+    raw = _one(value, 12)
+    if raw == "":
+        return DEFAULT_DAILY_CAP
+    try:
+        n = int(float(raw.replace(" ", "")))
+    except (TypeError, ValueError):
+        return DEFAULT_DAILY_CAP
+    return max(0, min(n, 5000))
+
+
+# --------------------------------------------------------------------------- #
 # urlap <-> config
 # --------------------------------------------------------------------------- #
 def merge_preserving(old, new):
@@ -217,6 +241,9 @@ def form_to_config(form):
         "popular_terms": parse_terms(f.get("popular_terms")),
         "popular_skus": parse_skus(f.get("popular_skus")),
         "merch": parse_merch(f.get("merch")),
+        "ai_answer": _as_bool(f.get("ai_answer")),
+        "ai_daily_cap": parse_cap(f.get("ai_daily_cap")),
+        "ai_examples": parse_examples(f.get("ai_examples")),
     }
 
 
@@ -230,6 +257,9 @@ def config_to_form(cfg):
         "popular_terms": list_to_text(c.get("popular_terms")),
         "popular_skus": list_to_text(c.get("popular_skus")),
         "merch": merch_to_text(c.get("merch")),
+        "ai_answer": _as_bool(c.get("ai_answer")),
+        "ai_daily_cap": parse_cap(c.get("ai_daily_cap")),
+        "ai_examples": list_to_text(c.get("ai_examples")),
     }
 
 

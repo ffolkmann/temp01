@@ -52,7 +52,13 @@ logger = logging.getLogger("cx.search")
 router = APIRouter()
 
 DEFAULT_CONFIG_PATH = "data/smartsearch.json"
-SEARCH_KINDS = {"ss_search", "ss_click", "ss_purchase"}
+SEARCH_KINDS = {
+    "ss_search", "ss_click", "ss_purchase",
+    # S6 (AI-valasz sav): ss_answer = keszult-e sav (total 1/0, extra 1 = cache),
+    # ss_answer_click = az ajanlott termekre kattintottak, ss_hint = peldakerdes
+    # (extra 1 = ures allapot) vagy tipp (extra 2) hasznalata
+    "ss_answer", "ss_answer_click", "ss_hint",
+}
 POPULAR_DAYS = 30
 MAX_TERMS = 8
 MAX_PRODUCTS = 10

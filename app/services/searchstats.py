@@ -94,6 +94,55 @@ def purchases(purchase_rows, cap=50):
     return {"count": len(rows), "value": value, "rows": rows}
 
 
+def answers(answer_rows, click_total, hint_rows, word_rows):
+    """AI-valasz sav teljesitmenye (S6).
+
+    Sor-alakok:
+        answer_rows : (siker 0/1, cache 0/1, n)   -- ss_answer
+        click_total : darabszam                   -- ss_answer_click
+        hint_rows   : (forras 1/2, n)             -- ss_hint (1=ures allapot, 2=tipp)
+        word_rows   : ('q'|'s', n)                -- ss_search mondat/kulcsszo bontas
+    """
+    asked = answered = cached = 0
+    for row in answer_rows or []:
+        n = _i(row[2])
+        asked += n
+        if str(row[0] or "0").strip() == "1":
+            answered += n
+            if str(row[1] or "0").strip() == "1":
+                cached += n
+    zero_hint = tip_hint = 0
+    for row in hint_rows or []:
+        src = str(row[0] or "").strip()
+        if src == "1":
+            zero_hint += _i(row[1])
+        elif src == "2":
+            tip_hint += _i(row[1])
+    sentence = keyword = 0
+    for row in word_rows or []:
+        if str(row[0] or "").strip() == "q":
+            sentence += _i(row[1])
+        else:
+            keyword += _i(row[1])
+    clicks = _i(click_total)
+    return {
+        "asked": asked,
+        "answered": answered,
+        "answer_rate": _rate(answered, asked),
+        "cached": cached,
+        "cache_rate": _rate(cached, answered),
+        "clicks": clicks,
+        "click_rate": _rate(clicks, answered),
+        "hint_zero": zero_hint,
+        "hint_tip": tip_hint,
+        "hints": zero_hint + tip_hint,
+        "sentence": sentence,
+        "keyword": keyword,
+        "sentence_rate": _rate(sentence, sentence + keyword),
+        "active": bool(asked or zero_hint or tip_hint),
+    }
+
+
 def _cell(value):
     text = str(value if value is not None else "").replace("\r", " ").replace("\n", " ")
     if ";" in text or '"' in text:

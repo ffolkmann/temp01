@@ -125,6 +125,49 @@ _SS_PUR = (
 )
 
 
+_SS_ANS = (
+    "SELECT COALESCE(meta->>'total','0') ok, COALESCE(meta->>'extra','0') cached, COUNT(*) n "
+    "FROM events WHERE client_id=:c AND kind='ss_answer' "
+    "AND created_at > now() - (:d || ' days')::interval GROUP BY 1,2"
+)
+
+_SS_ANSCLICK = (
+    "SELECT COUNT(*) n FROM events WHERE client_id=:c AND kind='ss_answer_click' "
+    "AND created_at > now() - (:d || ' days')::interval"
+)
+
+_SS_HINT = (
+    "SELECT COALESCE(meta->>'extra','0') src, COUNT(*) n FROM events "
+    "WHERE client_id=:c AND kind='ss_hint' "
+    "AND created_at > now() - (:d || ' days')::interval GROUP BY 1"
+)
+
+# mondat-jellegu = 3+ szo VAGY kerdojel (ugyanaz a kuszob, mint a widget elo-szurojeben)
+_SS_WORDS = (
+    "SELECT CASE WHEN meta->>'q' LIKE '%?%' "
+    "OR COALESCE(array_length(regexp_split_to_array(btrim(meta->>'q'), '\\s+'), 1), 1) >= 3 "
+    "THEN 'q' ELSE 's' END w, COUNT(*) n FROM events "
+    "WHERE client_id=:c AND kind='ss_search' "
+    "AND created_at > now() - (:d || ' days')::interval "
+    "AND COALESCE(meta->>'q','') <> '' GROUP BY 1"
+)
+
+
+async def _ss_ai_rows(session: AsyncSession, cid: str, days: int = SS_WINDOW):
+    """s6: az AI-valasz sav esemenyei (hibara ures/nulla ertekek)."""
+    p = {"c": cid, "d": str(days)}
+    try:
+        return (
+            (await session.execute(text(_SS_ANS), p)).all(),
+            (await session.execute(text(_SS_ANSCLICK), p)).scalar() or 0,
+            (await session.execute(text(_SS_HINT), p)).all(),
+            (await session.execute(text(_SS_WORDS), p)).all(),
+        )
+    except Exception:  # noqa: BLE001 - az AI-blokk sem dontheti el a /stats-ot
+        logger.warning("stats: ai-valasz aggregacio hiba (%s)", cid)
+        return [], 0, [], []
+
+
 async def _ss_rows(session: AsyncSession, cid: str, days: int = SS_WINDOW):
     """s3: a kereso-esemenyek nyers aggregatumai (hibara ures listak)."""
     p = {"c": cid, "d": str(days)}
@@ -156,6 +199,9 @@ async def _smartsearch_block(session: AsyncSession, cid: str, days: int = SS_WIN
     block["devices"] = searchstats.devices(d_rows)
     block["purchases"] = searchstats.purchases(
         [(r[0], r[1], r[2], _iso(r[3])) for r in p_rows])
+    a_rows, a_clicks, h_rows, w_rows = await _ss_ai_rows(session, cid, days)
+    block["ai"] = searchstats.answers(a_rows, a_clicks, h_rows, w_rows)
+    block["active"] = block["active"] or block["ai"]["active"]
     return block
 
 
