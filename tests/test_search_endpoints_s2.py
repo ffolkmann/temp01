@@ -270,6 +270,25 @@ def test_settings_db_hiba_eseten_is_valid_valasz(tmp_path):
     assert body["popular_terms"] == [] and body["popular_ids"] == []
 
 
+def test_settings_ai_flag_alapbol_hamis(tmp_path):
+    _with_cfg(_write_cfg(tmp_path, {"teslashop": {"enabled": True, "popular_terms": ["a"], "popular_skus": ["s"]}}))
+    try:
+        body = _body(asyncio.run(SS.search_settings(client_id="teslashop", session=_Session())))
+    finally:
+        _clear_cfg()
+    assert body["ai"] is False
+
+
+def test_settings_ai_flag_a_db_configbol(tmp_path):
+    _with_cfg(_write_cfg(tmp_path, {}))
+    try:
+        sess = _CfgSession(cfg={"enabled": True, "ai_answer": True, "popular_terms": ["a"], "popular_skus": ["s"]})
+        body = _body(asyncio.run(SS.search_settings(client_id="teslashop", session=sess)))
+    finally:
+        _clear_cfg()
+    assert body["ai"] is True
+
+
 def test_settings_cache_header(tmp_path):
     _with_cfg(_write_cfg(tmp_path, {"teslashop": {"enabled": True, "popular_terms": ["a"], "popular_skus": ["s"]}}))
     try:

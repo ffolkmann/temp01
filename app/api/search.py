@@ -266,6 +266,9 @@ async def search_settings(
         "popular_skus": _str_list(cfg.get("popular_skus"), cap=MAX_PRODUCTS, maxlen=64),
         "popular_ids": [],
         "merch": active_merch(cfg.get("merch")),
+        # S6: a widget ebbol tudja, hogy kerjen-e AI-valaszt (a ?cxai=1 demo-kapcsolo
+        # ettol fuggetlenul mindig kerdez, a szerver ott a `force`-szal enged at)
+        "ai": bool(cfg.get("ai_answer")),
     }
     if cfg.get("enabled"):
         if not body["popular_terms"]:

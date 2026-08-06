@@ -643,7 +643,8 @@ async def admin(request: Request, session: AsyncSession = Depends(get_session)) 
         form = b.get("search") if isinstance(b.get("search"), dict) else {}
         cfg = searchcfg.form_to_config(form)
         old = t.search_config if isinstance(t.search_config, dict) else searchcfg.load_file_config(cid)
-        for _key in ("min_ratio", "only_available"):   # indexelo-kulcsok megorzese
+        for _key in ("min_ratio", "only_available", "ai_answer", "ai_daily_cap"):
+            # az urlapon nem szereplo kulcsok megorzese (indexelo + S6 AI-valasz)
             if isinstance(old, dict) and _key in old:
                 cfg[_key] = old[_key]
         t.search_config = cfg
