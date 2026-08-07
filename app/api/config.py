@@ -774,6 +774,32 @@ async def admin(request: Request, session: AsyncSession = Depends(get_session)) 
         st["client_id"] = kid
         return st
 
+    if action == "search_probe":
+        # kf/16: KAPCSOLAT-TESZT a bekapcsolás-varázsló 1. lépéséhez. A varázsló eddig
+        # csak azt látta, hogy az API-mezők ki vannak-e TÖLTVE — azt nem, hogy a kulcs
+        # MŰKÖDIK-e; az csak az index-buildnél derült ki, percekkel később.
+        # KÖNNYŰ próba: token + EGY lapnyi termék. A platform-kliensek fetch()-ét TILOS
+        # hívni, az a teljes katalógust húzza le (Shoprenteren ~7 perc).
+        from app.services import konfprobe   # lazy: lásd konf_get
+
+        kid = str(b.get("client_id") or "").strip().lower()
+        if not kid:
+            return {"error": "client_id required"}
+        t = await _get_tenant(session, kid)
+        if t is None:
+            return {"error": "not_found"}
+        try:
+            async with httpx.AsyncClient(timeout=konfprobe.TIMEOUT,
+                                         follow_redirects=True) as client:
+                out = await konfprobe.probe(t, t.search_config, client)
+        except Exception:  # noqa: BLE001 — a próba sosem törheti az admint
+            logging.getLogger("cx.konf").exception("search_probe: váratlan hiba (%s)", kid)
+            out = {"ok": False, "platform": str(t.platform or ""), "error": "unexpected",
+                   "detail": "Váratlan hiba a kapcsolat-teszt közben.", "shop": None,
+                   "product_count": None, "sample": None, "warn": None, "ms": 0}
+        out["client_id"] = kid
+        return out
+
     if action == "test_telegram":
         # m31: próbaüzenet a tenant chatId-jeire (saját bot, vagy a központi)
         cid = str(b.get("client_id") or "").strip().lower()
