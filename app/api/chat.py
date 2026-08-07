@@ -426,6 +426,53 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
                     raw = await generate_reply(_sp2, [], message, model=getattr(tenant, "chat_model", None))
             except Exception:  # noqa: BLE001 — az orseg hibaja ne torje a valaszt
                 pass
+
+        # m87: NEM-LATIN SZO-ORSEG. Eles ugyfel-bejelentes (notebookstore): a valaszban
+        # ukran/orosz szo jelent meg ("Fontos: ez a <cirill> ar a most elerheto adataim
+        # alapjan"). MERES (tools/m87_langscan.py, 3767 valodi tarolt valasz): 10 szivargas
+        # = 0,27% (notebookstore 1,0%), es a kontextus-kapu utan UGYANANNYI -> 0 hamis
+        # pozitiv, tehat az egyszeri regen koltsege elhanyagolhato (szemben a m77 62%-os
+        # tuzelesevel). A m77 tanulsaga: erre prompt-szabaly NEM eleg, kod-szintu
+        # utoellenorzes kell a mar legeneralt valaszon. Harom retegu: eszlel -> regen
+        # nyelvi hinttel -> ha az is szivarog, determinisztikus tisztitas.
+        try:
+            from app.services.langguard import foreign_tokens as _ft87
+            from app.services.langguard import strip_foreign as _sf87
+            _allow87 = " ".join(
+                str((_h.get("payload") or {}).get("name") or "")
+                + " " + str((_h.get("payload") or {}).get("text") or "")
+                for _h in (hits or []) if isinstance(_h, dict)
+            )
+            _bad87 = _ft87(raw or "", _allow87)
+            if _bad87:
+                logger.warning(
+                    "m87 langguard: nem-latin szo a valaszban %r -> regen (client=%s)",
+                    _bad87[:5], req.client_id)
+                _hint87 = (
+                    "\n\n# GUARD - NYELV (determinisztikus szabaly)\n"
+                    "A valasz KIZAROLAG magyar nyelvu es LATIN betus lehet. Cirill, gorog "
+                    "vagy barmilyen mas irasrendszeru karakter NEM szerepelhet benne."
+                )
+                if isinstance(system_prompt, (tuple, list)) and len(system_prompt) == 2:
+                    _sp87 = (system_prompt[0], (system_prompt[1] or "") + _hint87)
+                else:
+                    _sp87 = str(system_prompt) + _hint87
+                _raw87 = None
+                try:
+                    _raw87 = await generate_reply(
+                        _sp87, req.history, message,
+                        model=getattr(tenant, "chat_model", None))
+                except Exception:  # noqa: BLE001 — a regen hibaja ne torje a valaszt
+                    _raw87 = None
+                if _raw87 and not _ft87(_raw87, _allow87):
+                    raw = _raw87
+                else:
+                    logger.warning(
+                        "m87 langguard: a regen is szivargott -> determinisztikus tisztitas "
+                        "(client=%s)", req.client_id)
+                    raw = _sf87(_raw87 or raw, _allow87)
+        except Exception:  # noqa: BLE001 — az orseg hibaja ne torje a valaszt
+            pass
     except Exception as _llm_err:  # noqa: BLE001 — a widget mindig kapjon választ
         logger.exception("LLM hívás hiba")
         _fb = _FALLBACK_BUSY if getattr(_llm_err, "status_code", None) == 529 else _FALLBACK
