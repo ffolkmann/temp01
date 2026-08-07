@@ -20,7 +20,7 @@ from __future__ import annotations
 import re
 import unicodedata
 
-__all__ = ["extract_params", "detect_constraints", "build_filter_conditions"]
+__all__ = ["extract_params", "category_tags", "detect_constraints", "build_filter_conditions"]
 
 
 def _fold(s: str) -> str:
@@ -34,7 +34,68 @@ def _fold(s: str) -> str:
 # webdoc nev-minta: 'Maximum 17.3" meretu notebookokhoz' (fold utan)
 _RE_MERET_NAME = re.compile(r"maximum\s+(\d{1,2}(?:[.,]\d)?)\s*[\"\u2033']?\s*meretu")
 # text-minta: 'Kategoria: Kiegeszitok > Notebook taska, hatizsak.' (eredeti, ekezetes)
-_RE_CATEGORY = re.compile(r"kateg[o\u00f3]ria:[ \t]*([^\n]+)", re.IGNORECASE)
+# m86 POZICIO-KAPU: a builder a kategoriat MINDIG a nev/ar/(keszlet)/marka szegmens
+# UTAN irja (". Kategoria: ..."), a termek-LEIRASBAN viszont elofordul ugyanilyen
+# SPEC-SOR -- merve (tools/m86_fpdiag.py) a 4 Shoprenter tenanton, ahol a builder
+# egyaltalan NEM ir kategoriat: "Kategoria: 6a" (halozati aljzat), "Kategoria:
+# minnowbait; ..." (wobbler), "Kategoria: R12, R134a, ..." (hutokozeg-kompatibilitas).
+# Ezert a match a builder POZICIOJAHOZ kotott: szoveg-eleje (szintetikus/m79c alak),
+# vagy "... Ft." / "...)." / "Marka: X." utan.
+_RE_CATEGORY = re.compile(
+    r"(?:\A|\bFt\b|\)|m\u00e1rka:[^.\n]{1,80})[.]?[ \t]*kateg[o\u00f3]ria:[ \t]*([^\n]+)",
+    re.IGNORECASE)
+# m86 ERTEK-HIGIENIA (m82g-minta: ne ertekenkent foltozzunk, hanem OSZTALY-szintu alakra
+# szurjunk): a valodi kategoria-nev nem tartalmaz spec-elvalasztot.
+_RE_CAT_JUNK = re.compile(r"[;:\u2022]|&nbsp;")
+# m86: az Unas builder a kategoriat ZAROJELBEN irja, 'Kategoria:' prefix NELKUL,
+# '|'-elvalasztasu utkent:  "NEV <emdash> 3190 Ft (Epitkezes |Keziszerszam| Fogo)".
+# A tobbi platform UGYANEBBE a pozicioba keszlet/elerhetoseg-jelzot ir
+# ("(rendelheto, keszlet: 0 db)", "(raktaron)", "(jelenleg nincs raktaron)"),
+# ezert a szo-kapu KOTELEZO -- e nelkul a Shoprenter/webdoc textbol keszlet-szoveg
+# kerulne a category payloadba. A 'Kategoria:' prefixes alak MINDIG elsobbseget elvez.
+_RE_CAT_PAREN = re.compile(r"\sFt\s*\(([^()]{2,160})\)\s*(?:\.|$)")
+_RE_CAT_STOCKWORD = re.compile(
+    r"k\u00e9szlet|rakt\u00e1ron|rendelhet|inakt\u00edv|akci\u00f3s", re.IGNORECASE)
+_CAT_TAG_MIN = 3   # 2 karakteres resz-nev (pl. 'TV') tul altalanos szuro lenne
+_CAT_TAG_MAX = 12
+
+
+def _paren_category(text: str) -> str:
+    """m86: kategoria a zarojeles (Unas) alakbol; keszlet-szoveg eseten ""."""
+    m = _RE_CAT_PAREN.search(text or "")
+    if not m:
+        return ""
+    raw = m.group(1).strip()
+    if _RE_CAT_STOCKWORD.search(raw):
+        return ""
+    return " > ".join(x.strip() for x in raw.split("|") if x.strip())
+
+
+def _cat_ok(cat: str) -> bool:
+    """m86: alak-alapu kapu a leirasbol szarmazo spec-sorra (lasd _RE_CAT_JUNK)."""
+    return len(cat) >= _CAT_TAG_MIN and not _RE_CAT_JUNK.search(cat)
+
+
+def category_tags(category) -> list:
+    """m86: a kategoria-ertek RESZ-nevei -- kulon keyword-ertekek a Qdrantban.
+
+    A webdoc HIERARCHIA-utat ir ("Nyomtato > Tintapatron, toner"), a Sellvio/Woo
+    builder viszont ', '-vel osszefuzott LISTAT ("Model Y (2020-2025), Model Y,
+    Karbonszalas"). A kombinalt string mint szuro-ertek HASZNALHATATLAN (merve,
+    tools/m86_catgate.py: teslashop 0% feloldas, nagyonallatshop 0%), a resz-nevekre
+    bontva viszont mukodik (24% / 11%, median fedes 98/5289 ill. 550/1580).
+    Ezert a `category` string VALTOZATLAN marad -- arra epul a teljes m82-es sav --,
+    es a kategoria-kapu egy KULON, listas payload-kulcsot kap (`cat_tags`).
+    """
+    out = []
+    for seg in str(category or "").split(">"):
+        for part in seg.split(","):
+            part = part.strip().rstrip(".").strip()
+            if len(part) >= _CAT_TAG_MIN and part not in out:
+                out.append(part)
+                if len(out) >= _CAT_TAG_MAX:
+                    return out
+    return out
 
 # m82g: a kezi _COLORS lista KIVEZETVE -- a kerdes-oldali szint a crawl-olt
 # generikus szotar (facetdict, `szin` attributum) ismeri fel, kategoria-kapuval
@@ -77,6 +138,7 @@ def extract_params(name: str, text: str = "") -> dict:
                 break
 
     if text:
+        cat = ""
         mc = _RE_CATEGORY.search(text)
         if mc:
             cat = mc.group(1)
@@ -84,7 +146,14 @@ def extract_params(name: str, text: str = "") -> dict:
             cut = cat.find(". ")
             if cut != -1:
                 cat = cat[:cut]
-            out["category"] = cat.strip().rstrip(".").strip()
+            cat = cat.strip().rstrip(".").strip()
+        else:
+            cat = _paren_category(text)          # m86: Unas zarojeles alak
+        if cat and _cat_ok(cat):                 # m86: pozicio- ES alak-kapu
+            out["category"] = cat
+            tags = category_tags(cat)            # m86
+            if tags:
+                out["cat_tags"] = tags
     return out
 
 

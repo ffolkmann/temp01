@@ -35,6 +35,28 @@ async def category_catalog(client_id: str) -> list[str]:
     return vals
 
 
+# m86: a KATEGORIA-KAPU facet-terkep NELKUL. A `cat_tags` listas payload kategoria-
+# NEVEKET tartalmaz (paramextract.category_tags), tehat onmagaban is eleg szotarnak.
+# A facet API a listas keyword-mezo EGYEDI ertekeit adja, gyakorisag szerint.
+_CAT_TAG_LIMIT = 400
+_cattag_cache: dict[str, tuple[float, list[str]]] = {}
+
+
+async def cat_tag_catalog(client_id: str) -> list[str]:
+    """A tenant kulonbozo `cat_tags` payload-ertekei (cache-elt; hiba -> [])."""
+    import time as _time
+    now = _time.monotonic()
+    hit = _cattag_cache.get(client_id)
+    if hit and (now - hit[0]) < _CATALOG_TTL:
+        return hit[1]
+    try:
+        vals = await get_qdrant().facet_values("cat_tags", client_id, limit=_CAT_TAG_LIMIT)
+    except Exception:  # noqa: BLE001 — katalogus nelkul csak a kategoria-kapu esik ki
+        return hit[1] if hit else []
+    _cattag_cache[client_id] = (now, vals)
+    return vals
+
+
 async def retrieve(
     embed_input: str,
     message: str,
@@ -197,6 +219,52 @@ async def retrieve(
                     _pextra = (_pextra or []) + _fc82
                     _wide82 = True
         except Exception:  # noqa: BLE001 — a facet-szures hibaja ne torje a chatet
+            pass
+    # m86: KATEGORIA-KAPU facet-TERKEP NELKUL. A fenti m82b-s ut kotelezoen crawl-olt
+    # facet-terkepet igenyel (linkfacet.load_map), az viszont CSAK a notebookstore-ra
+    # letezik -- a tobbi 11 tenanton a kerdesben megnevezett kategoria eddig SEMMIT nem
+    # szurt. MERES (tools/m86_catgate.py, valodi kerdes-korpusz): teslashop a kerdesek
+    # 24%-ara old fel kategoriat (median fedes 98 termek az 5289-bol), kellegyszerszam
+    # 13% (59/15461), nagyonallatshop 11% (550/1580).
+    # Csak akkor fut, ha a facets-ut NEM szurt (ott mar van kategoria-feltetel);
+    # ures szurt talalat -> valtozatlan pool (fail-safe).
+    if hits and not _wide82 and (superlative or _plain82):
+        try:
+            from app.services.facetdict import detect_category as _dcat86
+            from app.services.linkfacet import load_map as _lm86
+            # m86 HATOKOR: csak ott, ahol NINCS crawl-olt facet-terkep. Ahol van
+            # (ma: notebookstore), ott a m82-es sav a gazda -- az attributum-szintu
+            # szures pontosabb, es a teljes onboarding-keszlet arra van hangolva;
+            # ket parhuzamos kategoria-mechanizmus csak zajt vinne bele.
+            # KOCKAZAT-TERKEP (tools/m86_gate_sweep.py, valodi korpusz): a kapu
+            # kellegyszerszam 71 kerdesre old fel kategoriat, ebbol ~6 hamis
+            # ("csavarhuzo" -> Csavar, "anyagbol" -> Anya) a facetdict 4 betus
+            # toldalek-turese miatt; teslashop 7/7 tiszta; nagyonallatshop 27,
+            # tulnyomorest a szeles "Kutya" (914/1580 = alig szur).
+            _qcat86 = "" if _lm86(client_id) else _dcat86(message, await cat_tag_catalog(client_id))
+            if _qcat86:
+                _fc86 = [{"key": "cat_tags", "match": {"value": _qcat86}}]
+                _lim86 = max(WIDE_LIMIT, _settings.retrieval_top_k) if superlative \
+                    else _settings.retrieval_top_k
+                _fh86 = await qdrant.search(
+                    vector=vector, client_id=client_id, limit=_lim86,
+                    product_only=False, extra_must=(_pextra or []) + _fc86,
+                )
+                import logging as _lg86
+                _lg86.getLogger("cx.retrieval").info(
+                    "m86 category gate: cat=%r mode=%s -> %d hit (client=%s)",
+                    _qcat86, ("super" if superlative else "plain"), len(_fh86), client_id,
+                )
+                if _fh86:
+                    if superlative:
+                        hits = _fh86
+                    else:
+                        # m82d minta: plain modban CSAK a termek-halmaz cserelodik,
+                        # a KB/doksi-talalatok bennmaradnak.
+                        hits = _fh86 + [h for h in hits if not _isprod82(h)]
+                    _pextra = (_pextra or []) + _fc86
+                    _wide82 = True
+        except Exception:  # noqa: BLE001 — a kategoria-kapu hibaja ne torje a chatet
             pass
     hits = filter_for_policy(message, hits)
     # m38: szuperlativusznal a rerank relevancia-sorrendje okozta az onellentmondast

@@ -31,6 +31,11 @@ _PAYLOAD_INDEXES: dict[str, str] = {
     # kategoriaban is el), a bolt szuro-oldala viszont kategoria-szintu ->
     # a facets-szures melle kategoria-feltetel megy, ahhoz index kell.
     "category": "keyword",
+    # m86: a `category` a webdocnal HIERARCHIA-ut, a Sellvio/Woo buildernel viszont
+    # ', '-vel osszefuzott LISTA -> kapu-ertekkent hasznalhatatlan. A `cat_tags`
+    # ugyanannak a kategorianak a RESZ-nevei kulon keyword-ertekekkent
+    # (paramextract.category_tags), igy a kategoria-kapu facet-TERKEP NELKUL is megy.
+    "cat_tags": "keyword",
 }
 
 
@@ -75,6 +80,28 @@ class QdrantClient:
         )
         r.raise_for_status()
         return r.json().get("result", [])
+
+    async def facet_values(self, key: str, client_id: str, limit: int = 300) -> list[str]:
+        """m82c/2: egy payload-kulcs KULONBOZO ertekei (Qdrant facet API, 1.12+).
+
+        A kategoria-szandek feloldasahoz a tenant valodi `category` ertekei
+        kellenek: a crawl-terkep csak slugot ismer, a Qdrant-feltetelhez
+        viszont a pontos payload-ertek kell. Csak keyword-indexelt mezore megy
+        (a `category` m82c/1 ota az).
+        """
+        body = {
+            "key": key,
+            "limit": limit,
+            "exact": True,
+            "filter": {"must": [
+                {"key": "client_id", "match": {"value": client_id}},
+                {"key": "type", "match": {"value": "product"}},
+            ]},
+        }
+        r = await self._client.post(f"/collections/{self.collection}/facet", json=body)
+        r.raise_for_status()
+        hits = (r.json().get("result") or {}).get("hits") or []
+        return [str(h.get("value")) for h in hits if h.get("value")]
 
     async def facet_values(self, key: str, client_id: str, limit: int = 300) -> list[str]:
         """m82c/2: egy payload-kulcs KULONBOZO ertekei (Qdrant facet API, 1.12+).
