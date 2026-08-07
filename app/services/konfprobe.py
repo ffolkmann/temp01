@@ -158,14 +158,25 @@ def sellvio_shape(body):
 _SR_COUNT_KEYS = ("count", "itemCount", "total", "itemsTotal")
 
 
-def sr_shape(body):
-    """(product_count|None, sample) a Shoprenter lista-válaszból."""
+def sr_shape(body, limit=None):
+    """(product_count|None, sample) a Shoprenter lista-válaszból.
+
+    kf/16a: a Shoprenter NEM ad darabszám-mezőt, viszont ad `pageCount`-ot, és
+    limit=1 mellett az PONTOSAN a termékek száma. Mérve 2026-08-07-én mind a 4
+    SR bolton (copygo 59740 = 2987*20, acpont 1335 = 67*20 = ceil(/200)*..,
+    ecowindoor 140, horgaszoutlet 128685) — ezért csak limit=1-nél használjuk.
+    """
     body = body if isinstance(body, dict) else {}
     inner = body.get("response") if isinstance(body.get("response"), dict) else {}
     items = [i for i in (body.get("items") or inner.get("items") or []) if isinstance(i, dict)]
     for src in (body, inner):
         for k in _SR_COUNT_KEYS:
             n = _int(src.get(k))
+            if n is not None:
+                return n, len(items)
+    if limit == 1:
+        for src in (body, inner):
+            n = _int(src.get("pageCount"))
             if n is not None:
                 return n, len(items)
     return None, len(items)
@@ -312,8 +323,11 @@ async def _probe_shoprenter(client, c):
     err, msg = status_error(getattr(r2, "status_code", 0))
     if err:
         return _res("shoprenter", False, err, msg, shop=shop)
-    cnt, sample = sr_shape(_json(r2))
+    cnt, sample = sr_shape(_json(r2), limit=1)   # kf/16a: pageCount == termékszám
     out = _ok("shoprenter", cnt, sample, shop=shop)
+    if cnt is not None:
+        out["detail"] += (" Ez a teljes katalógus — az index csak a beállított "
+                          "kategóriákra szűr.")
     if not c["sr_categories"]:
         # kf/6 tanulsága: kategória-lista nélkül a build "nincs kategoria-lista"-ra hasal el
         out["warn"] = ("A kapcsolat jó, de nincs kategória-lista "

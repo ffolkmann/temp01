@@ -194,6 +194,24 @@ def test_sellvio_shape():
     assert kp.sellvio_shape({"data": "nem-dict"}) == (None, 0)
 
 
+def test_sr_shape_pagecount_csak_limit1_nel():
+    """kf/16a: limit=1-nél a pageCount PONTOSAN a termékszám (mérve 4 SR bolton)."""
+    b = {"items": [{"id": 1}], "pageCount": 59740}
+    assert kp.sr_shape(b, limit=1) == (59740, 1)
+    assert kp.sr_shape(b) == (None, 1)              # limit nelkul NEM hasznaljuk
+    assert kp.sr_shape(b, limit=200) == (None, 1)   # 200-as lapnal a pageCount NEM darabszam
+    # ha megis van igazi szamlalo-mezo, AZ nyer
+    assert kp.sr_shape({"count": 7, "items": [], "pageCount": 99}, limit=1) == (7, 0)
+
+
+async def test_probe_shoprenter_pagecountbol_szamol():
+    c = _sr_client(gets={"/productExtend": R(200, {"items": [{"id": 1}], "pageCount": 59740})})
+    r = await kp.probe(SR, {"shoprenter": {"categories": [3408]}}, c)
+    assert r["ok"] and r["product_count"] == 59740
+    assert "59740" in r["detail"]
+    assert "teljes katalógus" in r["detail"]        # nem tevesztheto ossze az index szamaval
+
+
 def test_sr_shape():
     assert kp.sr_shape({"count": 652, "items": [{"id": 1}]}) == (652, 1)
     assert kp.sr_shape({"response": {"itemCount": 22, "items": [{"id": 1}]}}) == (22, 1)
