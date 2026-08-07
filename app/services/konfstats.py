@@ -64,6 +64,24 @@ SQL_LEADS = (
 )
 
 
+SQL_DAILY = (
+    "SELECT (created_at AT TIME ZONE 'Europe/Budapest')::date AS d, kind, "
+    "count(DISTINCT session_id) AS s "
+    "FROM events "
+    "WHERE client_id = :cid "
+    "AND kind IN ('kf_step','kf_start','kf_done','kf_lead') "
+    + _WINDOW +
+    "GROUP BY 1, 2 ORDER BY 1"
+)
+
+SQL_LEADS_DAILY = (
+    "SELECT (created_at AT TIME ZONE 'Europe/Budapest')::date AS d, count(*) AS c "
+    "FROM leads WHERE client_id = :cid AND source = 'configurator' "
+    + _WINDOW +
+    "GROUP BY 1 ORDER BY 1"
+)
+
+
 def clamp_days(v, default=DEFAULT_DAYS):
     """Idoszak napokban, 1..365 koze szoritva (szemetre az alapertelmezes)."""
     try:
@@ -193,3 +211,61 @@ def shape(funnel_rows, step_rows=None, top_rows=None, leads_n=0, questions=None,
         "top": top,
         "has_step_data": any(s["reach"] for s in steps),
     }
+
+
+def daily(rows, lead_rows=None):
+    """Napi bontas a tolcserbol: [{d, shown, start, done, lead}], datum szerint NOVEKVO.
+
+    - `shown` itt is a max(kf_step, kf_start) elvet koveti (lasd shape() / kf/11a).
+    - A lead napi szama a ket forras (kf_lead beacon, leads tabla) MAXIMUMA — ugyanaz
+      a logika, mint az osszesitesnel.
+    - A datum a szerver Europe/Budapest szerinti napja (a SQL-ben konvertalunk), hogy
+      a tabla azt mutassa, amit a felhasznalo nap kozben lat.
+    - Az ejfelen atnyulo session ahhoz a naphoz szamit, amikor az esemenye keletkezett:
+      napi TRENDHEZ ez eleg, pontos kohorsz-elemzeshez nem.
+    """
+    acc = {}
+
+    def sor(key):
+        return acc.setdefault(key, {"d": key, "shown": 0, "start": 0, "done": 0, "lead": 0})
+
+    def oszlopok(r, n):
+        if r is None:
+            return None
+        try:
+            v = list(r)
+        except TypeError:
+            return None
+        return v if len(v) >= n else None
+
+    for r in rows or []:
+        v = oszlopok(r, 3)
+        if not v:
+            continue
+        key = str(v[0] or "")[:10]
+        kind = str(v[1] or "")
+        if len(key) != 10 or kind not in KINDS:
+            continue
+        row = sor(key)
+        if kind == "kf_step":
+            row["shown"] = max(row["shown"], _i(v[2]))
+        elif kind == "kf_start":
+            row["start"] = max(row["start"], _i(v[2]))
+        elif kind == "kf_done":
+            row["done"] = max(row["done"], _i(v[2]))
+        elif kind == "kf_lead":
+            row["lead"] = max(row["lead"], _i(v[2]))
+
+    for r in lead_rows or []:
+        v = oszlopok(r, 2)
+        if not v:
+            continue
+        key = str(v[0] or "")[:10]
+        if len(key) != 10:
+            continue
+        row = sor(key)
+        row["lead"] = max(row["lead"], _i(v[1]))
+
+    for row in acc.values():
+        row["shown"] = max(row["shown"], row["start"])   # aki elkezdte, latta is
+    return [acc[k] for k in sorted(acc)][-92:]
