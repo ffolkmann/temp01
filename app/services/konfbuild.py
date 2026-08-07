@@ -1,4 +1,4 @@
-"""kf/13: adminbol inditott index-build — keres-fajl + eredmeny-fajl.
+"""kf/13: adminbol inditott index-build — keres-, futas- es eredmeny-fajl.
 
 MIERT FAJL, ES NEM KOZVETLEN INDITAS: az index-buildet a HOST inditja
 (`docker compose run --rm ... python -m app.search`), a futo API-konteneribol
@@ -7,9 +7,16 @@ RW mount -> a kerest egy fajl hordozza, amit a `cx-index-build.path` systemd
 unit figyel, es a `cx-index-build.sh` dolgoz fel (ugyanazzal a flock-kal, mint
 az ejszakai cx-search-sync, tehat sosem fut ket build egyszerre).
 
-    data/index_build.request  ->  egy sor: "<tenant> <unix_ts>"
+    data/index_build.request  ->  "<tenant> <unix_ts>"   (sorban all)
+    data/index_build.running  ->  "<tenant> <start_ts>"  (eppen epul)
     data/index_build.result   ->  {"tenant","ok","started_at","finished_at",
-                                   "count","v","note"}
+                                   "count","v","rc","note"}
+
+kf/13a — a FUTAS-JELZO tanulsaga: a build ~7 perc, a keres-fajlt viszont a host
+masodpercek alatt elviszi. Futas-jelzo nelkul az admin a build kozben "nincs
+semmi"-t latott, es a pending-kapu nem vedett: az eles E2E-n ket build allt be
+egymas utan. Ezert a script eloszor a .running-ot irja ki, es csak az EREDMENY
+kiirasa utan torli.
 
 A modul stdlib-only es tesztelheto: minden fuggveny kaphat sajat data_dir-t,
 alapertelmezes a CX_DATA_DIR env, azutan a repo-relativ "data" (mint a
@@ -22,9 +29,11 @@ import time
 from typing import Any
 
 REQUEST_NAME = "index_build.request"
+RUNNING_NAME = "index_build.running"
 RESULT_NAME = "index_build.result"
 COOLDOWN_SEC = 120     # ket kezi build kozott ennyit varunk (tenantonkent)
-STALE_SEC = 1800       # ennyi utan a fuggo kerest elakadtnak tekintjuk
+STALE_SEC = 1800       # ennyi utan a fuggo/futo allapotot elakadtnak tekintjuk
+                       # (a mert futasido ~7 perc, tehat bo tartalek)
 
 _SAFE = re.compile(r"^[a-z0-9_-]{1,64}$")
 
@@ -41,10 +50,10 @@ def _path(name: str, dd: str | None = None) -> str:
     return os.path.join(data_dir(dd), name)
 
 
-def read_request(dd: str | None = None) -> tuple[str, int]:
-    """A fuggo keres: (tenant, unix_ts). Ha nincs vagy ertelmetlen: ("", 0)."""
+def _read_pair(name: str, dd: str | None = None) -> tuple[str, int]:
+    """"<tenant> <ts>" alaku jelzo-fajl. Hianyzo/ertelmetlen -> ("", 0)."""
     try:
-        with open(_path(REQUEST_NAME, dd), encoding="utf-8") as f:
+        with open(_path(name, dd), encoding="utf-8") as f:
             raw = f.read(256)
     except OSError:
         return "", 0
@@ -60,6 +69,16 @@ def read_request(dd: str | None = None) -> tuple[str, int]:
     return parts[0].strip().lower(), ts
 
 
+def read_request(dd: str | None = None) -> tuple[str, int]:
+    """A sorban allo keres: (tenant, unix_ts)."""
+    return _read_pair(REQUEST_NAME, dd)
+
+
+def read_running(dd: str | None = None) -> tuple[str, int]:
+    """Az eppen futo build: (tenant, start_ts)."""
+    return _read_pair(RUNNING_NAME, dd)
+
+
 def read_result(dd: str | None = None) -> dict[str, Any] | None:
     """A legutobbi befejezett build eredmenye (globalis, egy fajl)."""
     try:
@@ -71,17 +90,26 @@ def read_result(dd: str | None = None) -> dict[str, Any] | None:
 
 
 def state(cid: Any, dd: str | None = None, now: float | None = None) -> dict[str, Any]:
-    """A tenant build-allapota az adminnak. Sosem dob kivetelt."""
+    """A tenant build-allapota az adminnak. Sosem dob kivetelt.
+
+    pending = sorban all, running = eppen epul, busy_with = MAS tenant foglalja.
+    """
     ts_now = int(now if now is not None else time.time())
     cid = str(cid or "").strip().lower()
     pend, pts = read_request(dd)
+    run, rts = read_running(dd)
     res = read_result(dd) or {}
-    mine = bool(pend) and pend == cid
+    mine_p = bool(pend) and pend == cid
+    mine_r = bool(run) and run == cid
+    other = (run if (run and not mine_r) else (pend if (pend and not mine_p) else ""))
     out: dict[str, Any] = {
-        "pending": mine,
-        "queued_at": pts if mine else 0,
-        "stale": bool(mine and pts and ts_now - pts > STALE_SEC),
-        "busy_with": pend if (pend and not mine) else "",
+        "pending": mine_p,
+        "running": mine_r,
+        "queued_at": pts if mine_p else 0,
+        "started_at": rts if mine_r else 0,
+        "stale": bool((mine_p and pts and ts_now - pts > STALE_SEC)
+                      or (mine_r and rts and ts_now - rts > STALE_SEC)),
+        "busy_with": other,
         "last": res if str(res.get("tenant") or "").lower() == cid else None,
         "cooldown": 0,
     }
@@ -99,9 +127,13 @@ def request_build(cid: Any, dd: str | None = None,
     if not valid_tenant(cid):
         return False, {"error": "bad_tenant"}
     st = state(cid, dd, ts_now)
-    if st["pending"] and not st["stale"]:
-        st["error"] = "pending"
-        return False, st
+    if not st["stale"]:
+        if st["running"]:
+            st["error"] = "running"
+            return False, st
+        if st["pending"]:
+            st["error"] = "pending"
+            return False, st
     if st["busy_with"]:
         st["error"] = "busy"
         return False, st
