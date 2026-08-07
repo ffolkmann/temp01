@@ -62,7 +62,7 @@ def ask(client, msg, sid):
         return None, time.time() - t0, "%s: %s" % (type(e).__name__, e)
 
 
-def gate_lines(seconds):
+def gate_lines(seconds=900):
     p = subprocess.run(["docker", "logs", "chatbot-api-prod", "--since", "%ds" % seconds],
                        capture_output=True, text=True)
     blob = (p.stdout or "") + (p.stderr or "")
@@ -71,8 +71,11 @@ def gate_lines(seconds):
 
 ok = bad = 0
 for tag, client, msg, expect, forbid in CASES:
+    before = gate_lines()
     d, dt, err = ask(client, msg, "%s-%s" % (SID, tag))
-    lines = gate_lines(25)
+    time.sleep(1)
+    # PILLANATKEP-DIFF: csak az EHHEZ a kerdeshez tartozo uj sorok szamitanak
+    lines = gate_lines()[len(before):]
     txt = " || ".join(lines)
     good = True
     if expect is not None and expect.lower() not in txt.lower():
