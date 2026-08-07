@@ -39,6 +39,24 @@ class SourceProduct:
     ps_hash_str: str = ""          # webdoc: ár/készlet ujjlenyomat (a külön PriceStock Fast-hez)
 
 
+def derive_available(available, stock_str: str = ""):
+    """m84: EGYSEGES keszlet-jel — a Qdrant `available_only` szuroje csak a bool
+    `available` mezore megy, a `stock` viszont string payload (range-szuro nincs
+    rajta). Ha a platform nem ad available-t (Shoprenter/Unas), a szamszeru
+    stockbol szarmaztatjuk — ugyanaz a szabaly, mint a superlative.availability().
+    Ures vagy nem szamszeru stock -> None: NEM irunk mezot (nincs keszlet-adat).
+    """
+    if available is not None:
+        return bool(available)
+    raw = str(stock_str or "").replace(" ", "").replace(",", ".")
+    if not raw:
+        return None
+    try:
+        return float(raw) > 0
+    except ValueError:
+        return None
+
+
 def build_payload(client_id: str, p: SourceProduct) -> dict:
     """A chat által olvasott payload + platform-specifikus mezők (a node-okkal egyezve).
 
@@ -62,8 +80,9 @@ def build_payload(client_id: str, p: SourceProduct) -> dict:
         payload[p.platform_id_field] = p.platform_id_value
     if p.stock_str != "":
         payload["stock"] = p.stock_str
-    if p.available is not None:          # webdoc: synced készlet-bool
-        payload["available"] = p.available
+    _av84 = derive_available(p.available, p.stock_str)  # m84
+    if _av84 is not None:
+        payload["available"] = _av84
     if p.ps_hash_str:                    # webdoc: ár/készlet ujjlenyomat
         payload["ps_hash"] = p.ps_hash_str
     payload.update(extract_params(p.name, p.text))  # m79c: parameter-mezok (csak kinyert kulcsok)

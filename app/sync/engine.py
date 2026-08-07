@@ -178,9 +178,11 @@ async def sync_tenant(tenant: "Tenant", *, dry_run: bool = False) -> dict:
 
 def _ps_payload(p) -> dict:
     """A PriceStock Fast set_payload MERGE mezői: csak price/available/text/ps_hash (vektor érintetlen)."""
+    from app.sync.models import derive_available  # m84
     payload = {"price": p.price, "text": p.text, "ps_hash": p.ps_hash_str}
-    if p.available is not None:
-        payload["available"] = p.available
+    _av84 = derive_available(p.available, p.stock_str)  # m84: SR/Unas stockbol is legyen bool keszlet-jel
+    if _av84 is not None:
+        payload["available"] = _av84
     if p.stock_str != "":
         payload["stock"] = p.stock_str  # m58: SR/Unas stock a PS-merge-ben is (eddig kimaradt -> elavulhatott)
     return payload
