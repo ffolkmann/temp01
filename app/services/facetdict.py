@@ -278,6 +278,50 @@ def _cat_parts(category):
     return out
 
 
+# m86/1: SZIMMETRIKUS ILLESZTES. A zaro rag-keret (_CAT_SUFFIX) eddig CSAK a
+# KERDES oldalan mukodott: a kategoria-nev kaphatott plusz ragot a kerdesben, de
+# a kategoria-nev SAJAT tobbes jelet nem lehetett elhagyni. Ezert a "Csavarhuzo
+# keszlet" kerdes a generikus `Csavar`-ra (436 db) allt be, holott a
+# `Csavarhuzok` kategoria ott van a katalogusban (190 db): a rovidebb, generikus
+# nev nyert. Megoldas: a nev utolso tokenjenek magyar tobbes jele (-k, ill.
+# kotohangzoval -ok/-ak/-ek/-ok/-uk) ALTERNATIVAKENT elhagyhato.
+#
+# KET KORLAT, mindketto MERVE (tools/m86n1_sweep.py):
+#  (1) ADDITIV, nem csere: az alternacioban a TELJES alak all elol, ezert a mai
+#      illeszkedes valtozatlan es csak UJ illeszkedes johet be. A CSERE-s
+#      valtozat 4 REGRESSZIOT okozott a notebookstore-on (koztuk a m82e
+#      "videokartyas notebookotok" es a m82g "szurke hatizsakotok" esete), mert
+#      a rovidebb to MEGESZI a 4 karakteres rag-keretet: "notebookotok" ->
+#      "notebo" utan 6 karakter marad -> a zaro lookahead elbukik.
+#  (2) _CAT_STEM_MIN: rovid tovel a levagas MAS SZOT csinal (ez a m82c/3
+#      _SUF_MIN tanulsaga a masik oldalrol): "kellek" -> "kelle" illeszkedne a
+#      "kellene"/"kellenek" szavakra -- merve 11 hamis feloldas a valodi
+#      kerdes-korpuszon, ezert a kuszob 6 (5-nel mar bejon a hiba).
+_CAT_STEM_MIN = 6
+_PLUR_VOWELS = "aeiou"
+
+
+def _cat_stem(toks):
+    """A tobbes jel nelkuli utolso token, ha eleg hosszu to marad (kulonben "").
+
+    A kotohangzos alakot (-ok/-ak/-ek) preferalja, mert az adja a valodi tovet
+    ("eledelek" -> "eledel"); ha az mar tul rovid lenne, csak a -k esik le
+    ("kutyak" -> "kutya").
+    """
+    last = toks[-1]
+    if len(last) < 2 or not _fold(last).endswith("k"):
+        return ""
+    b1 = last[:-1]
+    f1 = _fold(b1)
+    if f1 and f1[-1] in _PLUR_VOWELS and len(b1) >= 2:
+        b2 = b1[:-1]
+        if len(_norm_key(" ".join(toks[:-1] + [b2]))) >= _CAT_STEM_MIN:
+            return b2
+    if len(_norm_key(" ".join(toks[:-1] + [b1]))) >= _CAT_STEM_MIN:
+        return b1
+    return ""
+
+
 def _cat_rx(part):
     """Kategoria-nev-resz -> illeszto regex, rovid magyar toldalekkal.
 
@@ -289,9 +333,14 @@ def _cat_rx(part):
     hit = _crx_cache.get(part)
     if hit is not None:
         return hit
-    toks = [re.escape(t) for t in str(part).split(" ") if t]
-    if not toks:
+    raw = [t for t in str(part).split(" ") if t]
+    if not raw:
         return None
+    toks = [re.escape(t) for t in raw]
+    stem = _cat_stem(raw)
+    if stem:
+        # m86/1: a TELJES alak elol -> a mai illeszkedes bitre valtozatlan
+        toks[-1] = r"(?:%s|%s)" % (toks[-1], re.escape(stem))
     rx = re.compile(
         r"(?<![a-z0-9])"
         + (r"(?:[a-z]{2,%d})?" % _CAT_PREFIX_MAX
