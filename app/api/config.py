@@ -739,6 +739,38 @@ async def admin(request: Request, session: AsyncSession = Depends(get_session)) 
         out["client_id"] = cid
         return out
 
+    if action == "konf_index_build":
+        # kf/13: adminbol kert index-build. A build a HOSTON fut (a cx-index-build.path
+        # unit figyeli a data/index_build.request fajlt) - innen csak a kerest irjuk ki,
+        # mert a konteneribol se docker nincs, se a /cxsearch mount nem irhato.
+        from app.services import konfbuild   # lazy: lasd konf_get
+
+        kid = str(b.get("client_id") or "").strip().lower()
+        if not kid:
+            return {"error": "client_id required"}
+        if await _get_tenant(session, kid) is None:
+            return {"error": "not_found"}
+        try:
+            accepted, st = konfbuild.request_build(kid)
+        except OSError:
+            logging.getLogger("cx.konf").exception("konf_index_build: keres-iras hiba (%s)", kid)
+            return {"error": "write_failed"}
+        st["ok"] = accepted
+        st["client_id"] = kid
+        return st
+
+    if action == "konf_index_state":
+        # kf/13: a fuggo/futo build es az utolso eredmeny - ezt pollozza az admin.
+        from app.services import konfbuild   # lazy: lasd konf_get
+
+        kid = str(b.get("client_id") or "").strip().lower()
+        if not kid:
+            return {"error": "client_id required"}
+        st = konfbuild.state(kid)
+        st["ok"] = True
+        st["client_id"] = kid
+        return st
+
     if action == "test_telegram":
         # m31: próbaüzenet a tenant chatId-jeire (saját bot, vagy a központi)
         cid = str(b.get("client_id") or "").strip().lower()
