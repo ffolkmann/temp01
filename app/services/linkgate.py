@@ -117,11 +117,20 @@ def has_product_hit(hits) -> bool:
     return False
 
 
-def should_offer_link(message: str, hits=None, is_policy: bool = False) -> tuple:
+def should_offer_link(message: str, hits=None, is_policy: bool = False,
+                      has_products=None) -> tuple:
     """Kimehet-e a záró kereső-link. -> (bool, ok)
 
     A hívó adja be az is_policy flaget (app.services.policy_filter.is_policy_query),
     hogy ez a modul stdlib-only maradjon.
+
+    m89/1 — `has_products`: a kontextus-fail-safe FELÜLÍRÁSA. A m25-ös
+    (search_fallback) ágon a BOLT SAJÁT keresője adta a találatokat, a Qdrant-pool
+    pedig éppen azért gyenge, mert emiatt indult a bolti keresés; ráadásul a
+    shop_hits elemeknek nincs 'payload' kulcsuk. Mérve 583 valódi fallback-
+    kérdésen: üres pool mellett 391 (67,1%) veszítené el a linkjét, köztük a
+    legjobb termék-kérdések ("Előketartót keresek", "Macskaalmot keresek").
+    A kérdés-oldali hard-stopok a bolti ágon is változatlanul érvényesek.
     """
     if is_policy:
         return False, "policy"
@@ -129,6 +138,7 @@ def should_offer_link(message: str, hits=None, is_policy: bool = False) -> tuple
         return False, "nincs tartalmas szo"
     if non_product_intent(message):
         return False, "nem-termek szandek"
-    if not has_product_hit(hits):
+    _hp = has_product_hit(hits) if has_products is None else bool(has_products)
+    if not _hp:
         return False, "nincs termek a kontextusban"
     return True, "ok"
