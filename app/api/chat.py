@@ -480,9 +480,23 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
         return ChatResponse(reply=_fb)
 
     parsed = parse_reply(raw)
+    # m89: ZARO-LINK KAPU - a "Tovabbi talalatok" kereso-link CSAK akkor, ha a
+    # beszelgetes TERMEKRE iranyul. Merve 3526 valodi valaszon: a linkesek 14,1%-a
+    # policy-kerdesre ment ki (notebookstore: 96-bol 89). Fail-safe: hiba eseten
+    # a mai viselkedes (link kimegy).
+    _link_ok = True
+    try:
+        from app.services.linkgate import should_offer_link as _sol89
+        from app.services.policy_filter import is_policy_query as _ipq89
+        _link_ok, _lg_why89 = _sol89(message, hits, _ipq89(message))
+        if not _link_ok:
+            logger.info("m89 link gate: nincs zaro-link (%s) client=%s",
+                        _lg_why89, req.client_id)
+    except Exception:  # noqa: BLE001 - a kapu hibaja sose torje a valaszt
+        _link_ok = True
     # m62: szuperlativusz/keszlet-modnal determinisztikus kereso-link a valasz vegen
     # (mint az m25-os zarolink) — a latogato egy kattintassal a bolt keresojeben folytathatja.
-    if _rmode and not shop_hits:
+    if _rmode and not shop_hits and _link_ok:  # m89 kapu
         _su2 = _shop_search_url(tenant)
         # m82e/2: a dedup korabban a KERESO-alap URL-re nezett, ezert ha a modell
         # sajat maga beirt egy /termek-kereses?k=... linket a szovegbe, az EGESZ
@@ -586,7 +600,7 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
                     from dataclasses import replace as _dc_replace2
                     parsed = _dc_replace2(parsed, reply=_newreply2)
     # m25: search_fallback zaro-link determinisztikusan (az LLM nem mindig teszi be magatol)
-    if shop_hits:
+    if shop_hits and _link_ok:  # m89 kapu
         _su = _shop_search_url(tenant)
         if _su and _su not in parsed.reply and "További találatok a webáruházban" not in parsed.reply:
             _q = quote_plus((build_queries(message) or [message[:60]])[0])
