@@ -179,13 +179,28 @@ class SellvioBuilder:
             line = trunc(line, 9000)
             ch = content_fnv(name, brand, ",".join(sorted(cats)), lead, ld, url)
             _pstr = "" if price is None else str(price)
+            # m90: Sellvio készlet-jel. Az api/v2 /products DARABSZÁMOT NEM ad (se quantity,
+            # se stock, se raktár — élesben ellenőrizve mind a 3 tenanton), csak
+            # `is_available_for_order` boolt. Hiányzó/üres mező -> None: NEM írunk payload-
+            # mezőt (a m84 derive_available szabálya). Az érték a ps_hash-be IS bekerül,
+            # ezért az elérhetőség váltása önmagában kivált egy payload-only PS-frissítést
+            # (nincs újra-embedding) — és nincs erózió, mint a m86/2 cat_tags-nél.
+            _sva = p.get("is_available_for_order")
+            if _sva is None or _sva == "":
+                _sv_avail = None
+            elif isinstance(_sva, str):
+                _sv_avail = _sva.strip().lower() not in ("0", "false", "no", "nem")
+            else:
+                _sv_avail = bool(_sva)
             products.append(SourceProduct(
                 id_key=pid, sku=sku, name=name, url=url,
                 price=_pstr, brand=brand,
                 related_similar=self._rel_similar(p), related_additional="",
                 text=line, content_hash=ch,
                 platform_id_field="sellvio_id", platform_id_value=pid,
-                ps_hash_str=ps_hash(_pstr, "", str(int(sv_disc)) if sv_disc > 0 else ""),
+                available=_sv_avail,
+                ps_hash_str=ps_hash(_pstr, "" if _sv_avail is None else ("1" if _sv_avail else "0"),
+                                    str(int(sv_disc)) if sv_disc > 0 else ""),
                 filename="__sellvio_products__"))
         return products
 
