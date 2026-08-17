@@ -35,7 +35,8 @@ from app.services.events import log_event
 logger = logging.getLogger("cx.konf")
 router = APIRouter()
 
-KONF_KINDS = {"kf_start", "kf_step", "kf_done", "kf_lead", "kf_click"}
+KONF_KINDS = {"kf_start", "kf_step", "kf_done", "kf_lead", "kf_click",
+               "kf_mode"}  # kf/17: a mod-valaszto kepernyo megjelenese
 POPULAR_DAYS = 30
 POPULAR_LIMIT = 60
 CACHE_SECONDS = 300
@@ -182,6 +183,9 @@ async def konf_event(
         "pos": _meta_int(meta_in.get("pos"), 0, 999),
         # kf/11: melyik kerdesnel tart (kf_step) - ebbol lesz a tolcser kieses-sora
         "q": str(meta_in.get("q") or "")[:40],
+        # kf/17: melyik uton jart a latogato (basic/advanced); ures = nincs
+        # mod-valaszto a tenantnal. Minden esemeny viszi -> a tolcser bonthato.
+        "mode": str(meta_in.get("mode") or "")[:12],
     }
     sid = str(data.get("session_id") or "")[:64] or None
     await log_event(session, cid, sid, kind, meta)

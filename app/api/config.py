@@ -733,10 +733,12 @@ async def admin(request: Request, session: AsyncSession = Depends(get_session)) 
             ln = (await session.execute(_sa_text(konfstats.SQL_LEADS), prm)).scalar() or 0
             dr = (await session.execute(_sa_text(konfstats.SQL_DAILY), prm)).all()
             ldr = (await session.execute(_sa_text(konfstats.SQL_LEADS_DAILY), prm)).all()
+            mr = (await session.execute(_sa_text(konfstats.SQL_MODES), prm)).all()  # kf/17
         except Exception:  # noqa: BLE001 - a statisztika sosem torheti az admint
             logging.getLogger("cx.konf").exception("konf_stats: lekerdezes hiba (%s)", cid)
             return {"error": "query_failed"}
-        out = konfstats.shape(fr, sr, tr, ln, (kcfg or {}).get("questions"), days)
+        out = konfstats.shape(fr, sr, tr, ln, (kcfg or {}).get("questions"), days,
+                              mode_rows=mr)
         out["daily"] = konfstats.daily(dr, ldr)   # kf/14: napi bontas a trendhez
         out["ok"] = True
         out["client_id"] = cid

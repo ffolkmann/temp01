@@ -21,7 +21,13 @@ Itt nincs sqlalchemy: a lekerdezesek NYERS SQL-szovegek, a futtatas a hivoe
 DB nelkul tesztelhetok.
 """
 
-KINDS = ("kf_step", "kf_start", "kf_done", "kf_click", "kf_lead")
+KINDS = ("kf_step", "kf_start", "kf_done", "kf_click", "kf_lead", "kf_mode")
+
+# kf/17: a mod-valaszto kepernyo a tolcser UJ TETEJE - aki ott lep ki, azt
+# eddig semmi nem latta volna (a kf_step csak az elso KERDESNEL megy ki).
+MODE_LABELS = {"basic": "Egyszer\u0171", "advanced": "Halad\u00f3",
+               "": "Nincs m\u00f3d-v\u00e1laszt\u00f3"}
+MODE_KEYS = ("basic", "advanced", "")
 
 DEFAULT_DAYS = 30
 MAX_DAYS = 365
@@ -33,9 +39,19 @@ SQL_FUNNEL = (
     "SELECT kind, count(*) AS c, count(DISTINCT session_id) AS s "
     "FROM events "
     "WHERE client_id = :cid "
-    "AND kind IN ('kf_step','kf_start','kf_done','kf_click','kf_lead') "
+    "AND kind IN ('kf_step','kf_start','kf_done','kf_click','kf_lead','kf_mode') "
     + _WINDOW +
     "GROUP BY kind"
+)
+
+# kf/17: ugyanaz a tolcser, MOD szerint bontva (a mod minden esemeny metajaban ott van)
+SQL_MODES = (
+    "SELECT coalesce(meta->>'mode','') AS m, kind, count(DISTINCT session_id) AS s "
+    "FROM events "
+    "WHERE client_id = :cid "
+    "AND kind IN ('kf_step','kf_start','kf_done','kf_click','kf_lead') "
+    + _WINDOW +
+    "GROUP BY 1, 2"
 )
 
 # kerdesenkenti elerés: hany egyedi session latta az adott kerdest
@@ -155,7 +171,45 @@ def _steps(step_rows, questions, done_s=0):
     return out
 
 
-def shape(funnel_rows, step_rows=None, top_rows=None, leads_n=0, questions=None, days=DEFAULT_DAYS):
+_MODE_KIND_KEY = {"kf_step": "shown", "kf_start": "start", "kf_done": "done",
+                  "kf_click": "click", "kf_lead": "lead"}
+
+
+def modes(rows):
+    """kf/17: a tolcser MOD szerinti bontasa; ures lista, ha nincs mod-adat.
+
+    FIGYELEM az ertelmezeshez: aki az egyszeru utrol ATVALT a haladora, MINDKET
+    sorban megjelenik (tenylegesen bejarta mindkettot), ezert a sorok osszege
+    tobb lehet, mint az osszes latogato. A fo tolcser szamai a mervadoak.
+    """
+    acc = {}
+    for r in rows or []:
+        m, kind, s = _row3(r)
+        m = str(m or "")
+        if m not in MODE_KEYS:
+            continue
+        key = _MODE_KIND_KEY.get(str(kind or ""))
+        if not key:
+            continue
+        row = acc.setdefault(m, {"mode": m, "label": MODE_LABELS.get(m, m),
+                                 "shown": 0, "start": 0, "done": 0,
+                                 "click": 0, "lead": 0})
+        row[key] = max(row[key], _i(s))
+    out = []
+    for m in MODE_KEYS:
+        if m not in acc:
+            continue
+        row = acc[m]
+        row["shown"] = max(row["shown"], row["start"])   # aki elkezdte, latta is
+        row["done_pct"] = pct(row["done"], row["start"])
+        row["lead_pct"] = pct(row["lead"], row["done"])
+        out.append(row)
+    # csak akkor mutatjuk, ha tenylegesen van mod-bontas (kulonben egy sor, semmit nem mond)
+    return out if any(r["mode"] for r in out) else []
+
+
+def shape(funnel_rows, step_rows=None, top_rows=None, leads_n=0, questions=None,
+          days=DEFAULT_DAYS, mode_rows=None):
     """A nyers sorokbol a UI-nak szant riport. Tiszta fuggveny, DB nelkul."""
     f = dict((k, {"n": 0, "s": 0}) for k in KINDS)
     for r in funnel_rows or []:
@@ -170,7 +224,10 @@ def shape(funnel_rows, step_rows=None, top_rows=None, leads_n=0, questions=None,
     # elotti sessionoknel nincs step-adat, az inditasuk viszont megvan - enelkul
     # az "elkezdte" arany 100% fole szaladna az atmeneti idoszakban (merve: 425%).
     # Aki elkezdte kitolteni, az definicio szerint latta is az elso kerdest.
-    shown = max(steps[0]["reach"] if steps else 0, start_s)
+    # kf/17: a mod-valaszto kepernyo MEG a kerdesek elott van, tehat ha van ilyen
+    # adat, az a valodi teteje a tolcsernek (aki ott lepett ki, sosem latott kerdest).
+    mode_s = f["kf_mode"]["s"]
+    shown = max(steps[0]["reach"] if steps else 0, start_s, mode_s)
     done_s = f["kf_done"]["s"]
     lead_s = max(f["kf_lead"]["s"], _i(leads_n))
 
@@ -210,6 +267,8 @@ def shape(funnel_rows, step_rows=None, top_rows=None, leads_n=0, questions=None,
                        if worst else None),
         "top": top,
         "has_step_data": any(s["reach"] for s in steps),
+        "mode_shown": mode_s,          # kf/17: hanyan lattak a mod-valasztot
+        "modes": modes(mode_rows),     # kf/17: tolcser mod szerint bontva
     }
 
 

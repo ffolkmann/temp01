@@ -49,6 +49,9 @@ MAX_CONDS = 12
 MAX_SKUS = 50
 MAX_HELP = 800
 SORTS = ("ajanlott", "ar_asc", "ar_desc", "nepszeru")
+# kf/17: kerdesenkenti mod. "both" = mindket utban (visszafele kompatibilis
+# alap), "advanced" = csak a halado utban, "basic" = csak az egyszeruben.
+MODES = ("both", "basic", "advanced")
 
 
 def config_path():
@@ -161,6 +164,39 @@ def _norm_option(o):
     return out
 
 
+def _mode(v):
+    """kf/17: kerdes-mod tisztitasa; ismeretlen -> "both" (a mai viselkedes)."""
+    m = _s(v, 12).lower()
+    return m if m in MODES else "both"
+
+
+def _modes_block(m, questions):
+    """kf/17: az egyszeru/halado valaszto beallitasai.
+
+    A latogato a widget elejen valaszt; az admin `force`-szal kenyszerithet is
+    egy modot (olyankor nincs valaszto-kepernyo).
+
+    FAIL-SAFE: a valaszto CSAK akkor kapcsol be, ha van legalabb egy kerdes,
+    ami nem "both" - kulonben a ket ut ugyanaz lenne, es a latogatot egy
+    ertelmetlen kepernyovel allitanank meg. Ugyanez a vedelem a widgetben is
+    megvan (ket fuggetlen kapu, mert ez a legelso kepernyo).
+    """
+    force = _s(m.get("force"), 12).lower()
+    if force not in ("basic", "advanced"):
+        force = ""
+    variant = any(q.get("mode", "both") != "both" for q in questions)
+    return {
+        "enabled": bool(m.get("enabled")) and variant and not force,
+        "force": force,
+        "title": _s(m.get("title"), 120),
+        "basic_label": _s(m.get("basic_label"), 60) or "Gyors aj\u00e1nl\u00e1s",
+        "basic_sub": _s(m.get("basic_sub"), 120),
+        "adv_label": _s(m.get("adv_label"), 60) or "R\u00e9szletes v\u00e1laszt\u00e1s",
+        "adv_sub": _s(m.get("adv_sub"), 120),
+        "switch_label": _s(m.get("switch_label"), 60) or "T\u00f6bb be\u00e1ll\u00edt\u00e1si lehet\u0151s\u00e9g",
+    }
+
+
 def _norm_question(q):
     if not isinstance(q, dict):
         return None
@@ -174,6 +210,7 @@ def _norm_question(q):
         return None
     out = {"id": _s(q.get("id"), 40) or "q", "title": title,
            "type": "multi" if _s(q.get("type")).lower() == "multi" else "single",
+           "mode": _mode(q.get("mode")),   # kf/17
            "options": opts}
     sub = _s(q.get("sub"), 200)
     if sub:
@@ -235,6 +272,7 @@ def normalize_ruleset(cfg):
     lead_in = cfg.get("lead") if isinstance(cfg.get("lead"), dict) else {}
     stock_in = cfg.get("stock") if isinstance(cfg.get("stock"), dict) else {}
     img_in = cfg.get("image") if isinstance(cfg.get("image"), dict) else {}
+    modes_in = cfg.get("modes") if isinstance(cfg.get("modes"), dict) else {}
     questions = []
     for q in (cfg.get("questions") or [])[:MAX_QUESTIONS]:
         n = _norm_question(q)
@@ -250,6 +288,7 @@ def normalize_ruleset(cfg):
             "unit": _s(ui_in.get("unit"), 30) or "term\u00e9k",
         },
         "questions": questions,
+        "modes": _modes_block(modes_in, questions),   # kf/17
         "prior": {
             "pin": _sku_list(prior_in.get("pin")),
             "boost": _sku_list(prior_in.get("boost")),
