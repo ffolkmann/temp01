@@ -75,6 +75,7 @@ class Tenant(Base):
     recommend_out_of_stock: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")  # m73: raktaron nem levo termek ajanlasa engedelyezett-e
     search_config: Mapped[dict | None] = mapped_column(JSONB)  # s3: SmartSearch tenant-config (igazsag-forras; data/smartsearch.json = fallback)
     konf_config: Mapped[dict | None] = mapped_column(JSONB)  # k2: CX Konfigurator tenant-ruleset (igazsag-forras; data/konfigurator.json = fallback)
+    b2b_api_key: Mapped[str | None] = mapped_column(String)                 # m90/1: Sellvio B2B feed per-user api_key (szamszeru keszlet)
 
 
 class Plan(Base):

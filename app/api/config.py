@@ -332,6 +332,9 @@ async def _save_config(session: AsyncSession, row_in: dict[str, Any]) -> dict[st
     # m55: chat_model — ures string -> NULL (globalis default)
     if "chat_model" in row:
         row["chat_model"] = str(row["chat_model"] or "").strip()[:64] or None
+    # m90/1: Sellvio B2B feed api_key — ures string -> NULL (nincs kulcs, nincs szamszeru keszlet)
+    if "b2b_api_key" in row:
+        row["b2b_api_key"] = str(row["b2b_api_key"] or "").strip()[:255] or None
     if "warehouse_config" in row:
         wcv = row["warehouse_config"]
         if isinstance(wcv, str):
