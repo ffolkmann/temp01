@@ -67,9 +67,22 @@ async def _stream_blob(items, builder):
 # --- lapozott, nehéz források (2× fetch, de korlátos memória) ---------------
 async def stream_sellvio(tenant: "Tenant"):
     base, cid, sec, pub = _creds(tenant)
+    # m91: ha van B2B feed kulcs, a SZAMSZERU keszlet onnan jon (az api/v2 nem ad ilyet).
+    # FAIL-OPEN: hiba vagy csupa-nulla feed -> stock_map=None, minden marad a m90 szerint.
+    _sm = None
+    try:
+        from app.services.sellvio_feed import get_stock_map
+        _fm = await get_stock_map(tenant)
+        if _fm.usable:
+            _sm = _fm
+    except Exception:  # noqa: BLE001 — a sync SOHA nem bukhat el a feed miatt
+        import logging
+        logging.getLogger("cx.sync").exception(
+            "m91: sellvio feed hiba (%s) — keszlet nelkul folytatom", tenant.client_id)
     def pages():
         return pa.sellvio_list_products(base, cid, sec)
-    async for sp in _stream_paginated(pages, pages, SellvioBuilder(tenant.client_id, pub)):
+    async for sp in _stream_paginated(
+            pages, pages, SellvioBuilder(tenant.client_id, pub, stock_map=_sm)):
         yield sp
 
 

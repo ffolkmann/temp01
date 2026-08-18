@@ -121,11 +121,28 @@ async def _sellvio_live(tenant: "Tenant", pid: str) -> LivePriceStock | None:
     o = body.get("data") if isinstance(body, dict) and isinstance(body.get("data"), dict) else body
     if not isinstance(o, dict):
         return None
-    # ár: data.price dict -> brutto_price (fallback netto_price). Készlet-DB nincs, csak elérhetőség.
+    # ár: data.price dict -> brutto_price (fallback netto_price). Az api/v2-ben NINCS készlet.
+    _avail = _avail_from(o.get("is_available_for_order"), None)
+    # m91: a DARABSZAM a B2B feedbol jon (tenant.b2b_api_key), TTL-cache-elve. Harom kapu:
+    #  (1) csak ha van kulcs, (2) csak ha a feed hasznalhato (van benne nem-nulla darab -
+    #      kulonben dropship bolt vagy raktar-szurt token), (3) a 0-t elnyomjuk, ha a termek
+    #      egyebkent rendelheto: a "keszlet: 0 db (raktaron)" mondat onellentmondas lenne.
+    _qty = None
+    try:
+        if str(getattr(tenant, "b2b_api_key", "") or "").strip():
+            from app.services.sellvio_feed import get_stock_map
+            _sm = await get_stock_map(tenant)
+            if _sm.usable:
+                _q = _sm.qty(pid, str(o.get("code") or ""))
+                if _q is not None and not (_q == 0 and _avail is True):
+                    _qty = _q
+    except Exception:  # noqa: BLE001 — az elo valasz SOHA nem bukhat el a feed miatt
+        logger.warning("m91: sellvio feed a live agban nem elerheto (%s)",
+                       getattr(tenant, "client_id", ""))
     return LivePriceStock(
         price=_scalar_price(o.get("price")),
-        available=_avail_from(o.get("is_available_for_order"), None),
-        qty=None,
+        available=_avail,
+        qty=_qty,
         name=str(o.get("name") or ""),
     )
 

@@ -74,9 +74,12 @@ class SellvioBuilder:
     build_sellvio(rows) wrapper indexeli majd építi az egészet -> a parity-teszt védi.
     """
 
-    def __init__(self, client_id: str, public_url: str = "") -> None:
+    def __init__(self, client_id: str, public_url: str = "", stock_map=None) -> None:
         self.client_id = client_id
         self.by_id, self.cat_members, self.cat_size = {}, {}, {}
+        # m91: opcionalis keszlet-terkep a B2B feedbol (app/services/sellvio_feed.py).
+        # None = nincs kulcs VAGY a feed nem hasznalhato (csupa nulla) -> nincs stock payload.
+        self.stock_map = stock_map
         # m24: a Sellvio API pretty_url-je INSTABIL hostot ad (hol egyedi domain, hol
         # <shop>.mysellvio.com) -> content_fnv oszcillál -> napi tomeges re-embed + rossz
         # link a valaszban. Ha van tenant.public_url, arra normalizaljuk a hostot.
@@ -192,21 +195,32 @@ class SellvioBuilder:
                 _sv_avail = _sva.strip().lower() not in ("0", "false", "no", "nem")
             else:
                 _sv_avail = bool(_sva)
+            # m91: szamszeru keszlet a B2B feedbol (az api/v2 NEM ad darabszamot). A `stock`
+            # CSAK a payloadba megy, a text/content_hash VALTOZATLAN -> nincs ujra-embedding.
+            # Az `available` marad az is_available_for_order-e: dropship boltnal a 0 darab
+            # NEM jelenti azt, hogy nem megvehető.
+            _sv_stock = ""
+            if self.stock_map is not None:
+                _q = self.stock_map.qty(pid, sku)
+                if _q is not None:
+                    _sv_stock = str(_q)
+            _am = "" if _sv_avail is None else ("1" if _sv_avail else "0")
             products.append(SourceProduct(
                 id_key=pid, sku=sku, name=name, url=url,
                 price=_pstr, brand=brand,
                 related_similar=self._rel_similar(p), related_additional="",
                 text=line, content_hash=ch,
                 platform_id_field="sellvio_id", platform_id_value=pid,
-                available=_sv_avail,
-                ps_hash_str=ps_hash(_pstr, "" if _sv_avail is None else ("1" if _sv_avail else "0"),
+                available=_sv_avail, stock_str=_sv_stock,
+                ps_hash_str=ps_hash(_pstr, _am if _sv_stock == "" else (_sv_stock + "|" + _am),
                                     str(int(sv_disc)) if sv_disc > 0 else ""),
                 filename="__sellvio_products__"))
         return products
 
 
-def build_sellvio(rows: list[dict], client_id: str, public_url: str = "") -> list[SourceProduct]:
-    b = SellvioBuilder(client_id, public_url)
+def build_sellvio(rows: list[dict], client_id: str, public_url: str = "",
+                  stock_map=None) -> list[SourceProduct]:
+    b = SellvioBuilder(client_id, public_url, stock_map=stock_map)
     b.index(rows)
     return b.build(rows)
 
