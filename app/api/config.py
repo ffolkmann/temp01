@@ -29,6 +29,7 @@ from app.core.settings import get_settings
 from app.models.db_models import Coupon, Lead, Plan, Tenant
 from app.services.current_product import get_current_product, normalize_url
 from app.services.operator_notify import notify_operators_ex
+from app.services.tenantgate import is_disabled  # m92
 
 logger = logging.getLogger("cx.config")
 router = APIRouter()
@@ -98,6 +99,8 @@ def _config_body(t: Tenant | None) -> dict[str, Any]:
     pc = t.popup_config if (t and isinstance(t.popup_config, dict)) else {}
     pc = pc or {}
     return {
+        # m92: kikapcsolt tenantnal a widget el sem indul (a boot/bootInline ezt nezi)
+        "disabled": is_disabled(t),
         "chat_api_base": CHAT_API_BASE if (t and bool(t.use_fastapi)) else "",
         "search_fallback": bool(t.search_fallback) if t else False,
         "launcher": (t.launcher_config or {}) if t else {},

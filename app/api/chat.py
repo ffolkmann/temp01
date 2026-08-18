@@ -45,6 +45,7 @@ from app.services.live_agent import (
     session_live_state,
 )
 from app.services.live_product import fetch_live_price_stock
+from app.services.tenantgate import is_disabled  # m92
 from app.services.operator_hours import operators_available
 from app.services.operator_presence import is_operator_online
 from app.services.operator_notify import notify_operators
@@ -105,6 +106,15 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
     if tenant is None:
         logger.warning("ismeretlen tenant: %s", req.client_id)
         return ChatResponse(reply=_FALLBACK)
+
+    # m92: KIKAPCSOLT (active=false) tenant -> a bot nem valaszol. Eddig az `active`
+    # CSAK a syncet szurte, a chat-vegpont nem nezte: egy tavozo ugyfel boltjaban a
+    # widget a lekapcsolas utan is valaszolt volna. A widget maga a /chat-config
+    # `disabled` jelzojere meg sem indul el (m92), ez itt a szerver-oldali zar.
+    if is_disabled(tenant):
+        from fastapi import HTTPException
+        logger.info("m92: kikapcsolt tenant, nem valaszolunk: %s", req.client_id)
+        raise HTTPException(status_code=404, detail="inactive tenant")
 
     message = (req.message or "").strip()
     if not message:
