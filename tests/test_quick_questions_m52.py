@@ -43,6 +43,8 @@ _stub("app.services.current_product",
       get_current_product=lambda *a, **k: None,
       normalize_url=lambda u: u)
 _stub("app.services.operator_notify", notify_operators_ex=lambda *a, **k: None)
+_stub("app.services.tenantgate",
+      is_disabled=lambda t: t is not None and not bool(getattr(t, "active", True)))  # m92
 _load("app.models.db_models", ROOT / "app" / "models" / "db_models.py")
 _cfg = _load("config_m52_under_test", ROOT / "app" / "api" / "config.py")
 

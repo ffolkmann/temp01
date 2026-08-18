@@ -216,6 +216,8 @@ _superlative_fake = _mod("app.services.superlative", STOCK_NOTES={}, topic_of=la
 _mod("app.services.unanswered", log_unanswered=_rec("log_unanswered"))
 _mod("app.services.usage", record_usage=_rec("usage"))
 _mod("app.services.webdoc_status", order_form_fields=lambda p: [])
+_mod("app.services.tenantgate",  # m92
+     is_disabled=lambda t: t is not None and not bool(getattr(t, "active", True)))
 
 # --- a chat.py betoltese fajlbol a fake importok folott ---
 _spec = importlib.util.spec_from_file_location("chat_m67_under_test", ROOT / "app" / "api" / "chat.py")
