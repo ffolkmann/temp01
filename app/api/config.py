@@ -437,6 +437,51 @@ async def _qdrant_list_docs(client_id: str) -> dict[str, Any]:
     return {"docs": docs}
 
 
+async def _qdrant_get_doc(client_id: str, filename: str) -> dict[str, Any]:
+    """m93: KB-dokumentum visszaadasa letoltesre.
+
+    Elsodleges forras az ingest altal lemezre mentett EREDETI fajl (bitre pontos,
+    exact=True). Ha az nincs (regi feltoltes), a Qdrant-chunkokbol allitjuk ossze
+    (exact=False) - ott a szelethatarokon elveszhet egy-egy sortores.
+    """
+    from app.services import kbdoc   # lazy: a fajl-betoltos tesztek fake app.services-e miatt
+
+    if not client_id or not filename:
+        return {"error": "missing_params"}
+
+    orig = kbdoc.read_original(client_id, filename)
+    if orig is not None:
+        return {"filename": filename, "text": orig, "exact": True}
+
+    coll = _settings.qdrant_collection
+    points: list[dict[str, Any]] = []
+    offset: Any = None
+    async with httpx.AsyncClient(base_url=_settings.qdrant_url.rstrip("/"), timeout=30) as cl:
+        while True:
+            body: dict[str, Any] = {
+                "filter": {"must": [
+                    {"key": "client_id", "match": {"value": client_id}},
+                    {"key": "filename", "match": {"value": filename}},
+                ]},
+                "limit": 1000,
+                "with_payload": ["idx", "text"],
+                "with_vector": False,
+            }
+            if offset is not None:
+                body["offset"] = offset
+            r = await cl.post(f"/collections/{coll}/points/scroll", json=body)
+            r.raise_for_status()
+            res = r.json().get("result", {})
+            points.extend(res.get("points", []))
+            offset = res.get("next_page_offset")
+            if not offset:
+                break
+    text = kbdoc.join_chunks(points)
+    if not text:
+        return {"error": "not_found"}
+    return {"filename": filename, "text": text, "exact": False, "chunks": len(points)}
+
+
 async def _qdrant_delete_doc(client_id: str, filename: str) -> dict[str, Any]:
     coll = _settings.qdrant_collection
     async with httpx.AsyncClient(base_url=_settings.qdrant_url.rstrip("/"), timeout=30) as cl:
@@ -448,6 +493,12 @@ async def _qdrant_delete_doc(client_id: str, filename: str) -> dict[str, Any]:
             ]}},
         )
         r.raise_for_status()
+    try:                                   # m93: az elmentett eredeti is menjen
+        from app.services import kbdoc
+
+        kbdoc.delete_original(client_id, filename)
+    except Exception:  # noqa: BLE001
+        pass
     return {"ok": True}
 
 
@@ -618,6 +669,9 @@ async def admin(request: Request, session: AsyncSession = Depends(get_session)) 
 
     if action == "delete_doc":
         return await _qdrant_delete_doc(cid, filename)
+
+    if action == "download_doc":          # m93
+        return await _qdrant_get_doc(cid, filename)
 
     if action == "search_get":
         from app.services import searchcfg   # lazy: a fajl-betoltos tesztek fake app.services-e miatt

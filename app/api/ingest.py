@@ -17,6 +17,7 @@ import html
 import json
 import io
 import logging
+import os
 import re
 import sys
 import uuid
@@ -105,6 +106,20 @@ def _chunks(text: str) -> list[str]:
     return out
 
 
+def _store_original(client_id: str, filename: str, raw: bytes) -> None:
+    """m93: az eredeti feltoltott fajl elmentese, hogy az admin vissza tudja tolteni.
+
+    Best-effort: ha nem sikerul (jogosultsag, lemez), az ingest attol meg rendben van -
+    a letoltes ilyenkor a chunkokbol allitja ossze a szoveget.
+    """
+    try:
+        from app.services import kbdoc   # lazy: a fajl-betoltos tesztek fake app.services-e miatt
+
+        kbdoc.write_original(client_id, filename, raw)
+    except Exception:  # noqa: BLE001
+        logger.warning("INGEST[%s] eredeti mentese sikertelen: %s", client_id, filename)
+
+
 def _doc_point_id(client_id: str, filename: str, idx: int) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_URL, f"cxdoc|{client_id}|{filename}|{idx}"))
 
@@ -177,6 +192,7 @@ async def ingest(request: Request) -> Any:
             total += len(points)
 
     logger.info("INGEST[%s] %s -> %d chunk (%s)", client_id, filename, total, coll)
+    _store_original(client_id, filename, raw)   # m93
     return {"ok": True, "chunks": total}
 
 
