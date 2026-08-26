@@ -15,6 +15,16 @@ _FILLER = {
     "is", "es", "meg", "hogy", "bele", "belefer", "illik", "valo", "jo",
     "kell", "kene", "lehet", "van", "hozza", "neki", "ala", "melyik",
     "milyen", "mennyi", "the",
+    # m95: kerdes-keret es udvarias-frazis szavak — a fallback topic-term ne
+    # ezekbol epuljon (a keresoben ertelmetlen "term" lenne)
+    "szeretnek", "szeretnem", "szeretne", "szeretnank", "hogyan", "tudom",
+    "tudok", "tudsz", "tudna", "tudnal", "koszonom", "koszi", "erdeklodnek",
+    "erdeklodom", "erdeklodni", "erdekelne", "rendelni", "rendelem",
+    "megrendelni", "megrendelem", "kerdeznem", "kerdezni", "kerdesem",
+    "kerdes", "udvozlom", "udv", "szia", "sziasztok", "hello", "helo",
+    "hali", "jonapot", "napot", "kivanok", "elore", "kerem", "kerek",
+    "mikor", "mennyibe", "ugye", "azt", "ezt", "itt", "ott", "akarok",
+    "akarom", "csak",
 }
 _NAME_STOP = {
     "maximum", "meretu", "notebookokhoz", "laptopokhoz", "szinben",
@@ -61,6 +71,18 @@ def _name_term(names, brands=None):
     return ""
 
 
+def _derivable(term, text):
+    """m95: a term legalabb egy (>=3 betus) tokenje resz-szo egyezessel
+    szerepel-e a szovegben (a latogato altal irt szavakban)."""
+    tt = [t for t in _tokens(_fold(term)) if len(t) >= 3]
+    qt = [t for t in _tokens(_fold(text)) if len(t) >= 3]
+    for a in tt:
+        for b in qt:
+            if a in b or b in a:
+                return True
+    return not tt
+
+
 def _topic_term(message):
     out = []
     for tok in _tokens(message):
@@ -75,8 +97,13 @@ def _topic_term(message):
     return " ".join(out)
 
 
-def link_search_term(message, hit_names=None, brands=None):
+def link_search_term(message, hit_names=None, brands=None, context=None):
+    """m95: ha `context` adott (a latogato aktualis + korabbi uzenetei), a
+    nev-alapu term csak akkor ervenyes, ha abbol levezetheto — kulonben a
+    pool zajanak tekintjuk (pl. "jelgenerator" kerdesre a forrasztopakas
+    talalatnevek), es a kerdes-alapu topicra esunk vissza. Ures visszateres
+    = a hivo NE tegyen ki zaro-linket. context=None: regi viselkedes."""
     t = _name_term(hit_names or [], brands)
-    if t:
+    if t and (context is None or _derivable(t, context)):
         return t
     return _topic_term(message)

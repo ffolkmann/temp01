@@ -546,8 +546,19 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
                             _hc.append(str(_pl2.get("category")))
             except Exception:  # noqa: BLE001 — a linkterm hibaja ne torje a valaszt
                 _hn = []
-            _q2 = link_search_term(message, _hn, _hb) or (_topic_of(message) or "").strip() or (build_queries(message) or [message[:60]])[0]
-            _more_url = _su2 + quote_plus(_q2)
+            # m95: a nev-alapu kereso-term csak akkor ervenyes, ha a latogato
+            # SAJAT szavaibol (aktualis + korabbi uzenetek) levezetheto —
+            # kulonben a pool zaja (eles eset: "jelgenerator" kerdesre
+            # search=forrasztopaka). Ha term nem all elo -> nincs zaro-link.
+            _uctx95 = message
+            try:
+                _uctx95 = message + " " + " ".join(
+                    str(getattr(h, "content", "") or "") for h in (req.history or [])
+                    if str(getattr(h, "role", "") or "") == "user")
+            except Exception:  # noqa: BLE001 — a kapu hibaja sose torje a valaszt
+                _uctx95 = message
+            _q2 = link_search_term(message, _hn, _hb, context=_uctx95)
+            _more_url = (_su2 + quote_plus(_q2)) if _q2 else None  # m95
             _more_url_base = _more_url  # m82b: valtozott-e a m79b fasetta-linkre
             # m79b: ha a kerdesben felismert megkotes van (paramextract) es letezik
             # hozza fasetta/SEO-szuro-oldal a crawl-terkepben (linkfacet), arra
@@ -610,6 +621,10 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
                                     _fu82f, req.client_id)
             except Exception:  # noqa: BLE001 - a link hibaja ne torje a valaszt
                 pass
+            if not _more_url:
+                logger.info(
+                    "m95 link gate: nincs a latogato szavaibol levezetheto "
+                    "keresoszo -> nincs zaro-link client=%s", req.client_id)
             if _more_url and _more_url not in parsed.reply:  # m82e/2
                 _newreply2 = (
                     parsed.reply.rstrip()

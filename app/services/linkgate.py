@@ -81,6 +81,28 @@ _FILLER = {
     "jo", "nagyon", "szepen", "elore", "is", "es", "de", "vagy", "majd",
 }
 
+# --- 2b. m95: INFO-/ÜGYMENET-KÉRÉS ----------------------------------------
+# Mért lelet (2026-08-26, 2260 linkes tárolt válasz): a záró kereső-link kiment
+# számla-kérésre, használati-utasítás-kérésre, "hol a bolt / mikor kapom meg /
+# hogyan rendeljem / csak MPL?" kérdésekre is. A minták a valódi korpuszból
+# jönnek; sweep: 41 vágás, 0 termék-kereső veszteség (d26d_m95sweep).
+_INFOREQ = re.compile(
+    r"afas szaml|szamlat tud|szamlat kap|szamlat ker|szamlat szeretn|szamlaz|ceges szaml|"
+    r"(hasznalati|kezelesi|mukodesi|uzembe\w*|uzemeltetesi|szerelesi|osszeszerel\w*|beuzemel\w*)"
+    r"[^.,;!?]{0,25}(utasitas|utmutato|leiras)|"
+    r"kezikonyv|gepkonyv|megfelelosegi nyilatkozat|garancialevel|"
+    r"hol (van|vannak|talalhato\w*)[^.,;!?]{0,20}(ceg\w*|uzlet|bolt\w*|telephely|atveteli)|"
+    r"hol tudom atvenni|hol vehetem at|hol lehet atvenni|"
+    r"mikor kapom (meg|kezhez)|mikorra kapom|mikor erkezik|mikorra erkezik|"
+    r"(ma|holnap|mikor) (feladjak|feladjatok|adjak fel|adjatok fel)|"
+    r"mikor lesz kiszallitva|mikorra er ide|mikor szallitj|"
+    r"hogy(an)? tud(om|ok|nam|nank)( meg)? ?rendelni|hogy(an)? rendel(jem|hetek|hetem|het\b)|"
+    r"kosarban van|kosarba (tettem|raktam)|nem tudom megrendelni|nem enged megrendelni|"
+    r"le akarom mondani|le szeretnem mondani|lemondanam|sztorno|\bstorno|"
+    r"telefonszamot (kaphatnek|kerhetek|kerek|kernek|adna|tudna)|"
+    r"csomagpont|csomagautomata|\bgls\b|\bfoxpost\b|\bmpl\b|packeta|futarszolgalat|\bfutar\b|\bfutarral\b"
+)
+
 # vegyes betű+szám token = típus-/cikkszám (GA605WI, S10, 270H, BQ2345, 135x)
 _ALNUM = re.compile(r"\b(?=[a-z0-9]*[a-z])(?=[a-z0-9]*[0-9])[a-z0-9]{3,}\b")
 # szám + mértékegység (30 mm, 14kg, 512gb) ill. méret-jelölés (12x200)
@@ -102,7 +124,7 @@ def is_contentful(message: str) -> bool:
 def non_product_intent(message: str) -> bool:
     """A kérdés egyértelműen NEM termékre irányul (rendelés-állapot, bolt-info, fiók)."""
     f = fold(message)
-    return bool(_ORDER.search(f) or _SHOPINFO.search(f))
+    return bool(_ORDER.search(f) or _SHOPINFO.search(f) or _INFOREQ.search(f))
 
 
 def has_product_hit(hits) -> bool:
