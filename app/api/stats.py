@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.db import get_session
 from app.services.unanswered_export import build_unanswered_xlsx
 from app.services.conversations_export import build_conversations_xlsx
+from app.services.trivialq import is_trivial  # m94
 
 logger = logging.getLogger("cx.stats")
 router = APIRouter()
@@ -365,6 +366,9 @@ async def stats(
         "SELECT question, score, reasons, session_id, created_at FROM unanswered "
         "WHERE client_id=:c ORDER BY created_at DESC"
     ), P)).mappings().all()
+    # m94: udvariassag / parancs / urlap-tormelek kiszurese MINDEN szarmaztatott
+    # szambol (total, heti oszlop, kerdes-lista) — az adat a tablaban marad.
+    ua_rows = [r for r in ua_rows if not is_trivial(r["question"] or "")]
     weekly_counts: dict[str, int] = {}
     groups: dict[str, dict] = {}
     for r in ua_rows:
@@ -527,6 +531,7 @@ async def stats_unanswered_export(
         "SELECT question, score, reasons, session_id, created_at FROM unanswered "
         "WHERE client_id=:c ORDER BY created_at DESC"
     ), {"c": cid})).mappings().all()
+    rows = [r for r in rows if not is_trivial(r["question"] or "")]  # m94
     msg_rows = (await session.execute(text(
         "SELECT session_id, question, answer, created_at FROM messages "
         "WHERE client_id=:c ORDER BY session_id, created_at, id"
@@ -605,10 +610,17 @@ async def admin_overview(
         "SELECT client_id, rating, COUNT(*) n FROM feedback "
         "WHERE created_at > now() - (:d || ' days')::interval GROUP BY 1,2"
     ), P)).mappings().all()
-    urows = (await session.execute(text(
-        "SELECT client_id, COUNT(*) n FROM unanswered "
-        "WHERE created_at > now() - (:d || ' days')::interval GROUP BY 1"
+    _ua_all = (await session.execute(text(
+        "SELECT client_id, question FROM unanswered "
+        "WHERE created_at > now() - (:d || ' days')::interval"
     ), P)).mappings().all()
+    # m94: a zaj (udvariassag, parancs, urlap-tormelek) az admin-osszesitobe se szamitson
+    _ua_cnt: dict[str, int] = {}
+    for _r in _ua_all:
+        if is_trivial(_r["question"] or ""):
+            continue
+        _ua_cnt[_r["client_id"]] = _ua_cnt.get(_r["client_id"], 0) + 1
+    urows = [{"client_id": _c, "n": _n} for _c, _n in _ua_cnt.items()]
 
     msg = {r["client_id"]: r for r in mrows}
     ev: dict[str, dict[str, int]] = {}

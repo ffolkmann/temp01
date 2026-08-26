@@ -29,6 +29,15 @@ def _load(modname, path):
 # regisztraljuk a fake app.services ala (nem stub: stdlib-only, a szamitas is valodi)
 _ss_mod = _load("app.services.searchstats", os.path.join(ROOT, "app", "services", "searchstats.py"))
 sys.modules["app.services"].searchstats = _ss_mod
+# m94: valodi trivialq a fake app.services ala (a stats.py es az unanswered.py importalja).
+# Onallo betoltes: a ket teszt-fajl betolto-segedje mas-mas nevu.
+import importlib.util as _ilu_m94
+_tq_spec_m94 = _ilu_m94.spec_from_file_location(
+    "app.services.trivialq", os.path.join(ROOT, "app", "services", "trivialq.py"))
+_tq_mod_m94 = _ilu_m94.module_from_spec(_tq_spec_m94)
+sys.modules["app.services.trivialq"] = _tq_mod_m94
+_tq_spec_m94.loader.exec_module(_tq_mod_m94)
+sys.modules["app.services"].trivialq = _tq_mod_m94
 
 # --- fake fastapi ---
 ff = types.ModuleType("fastapi")

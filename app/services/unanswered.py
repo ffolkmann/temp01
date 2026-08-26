@@ -10,6 +10,7 @@ import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.db_models import Unanswered
+from app.services.trivialq import is_trivial  # m94
 
 logger = logging.getLogger("cx.unanswered")
 
@@ -32,6 +33,10 @@ async def log_unanswered(
     question: str, top_score: float, action: str | None,
 ) -> None:
     """Ha van reason, naplózza a kérdést score+reasons-szel. Fail-safe: nem töri a /chat-et."""
+    # m94: az udvariassagi fordulat, a szolgaltatas-parancs es a lead-urlap
+    # tormeleke (e-mail, rendelesszam) NEM tudashiany -> ne higitsa a riportot.
+    if is_trivial(question):
+        return
     reasons = eval_reasons(top_score, action)
     if not reasons:
         return
