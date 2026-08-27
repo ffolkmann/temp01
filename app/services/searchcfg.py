@@ -20,8 +20,8 @@ import json
 import os
 import re
 
-MAX_TERMS = 8
-MAX_SKUS = 10
+MAX_TERMS = 30   # kfcat/3: 8 -> 30 (ugyfel-keres: nepszeru keresesek)
+MAX_SKUS = 30    # kfcat/3: 10 -> 30 (nepszeru termekek)
 MAX_GROUPS = 100
 MAX_GROUP_TAGS = 8
 MAX_MERCH = 100

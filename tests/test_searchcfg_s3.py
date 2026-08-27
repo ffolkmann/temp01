@@ -41,9 +41,11 @@ def test_oneway_parse_es_formaz():
 # --------------------------------------------------------------------------- #
 # nepszeru listak
 # --------------------------------------------------------------------------- #
-def test_terms_cap_nyolc_skus_cap_tiz():
-    assert len(SC.parse_terms("\n".join("t%d" % i for i in range(20)))) == 8
-    assert len(SC.parse_skus("\n".join("S%d" % i for i in range(20)))) == 10
+def test_terms_cap_harminc_skus_cap_harminc():
+    # kfcat/3: 8/10 -> 30/30
+    assert len(SC.parse_terms("\n".join("t%d" % i for i in range(40)))) == 30
+    assert len(SC.parse_skus("\n".join("S%d" % i for i in range(40)))) == 30
+    assert SC.parse_terms("\n".join("t%d" % i for i in range(25)))[-1] == "t24"
 
 
 def test_lista_szoveg_oda_vissza():
