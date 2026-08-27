@@ -21,6 +21,7 @@ azonos feloldas):
              "filter": [ COND, ... ],          # kemeny szuro (AND)
              "boost":  [ COND+{"w": int}, ... ]  # puha pontozas
             }]}],
+     "scope": [ COND, ... ],   # kfcat/2: alapszuro MINDEN kerdes elott (pl. csak nyomtato)
      "prior": {"pin": ["SKU"...], "boost": ["SKU"...], "stock_w": 25, "sale_w": 8},
      "result": {"top_n": 4},
      "lead": {"enabled": true, "title": "...", "text": "...",
@@ -288,6 +289,10 @@ def normalize_ruleset(cfg):
             "unit": _s(ui_in.get("unit"), 30) or "term\u00e9k",
         },
         "questions": questions,
+        # kfcat/2: ruleset-szintu alapszuro. Teljes-katalogus indexnel (copygo:
+        # 23k termek) ez tartja a varazslot a sajat termekkoreben; a widget a
+        # betoltes utan alkalmazza, ures eredmenynel a teljes index marad.
+        "scope": _norm_conds(cfg.get("scope")),
         "modes": _modes_block(modes_in, questions),   # kf/17
         "prior": {
             "pin": _sku_list(prior_in.get("pin")),
