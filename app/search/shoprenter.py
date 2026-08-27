@@ -1,30 +1,29 @@
-"""CX SmartSearch/Konfigurator — Shoprenter ingest-mapper (K1, copygo pilot).
+"""CX SmartSearch/Konfigurator — Shoprenter ingest-mapper (K1 -> kfcat/1, generikus).
 
 api2 (OAuth2 Bearer) -> feed-alaku termek-dict lista az indexcore-nak.
-Kategoria-SZURT ingest (a copygo-bolt 59k termekes, a nyomtato-kategoriak
-~1520 termeke kell), a kf01/probe felderites szerint:
 
-  1. GET /productCategoryRelations?full=1&categoryId=<b64('category-category_id=N')>
-     -> product_id-k (a relacio id b64-dekodjabol)
-  2. GET /productExtend/<b64('product-product_id=PID')>?full=1 -> minden EGYBEN:
-     attr-ertekek, descriptions[0], productPrices, stock1-4, urlAliases,
-     mainPicture, manufacturer
-
-Kategoria-lista a tenant search_config.shoprenter.categories kulcsabol
-(innerId = storefront URL-szam). Konfigurator-igenyek:
-  - attr-nev merge (funkcio+funkciok, lapadagolotipus(a), memoria(nyomtato),
-    sebesseg mono+monoiso) es ertek-kanonizalas (szinkezeles Mono/mono/Szines)
-  - szam-parse plauzibilitas-kapuval (sebesseg 4..100 oldal/perc)
-  - technologia kategoria-fallback (attr csak 56%)
-  - halozat (LAN/WiFi) es duplex: attr + leiras-regex KOMBO -> derivalt parameter
-  - printer-only szuro: van core-attr (funkcio/technologia) ES nincs kellek-attr
-  - belso attr-ok (kefix_kat, a_beszallito) kihagyva; gyarto-normalizalas
+kfcat/1 (2026-08-27): a mapper GENERIKUS lett - a motorban nincs termek-tudas.
+  - Forras: /productExtend?full=1&limit=200 KOLLEKCIO, lapozva, parhuzamosan
+    (platform_api.shoprenter_list_products) - nem termekenkenti hivas.
+  - search_config.shoprenter.categories: OPCIONALIS. Ures -> teljes katalogus.
+  - MINDEN kitoltott attributum nyersen atmegy parameterkent (generic_params).
+  - search_config.shoprenter.profiles[]: nevvel hivott kanonizalo profil,
+    kategoriahoz kotve, pl. {"profile": "printer", "categories": [3420, ...],
+    "require_any_attr": ["funkcio", "funkciok", "nyomtatasitechnologia"]}.
+    A profil kanonizalt parameterei (technologia, sebesseg_ppm, papirmeret,
+    halozat, duplex...) a nyers attributumok MELLE kerulnek. A require_any_attr
+    a regi CORE/SUPPLY eldobo-heurisztika helyett: a termek csak akkor marad,
+    ha legalabb egy felsorolt attributuma kitoltott (a hibas kellek-attributumu
+    nyomtato - copygo WF-M5899, EM-C800 - igy bent marad, a funkcio nelkuli
+    kellek kiesik).
+  - search_config.shoprenter.skip_attrs: belso attr-nevek, amik nem mennek at
+    (alap: kefix_kat, a_beszallito).
+  - Keszlet-szures NEM itt: indexcore only_available (platform-fuggetlen).
 
 Ar: productPrices default customerGroup, gross/grossSpecial (special < gross ->
 akcios ar + athuzott eredeti). Lathatosag: status != "0" bekerul (a storefront a
 status=2-t is mutatja, "Elfogyott" badge-dzsel); available = keszlet-osszeg > 0.
-Az auth a kozos app.services.platform_api-bol; fajl-betoltos fallback a
-fake-app-os tesztkornyezetek ellen (m79c minta).
+Kep: csak a /custom/<shop>/image/cache/w300h300wt1/<ut> alak ad kepet.
 """
 from __future__ import annotations
 
@@ -37,6 +36,7 @@ import httpx
 
 try:
     from app.services.platform_api import (
+        shoprenter_list_products,
         shoprenter_resource_id,
         shoprenter_shop,
         shoprenter_token,
@@ -51,15 +51,17 @@ except Exception:  # fajl-betoltos tesztek / fake app-modulok a sys.modules-ben
     shoprenter_resource_id = _pm.shoprenter_resource_id
     shoprenter_shop = _pm.shoprenter_shop
     shoprenter_token = _pm.shoprenter_token
+    shoprenter_list_products = _pm.shoprenter_list_products
 
 _TIMEOUT = 60.0
-_REL_LIMIT = 200
-_MAX_REL_PAGES = 200
-_SLEEP = 0.05  # a ~0.4s latencia mellett ez ~2.2 req/s (SR limit: 3/s)
+_SLEEP = 0.05
+_CONCURRENCY = 4        # kfcat/1: merve 4 lap / 13 s, 429 nelkul (SR limit 3 req/s)
+_MAX_CAT_PAGES = 50     # categoryExtend 200/lap -> 10 000 kategoria
+MAX_ATTR_VALUES = 8     # ennyi ertek megy at egy attributumbol (params.json meret)
 
-INTERNAL_ATTRS = {"kefix_kat", "a_beszallito"}
-SUPPLY_ATTRS = {"kellekanyagtipus", "kompatibilitas"}
-CORE_ATTRS = {"funkcio", "funkciok", "nyomtatasitechnologia"}
+INTERNAL_ATTRS = {"kefix_kat", "a_beszallito"}   # alap skip_attrs (configbol bovitheto)
+# 'printer' profil: a copygo-n mert attr-nevek (kf01-kf18) - CSAK profillal aktiv
+CORE_ATTRS = {"funkcio", "funkciok", "nyomtatasitechnologia"}  # printer alap require_any_attr
 PASS_ATTRS = ("garancia", "kijelzotipusa", "allapot")
 
 # kategoria-innerId -> technologia-fallback (csak ahol a kategoria implikalja)
@@ -118,7 +120,7 @@ def attr_values(item):
     return out
 
 
-def collect_attrs(p):
+def collect_attrs(p, skip=INTERNAL_ATTRS):
     """{attr_nev: [ertekek]} a productAttributeExtend kitoltott elemeibol."""
     raw = {}
     for it in (p.get("productAttributeExtend") or []):
@@ -128,7 +130,7 @@ def collect_attrs(p):
         if not isinstance(name, str) or not name.strip():
             continue
         name = name.strip()
-        if name in INTERNAL_ATTRS:
+        if name in skip:
             continue
         vals = attr_values(it)
         if vals:
@@ -327,25 +329,56 @@ def desc_text(p):
     return " ".join(parts)
 
 
-def map_product(p, cat_id, cat_name):
-    """Nyers SR productExtend -> feed-alaku rekord; None = kiszurve.
+def profile_for(cat_ids, profiles):
+    """(profil, a termek profilba eso kategoriai) - az elso illeszkedo profil."""
+    for pr in profiles:
+        pc = pr.get("cats") or set()
+        hit = [c for c in cat_ids if c in pc]
+        if hit:
+            return pr, hit
+    return None, []
 
-    Printer-only szuro (handoff): van core-attr ES nincs kellek-attr.
-    """
-    if str(p.get("status") or "") == "0":
-        return None
-    raw = collect_attrs(p)
-    names = set(raw)
-    if names & SUPPLY_ATTRS:
-        return None
-    if not (names & CORE_ATTRS):
-        return None
 
-    pd = (p.get("productDescriptions") or [{}])
-    pd = pd[0] if pd and isinstance(pd[0], dict) else {}
-    text = desc_text(p)
+def pick_category(cat_ids, wanted, profiles):
+    """A termek 'c' mezoje: az elso kategoria a tenant listajabol (annak a
+    sorrendjeben), kulonben a profil kategoriaja, kulonben az elso relacio."""
+    if wanted:
+        for c in wanted:
+            if c in cat_ids:
+                return c
+    pr, hit = profile_for(cat_ids, profiles)
+    if hit:
+        return hit[0]
+    return cat_ids[0] if cat_ids else None
 
+
+def relation_cat_ids(p):
+    """A productExtend inline productCategoryRelations -> [category_id (int)] a
+    relacio-id b64-dekodjabol ('productCategory-product_id=X&category_id=Y')."""
+    out = []
+    for r in (p.get("productCategoryRelations") or []):
+        if not isinstance(r, dict):
+            continue
+        try:
+            rid = base64.b64decode(str(r.get("id") or "")).decode("utf-8", "ignore")
+        except Exception:  # noqa: BLE001
+            continue
+        for part in rid.split("&"):
+            if part.startswith("category_id="):
+                try:
+                    c = int(part.split("=", 1)[1])
+                except ValueError:
+                    continue
+                if c not in out:
+                    out.append(c)
+    return out
+
+
+def printer_params(raw, text, cat_ids):
+    """A 'printer' profil kanonizalt parameterei (kf01-kf18 szabalyok, valtozatlan).
+    cat_ids: a termek profilba eso kategoriai - a technologia-fallback barmelyikbol johet."""
     params = []
+    cat_id = next((c for c in cat_ids if c in TECH_BY_CAT), (cat_ids[0] if cat_ids else None))
 
     def add(name, value):
         if value is None:
@@ -380,7 +413,78 @@ def map_product(p, cat_id, cat_name):
     add("memoria_mb", None if mb is None else str(mb))
     for a in PASS_ATTRS:
         add(a, raw.get(a))
+    return params
 
+
+PROFILE_PARAMS = {"printer": printer_params}
+
+
+def generic_params(raw, skip=(), max_vals=MAX_ATTR_VALUES):
+    """kfcat/1: MINDEN kitoltott attributum nyersen, nev szerint (nincs termek-tudas)."""
+    params = []
+    for name in sorted(raw):
+        if name in skip:
+            continue
+        for v in raw[name][:max_vals]:
+            v = str(v).strip()
+            if v:
+                params.append({"name": name, "value": v})
+    return params
+
+
+def norm_profiles(cfg):
+    """search_config.shoprenter.profiles -> [{name, cats:set, require:set}]."""
+    out = []
+    for pr in (cfg.get("profiles") or []):
+        if not isinstance(pr, dict):
+            continue
+        name = str(pr.get("profile") or "").strip().lower()
+        if name not in PROFILE_PARAMS:
+            continue
+        cats = set()
+        for c in (pr.get("categories") or []):
+            try:
+                cats.add(int(c))
+            except (TypeError, ValueError):
+                pass
+        req = {str(a).strip() for a in (pr.get("require_any_attr") or []) if str(a).strip()}
+        if not req and "require_any_attr" not in pr and name == "printer":
+            req = set(CORE_ATTRS)   # alap: nyomtato = van funkcio/technologia attr
+        out.append({"name": name, "cats": cats, "require": req})
+    return out
+
+
+def map_product(p, wanted=(), profiles=(), cat_names=None, skip_attrs=INTERNAL_ATTRS):
+    """Nyers SR productExtend -> feed-alaku rekord; None = kiszurve.
+
+    kfcat/1 (generikus): status=0 kiesik; ha van `wanted` kategoria-lista, a
+    termeknek abban kell lennie; a profilhoz tartozo termek a profil kanonizalt
+    parametereit kapja ES a nyers attributumokat is; profil `require_any_attr`
+    eseten a termek csak akkor marad, ha legalabb egy ilyen attributuma kitoltott
+    (ez valtja a regi CORE/SUPPLY heurisztikat: a hibas kellek-attributumu
+    nyomtato bent marad, a funkcio nelkuli kellek kiesik).
+    """
+    if str(p.get("status") or "") == "0":
+        return None
+    cat_ids = relation_cat_ids(p)
+    wanted = [int(c) for c in wanted] if wanted else []
+    if wanted and not any(c in cat_ids for c in wanted):
+        return None
+    raw = collect_attrs(p, skip=skip_attrs)
+    pr, pr_cats = profile_for(cat_ids, profiles)
+    if pr is not None and pr["require"] and not (set(raw) & pr["require"]):
+        return None
+    pd = (p.get("productDescriptions") or [{}])
+    pd = pd[0] if pd and isinstance(pd[0], dict) else {}
+    text = desc_text(p)
+    params = []
+    if pr is not None:
+        params.extend(PROFILE_PARAMS[pr["name"]](raw, text, pr_cats))
+    # a profil altal KANONIZALT nevek arnyekoljak a nyers attributumot (kulonben a
+    # 'funkciok' facetbe a nyers 'Nyomtat, Masol, ...' osszevont ertek is bekerulne)
+    owned = {d["name"] for d in params}
+    params.extend(generic_params(raw, skip=set(skip_attrs) | owned))
+    cat_id = pick_category(cat_ids, wanted, profiles)
     price, orig = extract_price(p)
     stock = 0.0
     for i in (1, 2, 3, 4):
@@ -388,12 +492,13 @@ def map_product(p, cat_id, cat_name):
     ua = p.get("urlAliases") or []
     alias = ua[0].get("urlAlias") if ua and isinstance(ua[0], dict) else ""
     manuf = p.get("manufacturer")
+    names = cat_names or {}
     return {
         "id": p.get("innerId", ""),
         "sku": str(p.get("sku") or ""),
         "name": str(pd.get("name") or "").strip(),
         "brand": canon_brand((manuf or {}).get("name") if isinstance(manuf, dict) else "", raw),
-        "category": cat_name,
+        "category": str(names.get(cat_id) or (cat_id if cat_id is not None else "")),
         "price_gross": price,
         "orig_price": orig,
         "available": stock > 0,
@@ -419,13 +524,65 @@ def decode_rel_pid(rel_id_b64):
 # --------------------------------------------------------------------------- #
 # fetch
 # --------------------------------------------------------------------------- #
+async def fetch_category_names(base, headers, client):
+    """/categoryExtend?full=1 KOLLEKCIO (200/lap) -> {category_id: nev}.
+    (A /categories csak href-stubot ad; a per-kategoria hivas felesleges.)"""
+    names = {}
+    for page in range(_MAX_CAT_PAGES):
+        for attempt in range(4):
+            try:
+                r = await client.get(base + "/categoryExtend",
+                                     params={"full": 1, "limit": 200, "page": page},
+                                     headers=headers)
+                if r.status_code == 429 or r.status_code >= 500:
+                    await asyncio.sleep(1.5 * (attempt + 1))
+                    continue
+                r.raise_for_status()
+                body = r.json()
+                break
+            except httpx.HTTPError:
+                await asyncio.sleep(1.5 * (attempt + 1))
+        else:
+            raise RuntimeError("Shoprenter: categoryExtend tartos hiba (page %d)" % page)
+        items = body.get("items") or (body.get("response") or {}).get("items") or []
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            try:
+                cid = int(str(it.get("innerId") or "").strip())
+            except ValueError:
+                continue
+            cds = it.get("categoryDescriptions") or []
+            nm = cds[0].get("name") if cds and isinstance(cds[0], dict) else ""
+            names[cid] = str(nm or cid).strip()
+        await asyncio.sleep(_SLEEP)
+        if not items or len(items) < 200:
+            break
+    return names
+
+
 async def fetch(tenant, tcfg=None):
-    """(products_feed_alaku, url_prefix, img_prefix) egy Shoprenter tenantra."""
+    """(products_feed_alaku, url_prefix, img_prefix) egy Shoprenter tenantra.
+
+    kfcat/1: a termekek a /productExtend?full=1 KOLLEKCIOBOL jonnek, lapozva,
+    4 parhuzamos lappal (platform_api.shoprenter_list_products - ugyanaz a
+    primitiv, amit a chatbot-sync naponta futtat), NEM termekenkent.
+    `categories` ures -> TELJES katalogus; adott -> szures a relaciokbol.
+    Merve (copygo, 2026-08-27): 302 lap x 12 MB, 4 parhuzammal ~17 perc.
+    """
     cfg = (tcfg or {}).get("shoprenter") or {}
-    cats = [int(c) for c in (cfg.get("categories") or []) if str(c).strip()]
-    if not cats:
-        raise RuntimeError(
-            "Shoprenter: nincs kategoria-lista (search_config.shoprenter.categories)")
+    wanted = []
+    for c in (cfg.get("categories") or []):
+        try:
+            wanted.append(int(c))
+        except (TypeError, ValueError):
+            pass
+    profiles = norm_profiles(cfg)
+    skip_attrs = set(INTERNAL_ATTRS)
+    for a in (cfg.get("skip_attrs") or []):
+        if str(a).strip():
+            skip_attrs.add(str(a).strip())
+    conc = int(cfg.get("concurrency") or _CONCURRENCY)
     base = str(tenant.api_base or "").strip().rstrip("/")
     shop = shoprenter_shop(base)
     cid = str(tenant.api_client_id or "").strip()
@@ -434,8 +591,6 @@ async def fetch(tenant, tcfg=None):
     if not pub:
         raise RuntimeError("Shoprenter: nincs public_url")
     url_prefix = pub + "/"
-    # SR: a nyers /uploads ut NEM kepet ad (0 bajtos HTML) - a kepek az
-    # image-cache utvonalon jonnek: /custom/<shop>/image/cache/<preset>/<ut>
     img_prefix = pub + "/custom/" + shop + "/image/cache/w300h300wt1/"
 
     async with httpx.AsyncClient(timeout=_TIMEOUT, follow_redirects=True) as client:
@@ -443,82 +598,25 @@ async def fetch(tenant, tcfg=None):
         if not token:
             raise RuntimeError("Shoprenter: nincs token")
         headers = {"Authorization": "Bearer " + token, "Accept": "application/json"}
+        cat_names = await fetch_category_names(base, headers, client)
 
-        async def req(path, params=None):
-            """Tolerans GET: 429/5xx backoff, 401-re EGYSZERI re-auth (a 401 a
-            copygo-n bizonyitottan tranziens is lehet)."""
-            nonlocal token, headers
-            reauthed = False
-            for attempt in range(5):
-                try:
-                    r = await client.get(base + path, params=params, headers=headers)
-                except httpx.HTTPError:
-                    await asyncio.sleep(1.5 * (attempt + 1))
-                    continue
-                if r.status_code == 401 and not reauthed:
-                    reauthed = True
-                    token = await shoprenter_token(client, shop, cid, sec)
-                    headers = {"Authorization": "Bearer " + token,
-                               "Accept": "application/json"}
-                    continue
-                if r.status_code == 429 or r.status_code >= 500:
-                    await asyncio.sleep(1.5 * (attempt + 1))
-                    continue
-                r.raise_for_status()
-                return r.json()
-            raise RuntimeError("Shoprenter: tartos hiba: %s" % path)
-
-        # 1) kategoria-nevek
-        cat_names = {}
-        for c in cats:
-            body = await req("/categoryExtend/%s" % shoprenter_resource_id("category", str(c)),
-                             {"full": 1})
-            cds = body.get("categoryDescriptions") or []
-            nm = cds[0].get("name") if cds and isinstance(cds[0], dict) else ""
-            cat_names[c] = str(nm or c)
-            await asyncio.sleep(_SLEEP)
-
-        # 2) relaciok kategoriankent -> pid-sorrend + pid->kategoria (elso nyer)
-        pid_cat = {}
-        order = []
-        for c in cats:
-            b64cat = base64.b64encode(("category-category_id=%d" % c).encode()).decode()
-            for page in range(_MAX_REL_PAGES):
-                body = await req("/productCategoryRelations",
-                                 {"full": 1, "limit": _REL_LIMIT, "page": page,
-                                  "categoryId": b64cat})
-                items = body.get("items") or (body.get("response") or {}).get("items") or []
-                got = 0
-                for it in items:
-                    if not isinstance(it, dict):
-                        continue
-                    pid = decode_rel_pid(it.get("id"))
-                    if pid:
-                        got += 1
-                        if pid not in pid_cat:
-                            pid_cat[pid] = c
-                            order.append(pid)
-                await asyncio.sleep(_SLEEP)
-                if not items or len(items) < _REL_LIMIT:
-                    break
-
-        # 3) termekenkent productExtend -> map_product (+ diag szamlalok)
-        products = []
-        diag = {c: [0, 0] for c in cats}  # cat -> [bekerult, kiszurt]
-        for pid in order:
-            c = pid_cat[pid]
-            body = await req("/productExtend/%s" % shoprenter_resource_id("product", pid),
-                             {"full": 1})
-            rec = map_product(body, c, cat_names.get(c, str(c)))
+    products = []
+    seen = 0
+    dropped = {"status0": 0, "not_in_cats": 0, "require": 0}
+    async for page in shoprenter_list_products(base, cid, sec, full=1, concurrency=conc):
+        for p in page:
+            seen += 1
+            rec = map_product(p, wanted, profiles, cat_names, skip_attrs)
             if rec is None:
-                diag[c][1] += 1
-            else:
-                diag[c][0] += 1
-                products.append(rec)
-            await asyncio.sleep(_SLEEP)
-
-        for c in cats:
-            print("shoprenter-diag %s cat=%s(%s) kept=%d dropped=%d" % (
-                tenant.client_id, c, cat_names.get(c, ""), diag[c][0], diag[c][1]))
-
+                if str(p.get("status") or "") == "0":
+                    dropped["status0"] += 1
+                elif wanted and not any(c in relation_cat_ids(p) for c in wanted):
+                    dropped["not_in_cats"] += 1
+                else:
+                    dropped["require"] += 1
+                continue
+            products.append(rec)
+    print("shoprenter-diag %s seen=%d kept=%d dropped=%s cats=%s profiles=%s" % (
+        tenant.client_id, seen, len(products), dropped,
+        wanted or "ALL", [(pr["name"], len(pr["cats"])) for pr in profiles]))
     return products, url_prefix, img_prefix

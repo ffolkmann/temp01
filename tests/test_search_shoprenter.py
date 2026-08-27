@@ -126,6 +126,11 @@ def test_decode_rel_pid():
     assert sr.decode_rel_pid("nem-b64!!") is None
 
 
+def _rel(cat_id, pid="42"):
+    import base64
+    return {"id": base64.b64encode(("productCategory-product_id=%s&category_id=%s" % (pid, cat_id)).encode()).decode()}
+
+
 def _full_product(**over):
     p = {
         "innerId": "42",
@@ -136,6 +141,7 @@ def _full_product(**over):
         "dateCreated": "2024-01-10T08:00:00",
         "manufacturer": {"name": "Brother"},
         "urlAliases": [{"urlAlias": "brother-sku42"}],
+        "productCategoryRelations": [_rel(3405), _rel(3423)],
         "productDescriptions": [{"name": "Brother SKU42 MFP",
                                  "shortDescription": "rovid",
                                  "description": "<p>Ethernet es duplex</p>",
@@ -152,8 +158,33 @@ def _full_product(**over):
     return p
 
 
-def test_map_product_full():
-    rec = sr.map_product(_full_product(), 3423, "L\u00e9zernyomtat\u00f3")
+PRINTER = {"profiles": [{"profile": "printer", "categories": [3405, 3420, 3423]}]}
+NAMES = {3405: "Nyomtat\u00f3k", 3423: "L\u00e9zernyomtat\u00f3", 3420: "Tintasugaras", 9001: "Napelem"}
+
+
+def test_relation_cat_ids_and_pick():
+    p = _full_product()
+    assert sr.relation_cat_ids(p) == [3405, 3423]
+    prof = sr.norm_profiles(PRINTER)
+    assert sr.pick_category([3405, 3423], [3423, 3405], prof) == 3423   # tenant-lista sorrendje
+    assert sr.pick_category([9001, 3423], [], prof) == 3423             # profil kategoriaja
+    assert sr.pick_category([9001, 7], [], prof) == 9001                # elso relacio
+    assert sr.pick_category([], [], prof) is None
+
+
+def test_norm_profiles_defaults():
+    prof = sr.norm_profiles(PRINTER)
+    assert prof[0]["name"] == "printer" and prof[0]["cats"] == {3405, 3420, 3423}
+    assert prof[0]["require"] == set(sr.CORE_ATTRS)
+    custom = sr.norm_profiles({"profiles": [{"profile": "printer", "categories": ["3420"],
+                                             "require_any_attr": ["funkciok"]}]})
+    assert custom[0]["require"] == {"funkciok"} and custom[0]["cats"] == {3420}
+    assert sr.norm_profiles({"profiles": [{"profile": "ismeretlen", "categories": [1]}]}) == []
+    assert sr.norm_profiles({}) == []
+
+
+def test_map_product_printer_profile():
+    rec = sr.map_product(_full_product(), [3423], sr.norm_profiles(PRINTER), NAMES)
     assert rec["id"] == "42" and rec["sku"] == "SKU42"
     assert rec["category"] == "L\u00e9zernyomtat\u00f3"
     assert rec["available"] is True
@@ -164,16 +195,92 @@ def test_map_product_full():
     assert ("funkciok", "M\u00e1sol\u00e1s") in names
     assert ("szinkezeles", "Mono") in names
     assert ("sebesseg_ppm", "22") in names
-    assert ("technologia", "L\u00e9zer") in names        # kategoria-fallback
+    assert ("technologia", "L\u00e9zer") in names        # kategoria-fallback (3423)
     assert ("halozat", "LAN") in names                   # leiras-regex
     assert ("duplex", "Val\u00f3sz\u00edn\u0171") in names  # leiras-fallback
+    # kfcat/1: a nyers attributumok IS atmennek - kiveve, amit a profil kanonizalt neven ad
+    assert ("funkcio", "Nyomtat, M\u00e1sol") in names
+    assert ("nyomtatasisebessegmono", "22 oldal/perc") in names
+    assert not any(n == "szinkezeles" and v == "mono" for n, v in names)   # arnyekolva
 
 
-def test_map_product_filters():
-    supply = _full_product(productAttributeExtend=[
-        _attr("funkcio", "Nyomtat\u00e1s"), _attr("kellekanyagtipus", "ut\u00e1ngy\u00e1rtott")])
-    assert sr.map_product(supply, 3423, "x") is None
-    nocore = _full_product(productAttributeExtend=[_attr("garancia", "12 h\u00f3nap")])
-    assert sr.map_product(nocore, 3423, "x") is None
-    off = _full_product(status="0")
-    assert sr.map_product(off, 3423, "x") is None
+def test_map_product_generic_no_profile():
+    p = _full_product(productCategoryRelations=[_rel(9001)],
+                      productAttributeExtend=[_attr("teljesitmeny_w", "470"), _attr("kefix_kat", "0%")])
+    rec = sr.map_product(p, [], [], NAMES)
+    assert rec is not None and rec["category"] == "Napelem"
+    names = {(d["name"], d["value"]) for d in rec["parameters"]}
+    assert names == {("teljesitmeny_w", "470")}          # belso attr kimarad, semmi kanonizalas
+    # ismeretlen kategoria -> az id a nev
+    rec2 = sr.map_product(_full_product(productCategoryRelations=[_rel(777)]), [], [], NAMES)
+    assert rec2["category"] == "777"
+
+
+def test_map_product_wanted_filter():
+    assert sr.map_product(_full_product(), [9001], [], NAMES) is None
+    assert sr.map_product(_full_product(), [3405], [], NAMES) is not None
+    assert sr.map_product(_full_product(), [], [], NAMES) is not None   # ures = teljes katalogus
+
+
+def test_map_product_require_any_attr():
+    prof = sr.norm_profiles(PRINTER)
+    # copygo WF-M5899 / EM-C800: nyomtato HIBAS kellek-attributummal -> BENT MARAD (van funkciok)
+    epson = _full_product(productCategoryRelations=[_rel(3405), _rel(3420)], productAttributeExtend=[
+        _attr("funkciok", "Nyomtat, M\u00e1sol, Szkennel, Faxol"),
+        _attr("kellekanyagtipus", "ut\u00e1ngy\u00e1rtott"), _attr("kompatibilitas", "Epson")])
+    rec = sr.map_product(epson, [], prof, NAMES)
+    assert rec is not None
+    names = {(d["name"], d["value"]) for d in rec["parameters"]}
+    assert ("funkciok", "Fax") in names and ("technologia", "Tintasugaras") in names
+    assert ("funkciok", "Nyomtat, M\u00e1sol, Szkennel, Faxol") not in names   # nyers alak arnyekolva
+    assert ("kellekanyagtipus", "ut\u00e1ngy\u00e1rtott") in names             # nyers attr atmegy
+    # kellek a nyomtato-kategoriaban, funkcio nelkul -> kiesik
+    supply = _full_product(productAttributeExtend=[_attr("kellekanyagtipus", "ut\u00e1ngy\u00e1rtott")])
+    assert sr.map_product(supply, [], prof, NAMES) is None
+    # ugyanaz PROFIL NELKUL: generikusan bent marad
+    assert sr.map_product(supply, [], [], NAMES) is not None
+    # status=0 mindig kiesik
+    assert sr.map_product(_full_product(status="0"), [], prof, NAMES) is None
+
+
+def test_generic_params_caps_values():
+    raw = {"szin": [str(i) for i in range(20)], "x": ["a"]}
+    got = sr.generic_params(raw, skip={"x"})
+    assert len(got) == sr.MAX_ATTR_VALUES and all(d["name"] == "szin" for d in got)
+
+
+def test_fetch_streams_collection(monkeypatch):
+    import asyncio
+
+    class T:
+        client_id = "copygo"; api_base = "https://copygo.api2.myshoprenter.hu/api"
+        api_client_id = "k"; api_client_secret = "s"; public_url = "https://copygo.hu"
+
+    async def fake_token(client, shop, cid, sec, force=False):
+        return "tok"
+
+    async def fake_names(base, headers, client):
+        return NAMES
+
+    calls = {}
+
+    async def fake_list(api_base, cid, sec, full=1, concurrency=4):
+        calls["args"] = (api_base, full, concurrency)
+        yield [_full_product(), _full_product(innerId="43", sku="OFF", status="0")]
+        yield [_full_product(innerId="44", sku="PANEL", productCategoryRelations=[_rel(9001, "44")],
+                             productAttributeExtend=[_attr("teljesitmeny_w", "470")])]
+
+    monkeypatch.setattr(sr, "shoprenter_token", fake_token)
+    monkeypatch.setattr(sr, "fetch_category_names", fake_names)
+    monkeypatch.setattr(sr, "shoprenter_list_products", fake_list)
+    tcfg = {"shoprenter": dict(PRINTER)}
+    products, up, ip = asyncio.run(sr.fetch(T(), tcfg))
+    assert calls["args"] == ("https://copygo.api2.myshoprenter.hu/api", 1, 4)
+    assert up == "https://copygo.hu/"
+    assert ip == "https://copygo.hu/custom/copygo/image/cache/w300h300wt1/"
+    assert [p["sku"] for p in products] == ["SKU42", "PANEL"]       # status=0 kiesett, teljes katalogus
+    assert products[1]["category"] == "Napelem"
+    # kategoria-szures: csak a nyomtato marad
+    tcfg2 = {"shoprenter": {"categories": [3423]}}
+    products2, _, _ = asyncio.run(sr.fetch(T(), tcfg2))
+    assert [p["sku"] for p in products2] == ["SKU42"]
