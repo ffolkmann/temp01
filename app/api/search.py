@@ -60,8 +60,10 @@ SEARCH_KINDS = {
     "ss_answer", "ss_answer_click", "ss_hint",
 }
 POPULAR_DAYS = 30
-MAX_TERMS = 8
-MAX_PRODUCTS = 10
+MAX_TERMS = 30         # kfcat/3: a KEZI listak plafonja 8/10 -> 30/30 (searchcfg-vel egyezik)
+MAX_PRODUCTS = 30
+MAX_TERMS_AUTO = 8     # az automatikus (valodi keresesekbol / kattintasokbol epulo) listak maradnak rovidek
+MAX_PRODUCTS_AUTO = 10
 MERCH_WEIGHTS = ("front", "up", "down", "back")
 CACHE_SECONDS = 300
 
@@ -192,7 +194,7 @@ def active_merch(rules: Any, today: date | None = None) -> list[dict[str, Any]]:
     return out
 
 
-def pick_terms(rows: Any, cap: int = MAX_TERMS) -> list[str]:
+def pick_terms(rows: Any, cap: int = MAX_TERMS_AUTO) -> list[str]:
     """Top keresések: min. 3 karakter + prefix-dedup (a gépelés-töredékek ellen)."""
     out: list[str] = []
     for raw in rows or []:
@@ -261,7 +263,7 @@ async def auto_ids(session: AsyncSession, client_id: str) -> list[str]:
     """Legtöbbet kattintott termék-azonosítók az elmúlt 30 napból."""
     try:
         rows = (await session.execute(
-            _SQL_IDS, {"cid": client_id, "days": POPULAR_DAYS, "lim": MAX_PRODUCTS}
+            _SQL_IDS, {"cid": client_id, "days": POPULAR_DAYS, "lim": MAX_PRODUCTS_AUTO}
         )).all()
     except Exception:  # noqa: BLE001
         logger.warning("search: auto_ids hiba (%s)", client_id)
