@@ -19,6 +19,12 @@ Kimenet (tenantonkenti out_dir): index.json {"products":[{i,k,n,b,c,p,a,u,m[,o],
 params.json (szotar-kodolt facet-adat), manifest.json, es CSAK akkor
 first_seen.json, ha van created_day nelkuli rekord (pl. webdoc feed).
 
+kfsc/1 (2026-08-28): build_index(..., scope=[...]) - build-ideju alapszuro. Ezzel
+ugyanabbol a lekert adatbol KET kimenet keszulhet: teljes index a keresonek es
+szuk, scope-olt index a konfiguratornak (lasd app/search/__main__.py `konf` blokk).
+Indok: a widget a TELJES indexet tolti le kliens-oldalon, ezert a konfiguratornak
+nem szabad az egesz katalogust adni. ADR: claude/adr-001-egy-kodbazis-ket-kimeneti-profil.md
+
 Vedelem a pilotbol orokolve: atomikus iras, min_ratio zsugorodas-guard,
 hibanal a regi index marad es a manifest error-t kap.
 """
@@ -155,6 +161,67 @@ def apply_days(rows, cdays, out_dir):
     return new_ids
 
 
+def _param_map(p):
+    """A feed-alaku rekord parametereibol {nev: [ertekek]} - a scope kiertekelesehez."""
+    out = {}
+    for name, v in param_pairs(p):
+        out.setdefault(name, []).append(v)
+    return out
+
+
+def _scope_num(x):
+    try:
+        return float(str(x).replace(" ", "").replace(",", "."))
+    except (TypeError, ValueError):
+        return None
+
+
+def _scope_one(row, pmap, cond):
+    """EGY scope-feltetel. Ugyanaz a szemantika, mint a widget ruleset-szurojeben:
+    `param` = termekparameter (params.json), `field` = kompakt index-mezo (p/b/c/a),
+    op = eq | neq | has_any | gte | lte | exists."""
+    if not isinstance(cond, dict):
+        return True
+    op = str(cond.get("op") or "").strip()
+    if cond.get("param"):
+        v = pmap.get(str(cond["param"]))
+    else:
+        f = str(cond.get("field") or "").strip()
+        v = row.get(f) if f else None
+    tgt = cond.get("value", cond.get("v"))
+    if op == "exists":
+        return v not in (None, "", [], 0)
+    if v is None:
+        return False
+    lst = v if isinstance(v, list) else [v]
+    if op == "eq":
+        return any(str(x) == str(tgt) for x in lst)
+    if op == "neq":
+        return all(str(x) != str(tgt) for x in lst)
+    if op == "has_any":
+        t = tgt if isinstance(tgt, list) else [tgt]
+        return any(str(x).strip().lower() == str(y).strip().lower() for x in lst for y in t)
+    ns = [n for n in (_scope_num(x) for x in lst) if n is not None]
+    tn = _scope_num(tgt)
+    if not ns or tn is None:
+        return False
+    if op == "gte":
+        return any(n >= tn for n in ns)
+    if op == "lte":
+        return any(n <= tn for n in ns)
+    return False
+
+
+def scope_match(row, pmap, scope):
+    """Beleesik-e a termek a scope-ba. A feltetelek ES-kapcsolatban; egy elem lehet
+    lista is (azon belul is ES). Ures/hianyzo scope -> minden termek benne van."""
+    for cond in scope or ():
+        conds = cond if isinstance(cond, list) else [cond]
+        if not all(_scope_one(row, pmap, c) for c in conds):
+            return False
+    return True
+
+
 def _prev_count(manifest_path):
     if not os.path.exists(manifest_path):
         return 0
@@ -173,8 +240,13 @@ def write_error_manifest(out_dir, tenant, err):
 
 
 def build_index(tenant, products, out_dir, url_prefix, img_prefix,
-                only_available=True, min_ratio=0.5):
-    """Feed-alaku termeklistabol a harom kiszolgalt fajl. Eredmeny-dict a CLI-nek."""
+                only_available=True, min_ratio=0.5, scope=None):
+    """Feed-alaku termeklistabol a harom kiszolgalt fajl. Eredmeny-dict a CLI-nek.
+
+    kfsc/1: a `scope` build-ideju alapszuro (a ruleset-scope parja) - ezzel egy
+    tenantnak KET kimenete lehet ugyanabbol a lekert adatbol: teljes index a
+    keresonek, szuk index a konfiguratornak. Ures scope -> minden termek bekerul,
+    tehat a meglevo tenantok viselkedese valtozatlan."""
     os.makedirs(out_dir, exist_ok=True)
     manifest_path = os.path.join(out_dir, "manifest.json")
     index_path = os.path.join(out_dir, "index.json")
@@ -185,6 +257,14 @@ def build_index(tenant, products, out_dir, url_prefix, img_prefix,
     if only_available:
         products = [p for p in products if p.get("available")]
     rows = [compact(p, url_prefix, img_prefix) for p in products]
+
+    if scope:
+        # a products es a rows sorrendje osszetartozik (apply_days zip-eli oket),
+        # ezert EGYUTT szurunk
+        pairs = [(p, r) for p, r in zip(products, rows)
+                 if scope_match(r, _param_map(p), scope)]
+        products = [p for p, _ in pairs]
+        rows = [r for _, r in pairs]
 
     if prev_count and len(rows) < prev_count * min_ratio:
         err = f"gyanus zsugorodas {prev_count}->{len(rows)}, index nem frissult"
@@ -211,4 +291,5 @@ def build_index(tenant, products, out_dir, url_prefix, img_prefix,
     }, ensure_ascii=False))
     return {"tenant": tenant, "v": version, "count": len(rows), "new_ids": new_ids,
             "index_mb": round(len(body) / 1e6, 2), "pv": pv, "pcount": len(params["p"]),
-            "params_mb": round(len(params_body) / 1e6, 2), "out": out_dir}
+            "params_mb": round(len(params_body) / 1e6, 2), "out": out_dir,
+            "scoped": bool(scope)}

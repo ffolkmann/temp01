@@ -6,6 +6,15 @@ app.sync-nel); hogy MELYIK tenantra fut, azt a data/smartsearch.json kapcsolja:
 
     {"tenants": {"teslashop": {"enabled": true, "min_ratio": 0.5, "only_available": true}}}
 
+kfsc/1: opcionalis MASODIK kimenet (konfigurator-index) ugyanabbol a lekert adatbol:
+
+    {"enabled": true, "only_available": true,
+     "konf": {"enabled": true, "suffix": "-konf", "only_available": true,
+              "scope": [{"param": "technologia", "op": "exists"}]}}
+
+-> <out>/<tenant>/ (teljes, keresonek) es <out>/<tenant>-konf/ (szuk, konfiguratornak).
+A `konf` blokk nelkul semmi nem valtozik.
+
 Futtatas a cx-sync mintajara, kulon out-mounttal (az app a kepben NINCS friss,
 ezert a repo app-jat is mountoljuk):
 
@@ -71,6 +80,23 @@ async def run_tenant(tenant, tcfg, out_root):
         min_ratio=float(tcfg.get("min_ratio", 0.5)),
     )
     res["platform"] = platform
+
+    # kfsc/1: OPCIONALIS masodik kimenet szukebb termekkorrel (konfigurator-index).
+    # Ugyanabbol a mar lekert `products` listabol epul - NINCS ujabb API-hivas.
+    kcfg = tcfg.get("konf")
+    if isinstance(kcfg, dict) and kcfg.get("enabled"):
+        suffix = str(kcfg.get("suffix") or "-konf").strip() or "-konf"
+        kdir = os.path.join(out_root, client_id + suffix)
+        try:
+            res["konf"] = indexcore.build_index(
+                client_id, products, kdir, url_prefix, img_prefix,
+                only_available=bool(kcfg.get("only_available", True)),
+                min_ratio=float(kcfg.get("min_ratio", 0.5)),
+                scope=kcfg.get("scope") or None,
+            )
+        except Exception as e:  # noqa: BLE001 - a konf-index hibaja NEM viheti el a fo indexet
+            indexcore.write_error_manifest(kdir, client_id, f"konf-index: {e}")
+            res["konf"] = {"error": f"konf-index: {e}"}
     return res
 
 
