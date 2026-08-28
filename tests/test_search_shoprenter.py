@@ -135,7 +135,7 @@ def _full_product(**over):
     p = {
         "innerId": "42",
         "sku": "SKU42",
-        "status": "2",
+        "status": "1",
         "stock1": "1", "stock2": "0", "stock3": "0", "stock4": "0",
         "mainPicture": "uploads/products/sku42-1.jpg",
         "dateCreated": "2024-01-10T08:00:00",
@@ -239,8 +239,15 @@ def test_map_product_require_any_attr():
     assert sr.map_product(supply, [], prof, NAMES) is None
     # ugyanaz PROFIL NELKUL: generikusan bent marad
     assert sr.map_product(supply, [], [], NAMES) is not None
-    # status=0 mindig kiesik
+    # status=0 (letiltott) es status=2 (kifutott) is mindig kiesik - kfst/1
     assert sr.map_product(_full_product(status="0"), [], prof, NAMES) is None
+    assert sr.map_product(_full_product(status="2"), [], prof, NAMES) is None
+    # az engedelyezett termek bent marad akkor is, ha 0 a keszlete
+    nostock = sr.map_product(_full_product(status="1", stock1="0"), [], prof, NAMES)
+    assert nostock is not None and nostock["available"] is False
+    # a statusz-halmaz felulirhato: ha csak a 0-t dobjuk, a kifutott bent marad
+    assert sr.map_product(_full_product(status="2"), [], prof, NAMES,
+                          drop_status={"0"}) is not None
 
 
 def test_generic_params_caps_values():
@@ -266,7 +273,8 @@ def test_fetch_streams_collection(monkeypatch):
 
     async def fake_list(api_base, cid, sec, full=1, concurrency=4):
         calls["args"] = (api_base, full, concurrency)
-        yield [_full_product(), _full_product(innerId="43", sku="OFF", status="0")]
+        yield [_full_product(), _full_product(innerId="43", sku="OFF", status="0"),
+               _full_product(innerId="45", sku="KIFUTO", status="2")]
         yield [_full_product(innerId="44", sku="PANEL", productCategoryRelations=[_rel(9001, "44")],
                              productAttributeExtend=[_attr("teljesitmeny_w", "470")])]
 
@@ -278,7 +286,7 @@ def test_fetch_streams_collection(monkeypatch):
     assert calls["args"] == ("https://copygo.api2.myshoprenter.hu/api", 1, 4)
     assert up == "https://copygo.hu/"
     assert ip == "https://copygo.hu/custom/copygo/image/cache/w300h300wt1/"
-    assert [p["sku"] for p in products] == ["SKU42", "PANEL"]       # status=0 kiesett, teljes katalogus
+    assert [p["sku"] for p in products] == ["SKU42", "PANEL"]       # status=0 ES status=2 kiesett
     assert products[1]["category"] == "Napelem"
     # kategoria-szures: csak a nyomtato marad
     tcfg2 = {"shoprenter": {"categories": [3423]}}

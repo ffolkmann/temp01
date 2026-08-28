@@ -20,9 +20,15 @@ kfcat/1 (2026-08-27): a mapper GENERIKUS lett - a motorban nincs termek-tudas.
     (alap: kefix_kat, a_beszallito).
   - Keszlet-szures NEM itt: indexcore only_available (platform-fuggetlen).
 
+kfst/1 (2026-08-28, Hungarotoner-keres): a KIFUTOTT (status=2) is kiesik, nem csak
+  a letiltott (status=0) - "kifutott allapot eseten soha nem rendelheto mar, de a
+  keszleten lehet ugy latszik hogy van keszlet, ez nem szamit". A statusz-halmaz
+  search_config.<platform>.drop_status-bol felulirhato. Az ENGEDELYEZETT + 0 keszlet
+  termek BENT MARAD (available=False) - a keszlet-szures a widget dolga.
+
 Ar: productPrices default customerGroup, gross/grossSpecial (special < gross ->
-akcios ar + athuzott eredeti). Lathatosag: status != "0" bekerul (a storefront a
-status=2-t is mutatja, "Elfogyott" badge-dzsel); available = keszlet-osszeg > 0.
+akcios ar + athuzott eredeti). Lathatosag: a DROP_STATUS-ban levo statusz kiesik
+(alap: 0 letiltott, 2 kifutott); available = keszlet-osszeg > 0.
 Kep: csak a /custom/<shop>/image/cache/w300h300wt1/<ut> alak ad kepet.
 """
 from __future__ import annotations
@@ -60,6 +66,10 @@ _MAX_CAT_PAGES = 50     # categoryExtend 200/lap -> 10 000 kategoria
 MAX_ATTR_VALUES = 8     # ennyi ertek megy at egy attributumbol (params.json meret)
 
 INTERNAL_ATTRS = {"kefix_kat", "a_beszallito"}   # alap skip_attrs (configbol bovitheto)
+# kfst/1: Shoprenter termek-statusz. 0 = letiltott (feed adja, de a shopban nincs kint),
+# 2 = kifutott (soha nem rendelheto; a keszlet-mezoben allhat szam, az nem szamit).
+# Tenantonkent hangolhato: search_config.<platform>.drop_status = ["0","2"].
+DROP_STATUS = {"0", "2"}
 # 'printer' profil: a copygo-n mert attr-nevek (kf01-kf18) - CSAK profillal aktiv
 CORE_ATTRS = {"funkcio", "funkciok", "nyomtatasitechnologia"}  # printer alap require_any_attr
 PASS_ATTRS = ("garancia", "kijelzotipusa", "allapot")
@@ -454,7 +464,8 @@ def norm_profiles(cfg):
     return out
 
 
-def map_product(p, wanted=(), profiles=(), cat_names=None, skip_attrs=INTERNAL_ATTRS):
+def map_product(p, wanted=(), profiles=(), cat_names=None, skip_attrs=INTERNAL_ATTRS,
+                drop_status=None):
     """Nyers SR productExtend -> feed-alaku rekord; None = kiszurve.
 
     kfcat/1 (generikus): status=0 kiesik; ha van `wanted` kategoria-lista, a
@@ -464,7 +475,7 @@ def map_product(p, wanted=(), profiles=(), cat_names=None, skip_attrs=INTERNAL_A
     (ez valtja a regi CORE/SUPPLY heurisztikat: a hibas kellek-attributumu
     nyomtato bent marad, a funkcio nelkuli kellek kiesik).
     """
-    if str(p.get("status") or "") == "0":
+    if str(p.get("status") or "") in (drop_status or DROP_STATUS):
         return None
     cat_ids = relation_cat_ids(p)
     wanted = [int(c) for c in wanted] if wanted else []
@@ -582,6 +593,12 @@ async def fetch(tenant, tcfg=None):
     for a in (cfg.get("skip_attrs") or []):
         if str(a).strip():
             skip_attrs.add(str(a).strip())
+    drop_status = set(DROP_STATUS)
+    ds_cfg = cfg.get("drop_status")
+    if isinstance(ds_cfg, (list, tuple, set)):
+        vals = {str(s).strip() for s in ds_cfg if str(s).strip() != ""}
+        if vals:
+            drop_status = vals
     conc = int(cfg.get("concurrency") or _CONCURRENCY)
     base = str(tenant.api_base or "").strip().rstrip("/")
     shop = shoprenter_shop(base)
@@ -602,14 +619,14 @@ async def fetch(tenant, tcfg=None):
 
     products = []
     seen = 0
-    dropped = {"status0": 0, "not_in_cats": 0, "require": 0}
+    dropped = {"status": 0, "not_in_cats": 0, "require": 0}
     async for page in shoprenter_list_products(base, cid, sec, full=1, concurrency=conc):
         for p in page:
             seen += 1
-            rec = map_product(p, wanted, profiles, cat_names, skip_attrs)
+            rec = map_product(p, wanted, profiles, cat_names, skip_attrs, drop_status)
             if rec is None:
-                if str(p.get("status") or "") == "0":
-                    dropped["status0"] += 1
+                if str(p.get("status") or "") in drop_status:
+                    dropped["status"] += 1
                 elif wanted and not any(c in relation_cat_ids(p) for c in wanted):
                     dropped["not_in_cats"] += 1
                 else:
