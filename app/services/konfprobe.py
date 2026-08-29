@@ -326,13 +326,14 @@ async def _probe_shoprenter(client, c):
     cnt, sample = sr_shape(_json(r2), limit=1)   # kf/16a: pageCount == termékszám
     out = _ok("shoprenter", cnt, sample, shop=shop)
     if cnt is not None:
-        out["detail"] += (" Ez a teljes katalógus — az index csak a beállított "
-                          "kategóriákra szűr.")
-    if not c["sr_categories"]:
-        # kf/6 tanulsága: kategória-lista nélkül a build "nincs kategoria-lista"-ra hasal el
-        out["warn"] = ("A kapcsolat jó, de nincs kategória-lista "
-                       "(search_config.shoprenter.categories) — enélkül az "
-                       "index-build hibára fut.")
+        if c["sr_categories"]:
+            out["detail"] += (" Ez a teljes katalógus — az index a beállított "
+                              "kategóriákra szűr.")
+        else:
+            # kfcat/1 óta az üres kategória-lista SZÁNDÉKOS: a teljes katalógus
+            # kerül az indexbe. A kf/6-os figyelmeztetés ezért kivezetve.
+            out["detail"] += (" Ez a teljes katalógus — kategória-lista nincs "
+                              "megadva, így az index a teljes kínálatot viszi.")
     return out
 
 

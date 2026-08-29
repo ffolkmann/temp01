@@ -371,12 +371,22 @@ async def test_probe_shoprenter_CSAK_EGY_LAPOT_KER():
     assert len(c.calls) == 2
 
 
-async def test_probe_shoprenter_kategoria_lista_nelkul_warn():
-    """kf/6: kategória-lista nélkül az index-build elhasal — a próba szóljon."""
+async def test_probe_shoprenter_kategoria_lista_nelkul_NINCS_warn():
+    """kfcat/1 óta az üres kategória-lista SZÁNDÉKOS: a teljes katalógus megy az
+    indexbe (copygo: 21 928 termék). A próba ezért NEM figyelmeztet, csak leírja,
+    mi fog történni — a kf/6-os warn hamis riasztás lett."""
     r = await kp.probe(SR, {}, _sr_client())
-    assert r["ok"] and r["warn"] and "kategória-lista" in r["warn"]
+    assert r["ok"] and r["warn"] is None
+    assert "teljes kínálatot" in r["detail"]
     r2 = await kp.probe(SR, {"shoprenter": {"categories": []}}, _sr_client())
-    assert r2["warn"] and "kategória-lista" in r2["warn"]
+    assert r2["ok"] and r2["warn"] is None
+    assert "teljes kínálatot" in r2["detail"]
+
+
+async def test_probe_shoprenter_kategoria_listaval_a_detail_szurest_mond():
+    """Ha VAN kategória-lista, a szöveg arról szóljon, hogy az index szűr."""
+    r = await kp.probe(SR, {"shoprenter": {"categories": [3408]}}, _sr_client())
+    assert r["warn"] is None and "beállított" in r["detail"]
 
 
 async def test_probe_shoprenter_rossz_api_base():
