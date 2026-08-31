@@ -43,6 +43,9 @@ _SENT_SPLIT = re.compile(r"(?<=[.!?])\s+")
 _ORPHAN_PUNCT = re.compile(r"\s+([,.;:!?])")
 _MULTISPACE = re.compile(r"[ \t]{2,}")
 _MULTINL = re.compile(r"\n{3,}")
+# m96/1: a kivagott szam helyen maradt bevezeto tagmondat ("..., hivd az irodat:")
+# -- csak sor VEGEN, es csak olyan soron, amelyben tenyleg volt talalat.
+_TRUNCATED_TAIL = re.compile(r"[,;]?\s*[^,;.!?]*:\s*[.!?]?\s*$")
 
 # A latogato telefon-szandeka. Ekezet nelkul illesztunk (lasd deaccent).
 # TUDATOSAN szuk: a "hiv" ontonek FP-je lenne a "hivatalos" / "hivatkozas",
@@ -53,9 +56,16 @@ _PHONE_INTENT = re.compile(
     re.I,
 )
 
-# A valasz akkor sem lehet rovidebb ennel, ha mondatokat dobtunk (fail-safe).
-_MIN_KEEP_RATIO = 0.5
+# Fail-safe a mondat-dobasra. A rata NEM azt vedi, hogy sok szoveg maradjon --
+# egy telefonos mondat eldobasa akkor is helyes, ha a valasz felet teszi ki --,
+# hanem hogy ne maradjon foszlany. m96/1 eles lelet: 0.5-tel a tipikus ketmondatos
+# valasz (0,40 arany) a durvabb szam-kivagas agra esett, es csonkot hagyott.
+_MIN_KEEP_RATIO = 0.25
 _MIN_KEEP_CHARS = 20
+
+# m96/2: vegso menedek, ha a takaritas utan semmi nem maradna es a tenant
+# nem adott meg empty_fallback-et. Sose az eredeti valasz -- az szivarogtatna.
+_EMPTY_SAFE = "Ebben a k\u00e9rd\u00e9sben az aj\u00e1nlatk\u00e9r\u0151 oldalunkon tudunk seg\u00edteni."
 
 
 def deaccent(s: Any) -> str:
@@ -122,13 +132,28 @@ def _drop_sentences(text: str, rx: re.Pattern) -> str:
 
 
 def _scrub_only(text: str, rx: re.Pattern) -> str:
-    """Fail-safe: csak magat a mintat vagjuk ki, a mondatot meghagyjuk."""
-    res = rx.sub("", text)
-    res = _ORPHAN_PUNCT.sub(r"\1", res)
-    res = _MULTISPACE.sub(" ", res)
-    # csonkan maradt bevezeto ("vagy hivj minket:") vege
-    res = re.sub(r"[,:;]\s*(?=\n|$)", "", res)
-    return res
+    """Vegso fail-safe: csak magat a szamot vagjuk ki, a mondat marad.
+
+    m96/1: a puszta kivagas csonkot hagyott ("hivd az irodat:."), ezert a
+    szam helyen maradt bevezeto tagmondatot is eldobjuk. SORONKENT dolgozunk
+    es csak az ERINTETT sorokat nyuljuk -- kulonben egy legitim listafelvezeto
+    kettospont ("A meretek a kovetkezok:") is aldozatul esne.
+    """
+    out = []
+    for line in text.split("\n"):
+        if not rx.search(line):
+            out.append(line)
+            continue
+        new = rx.sub("", line)
+        # a szam helyen maradt csonk: "..., hivd az irodat: ." / "vagy hivhatsz:"
+        new = _TRUNCATED_TAIL.sub("", new).rstrip()
+        new = _ORPHAN_PUNCT.sub(r"\1", new)
+        new = _MULTISPACE.sub(" ", new).strip()
+        if new and new[-1] not in ".!?:":
+            new += "."
+        if new:
+            out.append(new)
+    return "\n".join(out)
 
 
 def _tidy(text: str) -> str:
@@ -207,8 +232,25 @@ def apply_policy(reply: str, policy: Any, user_text: Any = "",
             txt, n = gate_phones(txt, phones, asked)
             info["phone"] = n
         txt = _tidy(txt)
-        if not txt.strip():          # sose adjunk vissza ures valaszt
-            return str(reply or ""), info
+        if not txt.strip():
+            # m96/2: ures eredmeny -> NEM adhatjuk vissza az eredetit, mert az
+            # pont a redaktalt adatot engedne ki (eles pytest-lelet: a teljes
+            # egeszeben telefonos valasznal a szam visszakerult). Sorrend:
+            # tenant-fallback -> nyers, szam nelkuli valtozat -> semleges konstans.
+            fb = str(policy.get("empty_fallback") or "").strip()
+            if fb:
+                return fb, info
+            bare = str(reply or "")
+            for num in (policy.get("gate_phones") or []):
+                rx0 = phone_pattern(num)
+                if rx0 is not None:
+                    bare = rx0.sub("", bare)
+            for addr in (policy.get("redact_emails") or []):
+                if addr:
+                    bare = re.sub(re.escape(str(addr)), repl, bare, flags=re.I)
+            bare = _ORPHAN_PUNCT.sub(r"\1", bare)
+            bare = _MULTISPACE.sub(" ", bare).strip()
+            return (bare or _EMPTY_SAFE), info
         return txt, info
     except Exception:                # noqa: BLE001 - az orseg hibaja sose torje a valaszt
         return str(reply or ""), info
