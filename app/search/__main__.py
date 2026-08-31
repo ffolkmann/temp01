@@ -15,6 +15,15 @@ kfsc/1: opcionalis MASODIK kimenet (konfigurator-index) ugyanabbol a lekert adat
 -> <out>/<tenant>/ (teljes, keresonek) es <out>/<tenant>-konf/ (szuk, konfiguratornak).
 A `konf` blokk nelkul semmi nem valtozik.
 
+ssq/1: opcionalis HARMADIK kimenet - Qdrant-kollekcio a szerver-oldali keresonek
+(GET /search/q, app/search/qdrantout.py), ugyanabbol a lekert adatbol:
+
+    {"enabled": true, "server": {"enabled": true, "only_available": false,
+                                "min_ratio": 0.5, "scope": []}}
+
+-> Qdrant alias cx_search_<tenant> + <out>/<tenant>-q/ (manifest.json, vocab.json).
+A `server` blokk nelkul semmi nem valtozik.
+
 Futtatas a cx-sync mintajara, kulon out-mounttal (az app a kepben NINCS friss,
 ezert a repo app-jat is mountoljuk):
 
@@ -35,7 +44,8 @@ from sqlalchemy import select
 
 from app.core.db import SessionLocal
 from app.models.db_models import Tenant
-from app.search import indexcore, sellvio, shoprenter, unas, webdoc
+from app.core.settings import get_settings
+from app.search import indexcore, qdrantout, sellvio, shoprenter, unas, webdoc
 
 CONFIG_PATH = os.environ.get("SS_CONFIG", "data/smartsearch.json")
 
@@ -97,6 +107,24 @@ async def run_tenant(tenant, tcfg, out_root):
         except Exception as e:  # noqa: BLE001 - a konf-index hibaja NEM viheti el a fo indexet
             indexcore.write_error_manifest(kdir, client_id, f"konf-index: {e}")
             res["konf"] = {"error": f"konf-index: {e}"}
+
+    # ssq/1: OPCIONALIS harmadik kimenet - Qdrant-kollekcio a szerver-oldali keresonek
+    # (GET /search/q). Ugyanabbol a `products` listabol, plusz API-hivas nelkul; alapbol
+    # only_available=False: a 0 keszletu termek is kereshetove valik, az `a` valodi 0/1.
+    scfg = tcfg.get("server")
+    if isinstance(scfg, dict) and scfg.get("enabled"):
+        qdir = os.path.join(out_root, client_id + qdrantout.SUFFIX)
+        try:
+            res["server"] = qdrantout.build(
+                client_id, products, out_root, url_prefix, img_prefix,
+                only_available=bool(scfg.get("only_available", False)),
+                min_ratio=float(scfg.get("min_ratio", 0.5)),
+                scope=scfg.get("scope") or None,
+                qdrant_url=get_settings().qdrant_url,
+            )
+        except Exception as e:  # noqa: BLE001 - a kereso-profil hibaja NEM viheti el a fo indexet
+            indexcore.write_error_manifest(qdir, client_id, f"qdrant-index: {e}")
+            res["server"] = {"error": f"qdrant-index: {e}"}
     return res
 
 
