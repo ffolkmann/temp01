@@ -311,6 +311,13 @@ def normalize_ruleset(cfg):
         },
         "stock": {
             "only_available": bool(stock_in.get("only_available")),
+            # kfsw/1: latogatoi keszlet-kapcsolo a widgetben (k2-11). toggle=true ->
+            # a widget kapcsolot mutat, es only_available a kapcsolo INDULO allasa
+            # (true = "csak raktaron" allasban indul). toggle hianyzik/false ->
+            # a k2-10-ig tarto fix viselkedes, egyetlen tenant sem valtozik.
+            "toggle": bool(stock_in.get("toggle")),
+            "toggle_label": _s(stock_in.get("toggle_label"), 60) or "Csak rakt\u00e1ron l\u00e9v\u0151k",
+            "toggle_all_label": _s(stock_in.get("toggle_all_label"), 60) or "Rendelhet\u0151k is",
             "label_in": _s(stock_in.get("label_in"), 30) or "K\u00e9szleten",
             "label_out": _s(stock_in.get("label_out"), 30) or "Rendelhet\u0151",
         },
