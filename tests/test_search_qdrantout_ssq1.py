@@ -114,7 +114,7 @@ class FakeQdrant:
         p = path.split("?")[0]
         if method == "GET" and p == "/collections":
             return _Resp({"result": {"collections": [{"name": n} for n in self.cols]}})
-        if method == "GET" and p == "/collections/aliases":
+        if method == "GET" and p == "/aliases":          # a GYOKER /aliases (nem /collections/aliases)
             return _Resp({"result": {"aliases": [
                 {"alias_name": a, "collection_name": n} for a, n in self.aliases.items()]}})
         if method == "POST" and p == "/collections/aliases":

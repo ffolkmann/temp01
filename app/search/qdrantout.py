@@ -166,7 +166,10 @@ class QdrantHTTP:
         return [c["name"] for c in (res.get("result") or {}).get("collections") or []]
 
     def aliases(self):
-        res = self.request("GET", "/collections/aliases")
+        # FIGYELEM: az osszes alias listaja a GYOKER /aliases vegponton van; a
+        # /collections/aliases GET-je a Qdrantnak egy "aliases" NEVU kollekciot jelent
+        # (404). Az alias-MUVELET (POST /collections/aliases) viszont helyes.
+        res = self.request("GET", "/aliases")
         return {a["alias_name"]: a["collection_name"]
                 for a in (res.get("result") or {}).get("aliases") or []}
 
