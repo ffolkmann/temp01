@@ -76,6 +76,7 @@ class Tenant(Base):
     search_config: Mapped[dict | None] = mapped_column(JSONB)  # s3: SmartSearch tenant-config (igazsag-forras; data/smartsearch.json = fallback)
     konf_config: Mapped[dict | None] = mapped_column(JSONB)  # k2: CX Konfigurator tenant-ruleset (igazsag-forras; data/konfigurator.json = fallback)
     b2b_api_key: Mapped[str | None] = mapped_column(String)                 # m90/1: Sellvio B2B feed per-user api_key (szamszeru keszlet)
+    answer_policy: Mapped[dict | None] = mapped_column(JSONB)  # m96: valasz-orseg (redact_emails / email_replacement / gate_phones); None = a tenant erintetlen
 
 
 class Plan(Base):

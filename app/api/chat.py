@@ -649,6 +649,30 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
             except Exception:  # noqa: BLE001 — frozen dataclass eseten
                 from dataclasses import replace as _dc_replace
                 parsed = _dc_replace(parsed, reply=_newreply)
+    # m96: VALASZ-ORSEG - tenant-szintu kapcsolat-redakcio (tenants.answer_policy).
+    # Ugyfel-keres (Kontur Reklam): az e-mail-cim sose menjen ki, a telefonszam
+    # csak akkor, ha a LATOGATO kerdezett ra. Merve 54 valodi valaszon: 43% / 44%
+    # erintett; a prompt-kor ezt 0/7-re vitte, de a prompt valoszinusegi -- ez a
+    # determinisztikus halo (m77/m87 tanulsaga: erre nem eleg a prompt-szabaly).
+    # A log_turn ELOTT fut, hogy a naplo es az e-mail-atirat is azt orizze, amit a
+    # latogato TENYLEG latott. Policy nelkuli tenantnal no-op.
+    try:
+        _pol96 = getattr(tenant, "answer_policy", None)
+        if _pol96:
+            from app.services.answerguard import apply_policy as _ap96
+            _new96, _info96 = _ap96(parsed.reply, _pol96, message, req.history)
+            if _new96 != parsed.reply:
+                logger.info(
+                    "m96 answerguard: email=%d phone=%d asked=%s client=%s",
+                    _info96.get("email", 0), _info96.get("phone", 0),
+                    _info96.get("asked"), req.client_id)
+                try:
+                    parsed.reply = _new96
+                except Exception:  # noqa: BLE001 - frozen dataclass eseten
+                    from dataclasses import replace as _dc_replace96
+                    parsed = _dc_replace96(parsed, reply=_new96)
+    except Exception:  # noqa: BLE001 - az orseg hibaja sose torje a valaszt
+        pass
     # m67: a search_fallback esemény-log a lassú szakasz UTÁN (rövid, friss kapcsolat)
     if _sfb_meta:
         await log_event(session, req.client_id, req.session_id, "search_fallback", _sfb_meta)
