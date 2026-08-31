@@ -234,3 +234,17 @@ def test_q_404_no_profile_and_503_backend():
         finally:
             sq.ROOT = old
     assert not LOGGED
+
+
+def test_settings_server_flag():
+    """ssq/3a: a /search/settings `server` mezoje a search_config.server.enabled-bol."""
+
+    def _settings(cfg):
+        with _Services():
+            resp = asyncio.run(SS.search_settings(client_id="t", session=FakeSession(cfg)))
+        return json.loads(resp.body.decode("utf-8"))
+
+    assert _settings({})["server"] is False
+    assert _settings({"server": {"enabled": False}})["server"] is False
+    assert _settings({"server": True})["server"] is False
+    assert _settings({"server": {"enabled": True}})["server"] is True

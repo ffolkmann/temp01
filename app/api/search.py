@@ -298,6 +298,9 @@ async def search_settings(
         # ettol fuggetlenul mindig kerdez, a szerver ott a `force`-szal enged at)
         "ai": bool(cfg.get("ai_answer")),
         "ai_examples": ai_examples(cfg.get("ai_examples")),
+        # s2-15: a widget szerver-modja - true-nal a widget index-letoltes helyett
+        # a GET /search/q vegpontot hasznalja
+        "server": bool(isinstance(cfg.get("server"), dict) and cfg["server"].get("enabled")),
     }
     if cfg.get("enabled"):
         if not body["popular_terms"]:
