@@ -8,6 +8,10 @@
 - ``POST /search/answer`` — AI-válasz a keresésre (S6/2): a widget felküldi a
   kérdést és a saját top jelöltjeit, az LLM csak VÁLOGAT közülük és indokol.
   Alapból kikapcsolva; a ``?cxai=1`` demó-kapcsoló (``force``) nyitja.
+- ``GET  /search/q?client_id=...&q=...`` - szerver-oldali kereses (ssq/2) a tenant
+  Qdrant-profiljan (``search_config.server.enabled``); a widget ``server`` modja hivja.
+  Talalatok + facetek + lapozas, a kliens-oldali MiniSearch viselkedesenek parja
+  (app/services/searchq.py). Minden nem ures kereses ``ss_q`` esemeny (arazas-mero).
 
 A tenant-konfiguráció forrása a ``data/smartsearch.json`` — ugyanaz a fájl, amit
 az ``app/search`` indexelő CLI olvas, és ami a compose-ban be van mountolva
@@ -488,3 +492,85 @@ async def search_answer(
         return JSONResponse({})
     ai_cache_put(key, out)
     return JSONResponse(dict(out, cached=0))
+
+
+# --------------------------------------------------------------------------- #
+# ssq/2 - szerver-oldali kereses: GET /search/q
+#
+# A widget "server" modjanak vegpontja: a kliens-oldali MiniSearch viselkedesenek
+# szerver-oldali parja (app/services/searchq.py). Az index az app/search/qdrantout.py
+# Qdrant-profilja (kapcsolo: search_config.server.enabled), a prefix-szotar es a
+# manifest a /cxsearch/<tenant>-q/ mountrol jon.
+#
+# Parameterek: client_id, q, limit (1-100), offset (0-5000), sort (rel|pa|pd|nm),
+#   facets (0/1), fb=<marka> (ismetelheto), fc=<kategoria> (ism.), fpr=<arsav-id,...>,
+#   fpx=<nev=ertek> (ism.), avail (0/1 - csak keszleten levo), session_id.
+# Valasz: {tenant, q, total, mode, sort, offset, limit, hits[], url_prefix, img_prefix,
+#   v, count[, facets: {b, c, pr, px}], ms}
+# Hibak: 404 (nincs/kikapcsolt tenant, vagy nincs szerver-profil a webrooton),
+#   503 (Qdrant-/halozati hiba) - a widget ezekre nem torik el, csak nem mutat talalatot.
+#
+# Arazas-mero: MINDEN nem ures szerver-oldali kereses egy `ss_q` esemeny (q, total,
+# mode, ms, f = volt-e szuro). A widget "megallapodott" ss_search-e valtozatlan marad.
+# --------------------------------------------------------------------------- #
+Q_CACHE_SECONDS = 60
+_qclient: Any = None
+
+
+def qdrant_client() -> Any:
+    """Lazy httpx.AsyncClient a Qdrantra (settings.qdrant_url); tesztben lecserelheto."""
+    global _qclient
+    if _qclient is None:
+        import httpx
+        from app.core.settings import get_settings
+
+        _qclient = httpx.AsyncClient(base_url=str(get_settings().qdrant_url).rstrip("/"), timeout=10.0)
+    return _qclient
+
+
+@router.get("/search/q")
+async def search_q(
+    client_id: str = Query("", max_length=64),
+    q: str = Query("", max_length=200),
+    limit: int = Query(8, ge=1, le=100),
+    offset: int = Query(0, ge=0, le=5000),
+    sort: str = Query("rel", max_length=3),
+    facets: int = Query(0, ge=0, le=1),
+    fb: list[str] = Query(default=[]),
+    fc: list[str] = Query(default=[]),
+    fpr: str = Query("", max_length=40),
+    fpx: list[str] = Query(default=[]),
+    avail: int = Query(0, ge=0, le=1),
+    session_id: str = Query("", max_length=64),
+    session: AsyncSession = Depends(get_session),
+) -> JSONResponse:
+    """Szerver-oldali kereses a tenant Qdrant-profiljan (lasd a blokk-kommentet)."""
+    try:
+        from app.services import searchq as sq   # lazy: fake app.services a tesztekben
+    except Exception:  # noqa: BLE001
+        logger.warning("search/q: searchq modul nem toltheto")
+        return JSONResponse({"error": "unavailable"}, status_code=503)
+
+    cid = (client_id or "").strip()
+    cfg = await get_config(session, cid) if cid else {}
+    scfg = cfg.get("server") if isinstance(cfg.get("server"), dict) else {}
+    if not cid or not cfg.get("enabled") or not scfg.get("enabled"):
+        return JSONResponse({"error": "not_found"}, status_code=404)
+    try:
+        out = await sq.search(
+            qdrant_client(), cfg, cid, q, limit=limit, offset=offset, sort=sort,
+            want_facets=bool(facets), fb=fb[:20], fc=fc[:20], fpr=fpr, fpx=fpx[:40],
+            avail=bool(avail),
+        )
+    except sq.SearchUnavailable as e:
+        logger.warning("search/q: %s", e)
+        return JSONResponse({"error": "no_index"}, status_code=404)
+    except Exception:  # noqa: BLE001 - Qdrant/halozat: 503, a widget nem torik el
+        logger.warning("search/q: backend hiba (%s)", cid, exc_info=True)
+        return JSONResponse({"error": "backend"}, status_code=503)
+    if out.get("q"):
+        await log_event(session, cid, (session_id or "")[:64] or None, "ss_q", {
+            "q": out["q"][:120], "total": _int(out.get("total")), "mode": out.get("mode"),
+            "ms": _int(out.get("ms")), "f": 1 if (fb or fc or fpr or fpx or avail) else 0,
+        })
+    return JSONResponse(out, headers={"Cache-Control": f"public, max-age={Q_CACHE_SECONDS}"})
