@@ -211,7 +211,7 @@ def _stale_collections(names, tenant, keep):
 # build
 # --------------------------------------------------------------------------- #
 def build(tenant, products, out_root, url_prefix, img_prefix, only_available=False,
-          min_ratio=0.5, scope=None, qdrant_url=None, client=None, batch=BATCH):
+          min_ratio=0.5, scope=None, qdrant_url=None, client=None, batch=BATCH, labels=None):
     """Feed-alaku termeklista -> Qdrant-kollekcio (alias mogott) + manifest/vocab a webrootba.
 
     Eredmeny-dict a CLI-nek; hibanal error-manifest + {"error": ...}, kivetelt NEM dob."""
@@ -284,10 +284,15 @@ def build(tenant, products, out_root, url_prefix, img_prefix, only_available=Fal
              "terms": sorted([[t, n] for t, n in df.items()], key=lambda x: x[0])}
     indexcore.atomic_write(os.path.join(out_dir, "vocab.json"),
                            json.dumps(vocab, ensure_ascii=False, separators=(",", ":")))
+    used_names = set()
+    for pt in points:
+        for tag in (pt.get("payload") or {}).get("px") or ():
+            used_names.add(str(tag).split("=", 1)[0])
+    lab = {n: str(labels[n]) for n in used_names if isinstance(labels, dict) and labels.get(n)}
     indexcore.atomic_write(manifest_path, json.dumps({
         "tenant": tenant, "v": version, "count": len(points), "avail": avail,
         "built_at": int(time.time()), "url_prefix": url_prefix, "img_prefix": img_prefix,
-        "collection": name, "alias": alias, "terms": len(df),
+        "collection": name, "alias": alias, "terms": len(df), "labels": lab,   # ssq/6
     }, ensure_ascii=False))
     return {"tenant": tenant, "v": version, "count": len(points), "avail": avail,
             "collection": name, "alias": alias, "prev": prev, "removed": removed,

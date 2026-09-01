@@ -385,8 +385,9 @@ def rerank(hits, toks, q, merch, boost):
     return rows
 
 
-def shape(pl):
-    """Qdrant payload -> a widget kompakt rekordja (i,k,n,b,c,p[,o],a,u,m,d)."""
+def shape(pl, labels=None):
+    """Qdrant payload -> a widget kompakt rekordja (i,k,n,b,c,p[,o],a,u,m,d).
+    ssq/6: `labels` {nyers nev: cimke} az x parameter-szoveghez."""
     row = {"i": pl.get("i", ""), "k": pl.get("k", ""), "n": pl.get("n", ""),
            "b": pl.get("b", ""), "c": pl.get("c", ""), "p": pl.get("p"),
            "a": 1 if pl.get("a") else 0, "u": pl.get("u", ""), "m": pl.get("m", ""),
@@ -402,7 +403,7 @@ def shape(pl):
             if "=" in tag:
                 n, v = tag.split("=", 1)
                 if n and v:
-                    parts.append(n + ": " + v)
+                    parts.append(((labels or {}).get(n) or n) + ": " + v)
             if len(parts) >= 3:
                 break
         if parts:
@@ -535,7 +536,7 @@ async def lookup(client, cid, skus, root=None):
         by = {}
         for pl in rows:
             by.setdefault(qtext.compact_sku(pl.get("k")), pl)
-        hits = [shape(by[k]) for k in keys if k in by]
+        hits = [shape(by[k], tix.manifest.get("labels") or None) for k in keys if k in by]
     return {"tenant": cid, "q": "", "mode": "sku", "sort": "rel", "offset": 0, "limit": len(keys),
             "total": len(hits), "hits": hits,
             "url_prefix": tix.manifest.get("url_prefix") or "",
@@ -597,7 +598,8 @@ async def search(client, cfg, cid, q, limit=8, offset=0, sort="rel", want_facets
             rows = (await q_scroll(client, alias, flt, min(offset + limit, SORT_MAX)))[offset:offset + limit]
 
     out = {"tenant": cid, "q": q, "total": total, "mode": mode, "sort": sort,
-           "offset": offset, "limit": limit, "hits": [shape(pl) for pl in rows],
+           "offset": offset, "limit": limit,
+           "hits": [shape(pl, tix.manifest.get("labels") or None) for pl in rows],
            "url_prefix": tix.manifest.get("url_prefix") or "",
            "img_prefix": tix.manifest.get("img_prefix") or "",
            "v": tix.manifest.get("v") or "", "count": tix.manifest.get("count") or 0}
@@ -606,5 +608,7 @@ async def search(client, cfg, cid, q, limit=8, offset=0, sort="rel", want_facets
         if flt.get("min_should"):
             text_f["min_should"] = flt["min_should"]
         out["facets"] = await facets(client, alias, base, text_f, total)
+        lab = tix.manifest.get("labels") or {}
+        out["facets"]["pxl"] = {n: lab[n] for n in out["facets"].get("px", {}) if lab.get(n)}   # ssq/6
     out["ms"] = int((time.time() - t0) * 1000)
     return out

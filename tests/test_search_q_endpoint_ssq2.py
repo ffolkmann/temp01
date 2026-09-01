@@ -319,3 +319,9 @@ def test_ssq5_sku_lookup():
             assert len(LOGGED) == 1
         finally:
             sq.ROOT = old
+
+
+def test_ssq6_shape_labels():
+    lab = {"technologia": "Technol\u00f3gia"}
+    row = sq.shape({"i": "1", "n": "X", "px": ["technologia=L\u00e9zer", "szin=fekete"]}, lab)
+    assert row["x"] == "Technol\u00f3gia: L\u00e9zer | szin: fekete"

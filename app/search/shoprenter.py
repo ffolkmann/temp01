@@ -427,6 +427,34 @@ def printer_params(raw, text, cat_ids):
 
 
 PROFILE_PARAMS = {"printer": printer_params}
+# ssq/6: a profil altal KANONIZALT (kodban keletkezo) nevek emberi cimkei - a nyers
+# attributumok cimkeje a boltbol jon (fetch_attr_labels), ezeknek nincs bolti parjuk
+PROFILE_LABELS = {"printer": {
+    "funkciok": "Funkci\u00f3k", "technologia": "Technol\u00f3gia", "szinkezeles": "Sz\u00ednkezel\u00e9s",
+    "sebesseg_ppm": "Sebess\u00e9g (oldal/perc)", "duplex": "K\u00e9toldalas nyomtat\u00e1s",
+    "lapadagolo": "Lapadagol\u00f3", "duplex_szken": "K\u00e9toldalas szkennel\u00e9s",
+    "papirmeret": "Pap\u00edrm\u00e9ret", "halozat": "H\u00e1l\u00f3zat", "felbontas_dpi": "Felbont\u00e1s (dpi)",
+    "memoria_mb": "Mem\u00f3ria (MB)",
+}}
+
+
+def clean_label(slug, label):
+    """Bolti cimke -> megjelenitheto cimke; None, ha nincs informacio (ures, vagy
+    megegyezik a sluggal, mint a copygo 'garido'). Csupa nagybetus cimke elso-nagybetus lesz."""
+    lab = " ".join(str(label or "").split())
+    if not lab or lab == str(slug or ""):     # PONTOS egyezes = nincs cimke ("garido"); a "Garancia" marad
+        return None
+    if lab.isupper() and len(lab) > 3:
+        lab = lab[0] + lab[1:].lower()
+    return lab[:60]
+
+
+def merge_labels(shop_labels, profiles):
+    """Bolti cimkek + az aktiv profilok kanonizalt neveinek cimkei (utobbi nyer)."""
+    out = dict(shop_labels or {})
+    for pr in profiles or ():
+        out.update(PROFILE_LABELS.get(pr.get("name") or "", {}))
+    return out
 
 
 def generic_params(raw, skip=(), max_vals=MAX_ATTR_VALUES):
@@ -572,8 +600,67 @@ async def fetch_category_names(base, headers, client):
     return names
 
 
+async def _paged(base, headers, client, path, on_item):
+    for page in range(_MAX_CAT_PAGES):
+        for attempt in range(4):
+            try:
+                r = await client.get(base + path, params={"full": 1, "limit": 200, "page": page},
+                                     headers=headers)
+                if r.status_code == 429 or r.status_code >= 500:
+                    await asyncio.sleep(1.5 * (attempt + 1))
+                    continue
+                r.raise_for_status()
+                body = r.json()
+                break
+            except Exception:  # noqa: BLE001 - halozat/JSON/stub: ujraproba, vegul RuntimeError
+                await asyncio.sleep(1.5 * (attempt + 1))
+        else:
+            raise RuntimeError("Shoprenter: %s tartos hiba (page %d)" % (path, page))
+        items = body.get("items") or (body.get("response") or {}).get("items") or []
+        for it in items:
+            if isinstance(it, dict):
+                on_item(it)
+        await asyncio.sleep(_SLEEP)
+        if not items or len(items) < 200:
+            break
+
+
+async def fetch_attr_labels(base, headers, client):
+    """ssq/6: {attr_slug: emberi cimke} a /listAttributes (id->slug) es az
+    /attributeDescriptions (id->nev) kollekciobol (copygo: 250 attr, 2+2 lap).
+    A slug-gal azonos vagy ures cimke kimarad (clean_label)."""
+    slugs, names = {}, {}
+
+    def _aid(b64):
+        try:
+            return base64.b64decode(str(b64 or "")).decode("utf-8", "ignore")
+        except Exception:  # noqa: BLE001
+            return ""
+
+    def on_attr(it):
+        aid = _aid(it.get("id"))
+        if aid and isinstance(it.get("name"), str):
+            slugs[aid] = it["name"].strip()
+
+    def on_desc(it):
+        href = ((it.get("attribute") or {}).get("href") or "") if isinstance(it.get("attribute"), dict) else ""
+        aid = _aid(href.rsplit("/", 1)[-1]) if href else ""
+        if aid and isinstance(it.get("name"), str) and aid not in names:
+            names[aid] = it["name"]
+
+    await _paged(base, headers, client, "/listAttributes", on_attr)
+    await _paged(base, headers, client, "/attributeDescriptions", on_desc)
+    out = {}
+    for aid, slug in slugs.items():
+        lab = clean_label(slug, names.get(aid))
+        if slug and lab:
+            out[slug] = lab
+    return out
+
+
 async def fetch(tenant, tcfg=None):
-    """(products_feed_alaku, url_prefix, img_prefix) egy Shoprenter tenantra.
+    """(products_feed_alaku, url_prefix, img_prefix, {"labels": {slug: cimke}}) egy Shoprenter tenantra.
+    ssq/6: a 4. elem a parameter-cimkek (a CLI 3 elemu eredmenyt is elfogad).
 
     kfcat/1: a termekek a /productExtend?full=1 KOLLEKCIOBOL jonnek, lapozva,
     4 parhuzamos lappal (platform_api.shoprenter_list_products - ugyanaz a
@@ -616,6 +703,11 @@ async def fetch(tenant, tcfg=None):
             raise RuntimeError("Shoprenter: nincs token")
         headers = {"Authorization": "Bearer " + token, "Accept": "application/json"}
         cat_names = await fetch_category_names(base, headers, client)
+        try:
+            labels = merge_labels(await fetch_attr_labels(base, headers, client), profiles)
+        except Exception as e:  # noqa: BLE001 - cimke nelkul is epul az index
+            print("shoprenter-diag %s attr-cimkek hiba: %s" % (tenant.client_id, e))
+            labels = merge_labels({}, profiles)
 
     products = []
     seen = 0
@@ -633,7 +725,7 @@ async def fetch(tenant, tcfg=None):
                     dropped["require"] += 1
                 continue
             products.append(rec)
-    print("shoprenter-diag %s seen=%d kept=%d dropped=%s cats=%s profiles=%s" % (
+    print("shoprenter-diag %s seen=%d kept=%d dropped=%s cats=%s profiles=%s labels=%d" % (
         tenant.client_id, seen, len(products), dropped,
-        wanted or "ALL", [(pr["name"], len(pr["cats"])) for pr in profiles]))
-    return products, url_prefix, img_prefix
+        wanted or "ALL", [(pr["name"], len(pr["cats"])) for pr in profiles], len(labels)))
+    return products, url_prefix, img_prefix, {"labels": labels}

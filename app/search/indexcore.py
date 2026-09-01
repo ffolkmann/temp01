@@ -240,7 +240,7 @@ def write_error_manifest(out_dir, tenant, err):
 
 
 def build_index(tenant, products, out_dir, url_prefix, img_prefix,
-                only_available=True, min_ratio=0.5, scope=None):
+                only_available=True, min_ratio=0.5, scope=None, labels=None):
     """Feed-alaku termeklistabol a harom kiszolgalt fajl. Eredmeny-dict a CLI-nek.
 
     kfsc/1: a `scope` build-ideju alapszuro (a ruleset-scope parja) - ezzel egy
@@ -276,6 +276,11 @@ def build_index(tenant, products, out_dir, url_prefix, img_prefix,
     new_ids = apply_days(rows, [p.get("created_day") for p in products], out_dir)
 
     params = build_params(products)
+    if isinstance(labels, dict) and labels:
+        # ssq/6: emberi cimkek CSAK a hasznalt parameter-nevekre (a widget facet-cime, AI x)
+        used = {n: str(labels[n]) for n in params["names"] if labels.get(n)}
+        if used:
+            params["labels"] = used
     params_body = json.dumps(params, ensure_ascii=False, separators=(",", ":"))
     pv = hashlib.sha256(params_body.encode()).hexdigest()[:12]
 

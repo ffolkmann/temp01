@@ -77,17 +77,20 @@ async def run_tenant(tenant, tcfg, out_root):
         return {"client_id": client_id, "platform": platform,
                 "skipped": f"platform '{platform}' nincs portolva (sellvio, shoprenter, webdoc, unas)"}
     try:
-        products, url_prefix, img_prefix = await fetch(tenant, tcfg)
+        got = await fetch(tenant, tcfg)
+        products, url_prefix, img_prefix = got[0], got[1], got[2]
+        meta = got[3] if len(got) > 3 and isinstance(got[3], dict) else {}   # ssq/6
     except Exception as e:  # noqa: BLE001 — fetch-hiba: regi index marad, manifest error
         indexcore.write_error_manifest(out_dir, client_id, f"fetch: {e}")
         return {"client_id": client_id, "platform": platform, "error": f"fetch: {e}"}
     if not products:
         indexcore.write_error_manifest(out_dir, client_id, "0 forras termek — index nem frissult")
         return {"client_id": client_id, "platform": platform, "error": "0 forras termek"}
+    labels = meta.get("labels") if isinstance(meta.get("labels"), dict) else None
     res = indexcore.build_index(
         client_id, products, out_dir, url_prefix, img_prefix,
         only_available=bool(tcfg.get("only_available", True)),
-        min_ratio=float(tcfg.get("min_ratio", 0.5)),
+        min_ratio=float(tcfg.get("min_ratio", 0.5)), labels=labels,
     )
     res["platform"] = platform
 
@@ -102,7 +105,7 @@ async def run_tenant(tenant, tcfg, out_root):
                 client_id, products, kdir, url_prefix, img_prefix,
                 only_available=bool(kcfg.get("only_available", True)),
                 min_ratio=float(kcfg.get("min_ratio", 0.5)),
-                scope=kcfg.get("scope") or None,
+                scope=kcfg.get("scope") or None, labels=labels,
             )
         except Exception as e:  # noqa: BLE001 - a konf-index hibaja NEM viheti el a fo indexet
             indexcore.write_error_manifest(kdir, client_id, f"konf-index: {e}")
@@ -120,7 +123,7 @@ async def run_tenant(tenant, tcfg, out_root):
                 only_available=bool(scfg.get("only_available", False)),
                 min_ratio=float(scfg.get("min_ratio", 0.5)),
                 scope=scfg.get("scope") or None,
-                qdrant_url=get_settings().qdrant_url,
+                qdrant_url=get_settings().qdrant_url, labels=labels,
             )
         except Exception as e:  # noqa: BLE001 - a kereso-profil hibaja NEM viheti el a fo indexet
             indexcore.write_error_manifest(qdir, client_id, f"qdrant-index: {e}")

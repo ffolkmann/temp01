@@ -282,7 +282,7 @@ def test_fetch_streams_collection(monkeypatch):
     monkeypatch.setattr(sr, "fetch_category_names", fake_names)
     monkeypatch.setattr(sr, "shoprenter_list_products", fake_list)
     tcfg = {"shoprenter": dict(PRINTER)}
-    products, up, ip = asyncio.run(sr.fetch(T(), tcfg))
+    products, up, ip = asyncio.run(sr.fetch(T(), tcfg))[:3]   # ssq/6: 4. elem = {labels}
     assert calls["args"] == ("https://copygo.api2.myshoprenter.hu/api", 1, 4)
     assert up == "https://copygo.hu/"
     assert ip == "https://copygo.hu/custom/copygo/image/cache/w300h300wt1/"
@@ -290,5 +290,5 @@ def test_fetch_streams_collection(monkeypatch):
     assert products[1]["category"] == "Napelem"
     # kategoria-szures: csak a nyomtato marad
     tcfg2 = {"shoprenter": {"categories": [3423]}}
-    products2, _, _ = asyncio.run(sr.fetch(T(), tcfg2))
+    products2, _, _ = asyncio.run(sr.fetch(T(), tcfg2))[:3]
     assert [p["sku"] for p in products2] == ["SKU42"]
