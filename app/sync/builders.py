@@ -8,6 +8,7 @@ content_hash a v2 saját content-only hash-e (ár/készlet/elérhetőség NÉLK�
 from __future__ import annotations
 
 import base64
+import re
 
 from app.sync.hashing import ps_hash
 from app.sync.models import SourceProduct
@@ -920,3 +921,161 @@ def webdoc_sorted(products: list[dict]) -> list[dict]:
 
 def build_webdoc(products: list[dict], client_id: str) -> list[SourceProduct]:
     return WebdocBuilder(client_id).build(webdoc_sorted(products))
+
+
+# =========================================================================== #
+# Kontúr Reklám (m96) — saját feed: chatbot_feed.php (X-Api-Key fejléc), 1 termék = 1
+# rekord, a szín×méret variánsok BEÁGYAZVA (12 229 termék / 158 142 variáns, 2026-08-31).
+# Minden ár NETTÓ (a feed fejléce: price_type=net, currency=HUF). A `stock` szám.
+# `discontinued` a terméken (=minden variánsa kifutó) ÉS a variánson; a kifutó variánsok
+# 99%-ának VAN készlete -> nem dobjuk, "kifutó, a készlet erejéig" címkével megy a textbe.
+# Text-alak a webdoc mintájára: "NÉV — nettó X Ft-tól (raktáron). Márka: M. Kategória: A > B.
+# leírás. Paraméterek: ...; Link: url" — a paramextract pozíció-kapuja így kinyeri a
+# category/cat_tags payloadot (m86 kategória-kapu), a brand payload a márka-szűrőé (m82h).
+# content_hash: CSAK a statikus tartalom (név|márka|kategória|leírás|statikus paramok|url);
+# az ár/készlet/kifutó-sáv a ps_hash-ben -> napi változás = payload-merge, nincs újra-embed.
+# =========================================================================== #
+_KONTUR_COLORS_MAX = 1200   # színlista karakter-plafon a textben (Just Hoods: 100+ szín)
+_KONTUR_DESC_MAX = 3000
+_KONTUR_DISC_COLORS_MAX = 20
+
+
+def kontur_products(root) -> list[dict]:
+    """A feed gyökere -> termék-lista ({"products": [...]} vagy csupasz lista); egyéb -> []."""
+    if isinstance(root, dict):
+        v = root.get("products")
+        return [p for p in v if isinstance(p, dict)] if isinstance(v, list) else []
+    if isinstance(root, list):
+        return [p for p in root if isinstance(p, dict)]
+    return []
+
+
+def kontur_sorted(products: list[dict]) -> list[dict]:
+    return sorted(products, key=lambda p: _s(p.get("sku")))   # sku szerint (determinisztikus)
+
+
+def _kontur_int(v) -> int:
+    try:
+        return int(float(str(v).replace(" ", "").replace(",", ".")))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _kontur_variants(p: dict) -> list[dict]:
+    vs = p.get("variants")
+    if isinstance(vs, dict):
+        vs = list(vs.values())
+    return [v for v in (vs or []) if isinstance(v, dict)]
+
+
+def _kontur_cat(raw) -> str:
+    """'Textil termékek / Pólók/T-Shirt' -> 'Textil termékek > Pólók/T-Shirt' (a ' / ' az elválasztó,
+    a 'Pólók/T-Shirt' belső perjele NEM)."""
+    return " > ".join(c.strip() for c in re.split(r"\s/\s", _s(raw)) if c.strip())
+
+
+def kontur_summary(p: dict) -> dict:
+    """Variáns-összegzés: min/max nettó ár, össz-készlet, raktáros variánsok száma, kifutó színek."""
+    vs = _kontur_variants(p)
+    prices = [_kontur_int(v.get("price_net")) for v in vs if v.get("price_net") not in (None, "")]
+    prices = [x for x in prices if x > 0]
+    stocks = [_kontur_int(v.get("stock")) for v in vs]
+    in_stock = sum(1 for x in stocks if x > 0)
+    disc_colors: list[str] = []
+    for v in vs:
+        if v.get("discontinued") is True:
+            c = _s(v.get("color")).strip()
+            if c and c not in disc_colors:
+                disc_colors.append(c)
+    pf = _kontur_int(p.get("price_net_from"))
+    pmin = min(prices) if prices else (pf if pf > 0 else 0)
+    pmax = max(prices) if prices else pmin
+    return {"pmin": pmin, "pmax": pmax, "stock": sum(stocks), "n": len(vs), "in_stock": in_stock,
+            "disc_colors": disc_colors, "disc_all": p.get("discontinued") is True}
+
+
+class KonturBuilder:
+    """Nincs reláció -> index() no-op. A build() a KAPOTT sorrendben épít (rendezés a hívóé)."""
+
+    def __init__(self, client_id: str, public_url: str = "") -> None:
+        self.client_id = client_id
+
+    def index(self, page: list[dict]) -> None:
+        return
+
+    def build(self, page: list[dict]) -> list[SourceProduct]:
+        out = []
+        for p in page:
+            sku = _s(p.get("sku")).strip()
+            name = _s(p.get("name")).strip()
+            if not sku or not name:
+                continue
+            if p.get("active") is False:
+                continue
+            sm = kontur_summary(p)
+            brand = _s(p.get("brand")).strip()
+            cat = _kontur_cat(p.get("category"))
+            url = _s(p.get("url")).strip()
+            ld = trunc(strip_webdoc(_s(p.get("description"))), _KONTUR_DESC_MAX)
+            if ld.endswith(".") and not ld.endswith("..."):
+                ld = ld[:-1]   # a leírás záró pontja + a szegmens-elválasztó '. ' dupla pontot adna
+            # statikus paraméterek (a content_hash része)
+            params: list[str] = []
+            for key, label in (("gender", "Nem"), ("material", "Anyag"), ("fit", "Fazon"),
+                               ("origin", "Származási hely")):
+                v = _js_str(p.get(key)).strip()
+                if v:
+                    params.append(f"{label}: {v}")
+            gsm = _kontur_int(p.get("weight_gsm"))
+            if gsm > 0:
+                params.append(f"Grammsúly: {gsm} g/m²")
+            sizes = [_s(x).strip() for x in (p.get("sizes") or []) if _s(x).strip()]
+            if sizes:
+                params.append("Méretek: " + ", ".join(sizes))
+            colors = [_s(x).strip() for x in (p.get("colors") or []) if _s(x).strip()]
+            if colors:
+                params.append("Színek: " + trunc(", ".join(colors), _KONTUR_COLORS_MAX))
+            # dinamikus sáv (ár/készlet/kifutó) — a ps_hash része, a content_hash-é NEM
+            dyn: list[str] = []
+            if sm["pmin"] > 0:
+                dyn.append(f"Nettó ár: {huf(sm['pmin'])}–{huf(sm['pmax'])} Ft" if sm["pmax"] > sm["pmin"]
+                           else f"Nettó ár: {huf(sm['pmin'])} Ft")
+            if sm["n"]:
+                dyn.append(f"Készlet: összesen {huf(sm['stock'])} db, {sm['n']} szín-méret variáns, "
+                           f"ebből {sm['in_stock']} raktáron")
+            if sm["disc_all"]:
+                dyn.append("KIFUTÓ termék — csak a készlet erejéig rendelhető")
+            elif sm["disc_colors"]:
+                dyn.append("Kifutó színek (csak a készlet erejéig): "
+                           + ", ".join(sm["disc_colors"][:_KONTUR_DISC_COLORS_MAX]))
+            available = sm["in_stock"] > 0
+            avail_txt = "raktáron" if available else "jelenleg nincs raktáron"
+            line = name
+            if sm["pmin"] > 0:
+                line += " " + EMDASH + " nettó " + huf(sm["pmin"]) + " Ft-tól"
+            line += " (" + avail_txt + ")"
+            if brand:
+                line += ". Márka: " + brand
+            if cat:
+                line += ". Kategória: " + cat
+            if ld:
+                line += ". " + ld
+            allp = params + dyn
+            if allp:
+                line += ". Paraméterek: " + "; ".join(allp)
+            if url:
+                line += ". Link: " + url
+            line = trunc(line, 9000)
+            price_str = str(sm["pmin"]) if sm["pmin"] > 0 else ""
+            stock_str = str(sm["stock"])
+            ch = content_fnv(name, brand, cat, ld, ";".join(params), url)
+            psh = ps_hash(price_str, stock_str + "|" + ";".join(dyn), available)
+            out.append(SourceProduct(
+                id_key=sku, sku=sku, name=name, url=url, price=price_str, brand=brand,
+                stock_str=stock_str, available=available, ps_hash_str=psh,
+                text=line, content_hash=ch, filename="__kontur_products__"))
+        return out
+
+
+def build_kontur(products: list[dict], client_id: str) -> list[SourceProduct]:
+    return KonturBuilder(client_id).build(kontur_sorted(products))

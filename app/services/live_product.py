@@ -23,6 +23,7 @@ None; a hívó a synced adatlapot hagyja, a chat SOHA nem törik.
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from xml.sax.saxutils import escape
@@ -64,6 +65,7 @@ _ID_FIELDS = {
     "woocommerce": ("wc_id",),   # NEM woo_id; a WC sku üres lehet
     "shoprenter": (),            # nincs id -> sku (?sku= szűrő)
     "unas": (),                  # nincs id -> sku (getProduct <Sku>)
+    "kontur": (),                # m96: nincs id -> sku (POST /products skus[])
 }
 
 
@@ -372,11 +374,117 @@ async def _unas_live(tenant: "Tenant", sku: str) -> LivePriceStock | None:
     )
 
 
+# --- Kontúr Reklám (m96): POST {api_client_id}/products {"skus":[sku]} ------------
+# Saját API (Sanyi, 2026-08-31): X-Api-Key fejléc; a GET /product/{SKU} a szóközös
+# cikkszámokra 404-et ad, a kötegelt POST viszont jó -> MINDIG a POST-ot hívjuk.
+# Kvóta: 100 kérés/óra az egész API-ra -> (1) 10 perces per-sku cache, (2) óránkénti
+# 80-as saját plafon, fölötte az élő ág némán kihagy (synced marad). Minden ár NETTÓ.
+_KONTUR_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+              "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
+_KONTUR_TTL = 600.0
+_KONTUR_HOURLY_CAP = 80
+_kontur_cache: dict[str, tuple[float, LivePriceStock]] = {}
+_kontur_calls: list[float] = []
+
+
+def _kontur_now() -> float:
+    return time.monotonic()
+
+
+def _kontur_fmt(n: int) -> str:
+    s = str(int(n))
+    if len(s) < 5:
+        return s
+    parts = []
+    while len(s) > 3:
+        parts.insert(0, s[-3:])
+        s = s[:-3]
+    parts.insert(0, s)
+    return " ".join(parts)
+
+
+def _kontur_rate_ok(now: float) -> bool:
+    cutoff = now - 3600.0
+    _kontur_calls[:] = [t for t in _kontur_calls if t > cutoff]
+    return len(_kontur_calls) < _KONTUR_HOURLY_CAP
+
+
+def kontur_live_from_product(p) -> LivePriceStock | None:
+    """Tiszta mag (tesztelhető): egy API-termék -> LivePriceStock. Variáns nélkül -> None."""
+    if not isinstance(p, dict):
+        return None
+    vs = p.get("variants") or []
+    if isinstance(vs, dict):
+        vs = list(vs.values())
+    vs = [v for v in vs if isinstance(v, dict)]
+    if not vs:
+        return None
+    qty = 0
+    n_avail = 0
+    prices: list[int] = []
+    for v in vs:
+        q = _to_int(v.get("stock"))
+        if q is not None:
+            qty += q
+        av = v.get("available")
+        if av is True or (av is None and (q or 0) > 0):
+            n_avail += 1
+        pr = _to_int(v.get("price_net"))
+        if pr is not None and pr > 0:
+            prices.append(pr)
+    price = ""
+    if prices:
+        pmin, pmax = min(prices), max(prices)
+        price = (f"nettó {_kontur_fmt(pmin)} Ft-tól" if pmax > pmin
+                 else f"nettó {_kontur_fmt(pmin)} Ft")
+    note = f"{n_avail}/{len(vs)} szín-méret variáns raktáron, minden ár nettó (+ÁFA)"
+    if p.get("discontinued") is True:
+        note += ", KIFUTÓ termék — csak a készlet erejéig"
+    return LivePriceStock(price=price, available=n_avail > 0, qty=qty,
+                          name=str(p.get("name") or ""), note=note)
+
+
+async def _kontur_live(tenant: "Tenant", sku: str) -> LivePriceStock | None:
+    if not sku:
+        return None
+    base = str(tenant.api_client_id or "").strip().rstrip("/")
+    key = str(tenant.api_client_secret or "").strip()
+    if not base.startswith("http") or not key:
+        return None
+    now = _kontur_now()
+    hit = _kontur_cache.get(sku)
+    if hit and now - hit[0] < _KONTUR_TTL:
+        return hit[1]
+    if not _kontur_rate_ok(now):
+        logger.warning("LIVE[%s] kontur: órás plafon (%d) elérve — synced marad",
+                       tenant.client_id, _KONTUR_HOURLY_CAP)
+        return hit[1] if hit else None
+    _kontur_calls.append(now)
+    async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+        resp = await client.post(
+            f"{base}/products", json={"skus": [sku]},
+            headers={"X-Api-Key": key, "Accept": "application/json", "User-Agent": _KONTUR_UA},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    prods = data.get("products") if isinstance(data, dict) else None
+    if not isinstance(prods, list) or not prods:
+        return None
+    p = next((x for x in prods if isinstance(x, dict) and str(x.get("sku") or "") == sku), None)
+    if p is None:
+        p = prods[0]
+    live = kontur_live_from_product(p)
+    if live is not None:
+        _kontur_cache[sku] = (now, live)
+    return live
+
+
 _LIVE = {
     "sellvio": lambda t, pid, sku: _sellvio_live(t, pid or sku),
     "woocommerce": lambda t, pid, sku: _woo_live(t, pid or sku),
     "shoprenter": lambda t, pid, sku: _shoprenter_live(t, sku),
     "unas": lambda t, pid, sku: _unas_live(t, sku),
+    "kontur": lambda t, pid, sku: _kontur_live(t, sku),   # m96
 }
 
 

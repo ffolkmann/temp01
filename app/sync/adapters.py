@@ -19,11 +19,14 @@ import httpx
 from app.core.settings import get_settings
 from app.services import platform_api as pa
 from app.sync.builders import (
+    KonturBuilder,
     ShoprenterBuilder,
     SellvioBuilder,
     UnasBuilder,
     WebdocBuilder,
     WooBuilder,
+    kontur_products,
+    kontur_sorted,
     unas_rowdicts,
     webdoc_sorted,
 )
@@ -32,6 +35,8 @@ if TYPE_CHECKING:
     from app.models.db_models import Tenant
 
 _CHUNK = 200   # egy-blobos források (webdoc/unas) build-chunk mérete
+_KONTUR_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+              "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")  # m96: bot-kapu
 
 
 def _creds(tenant):
@@ -137,12 +142,28 @@ async def stream_webdoc(tenant: "Tenant"):
         yield sp
 
 
+async def stream_kontur(tenant: "Tenant"):
+    """m96 Kontúr Reklám: api_base = a feed URL-je (chatbot_feed.php), api_client_secret = X-Api-Key.
+    Egy ~33 MB-os JSON (12k termék, ~12 s), óránként frissül a bolt oldalán; mi éjjel húzzuk.
+    Böngésző UA a bot-kapu miatt (a sellvio_feed mintájára). Hiba -> DOB -> az engine skippel, nincs purge."""
+    feed_url, _, key, _ = _creds(tenant)
+    headers = {"Accept": "application/json", "X-Api-Key": key, "User-Agent": _KONTUR_UA}
+    async with httpx.AsyncClient(timeout=240.0, follow_redirects=True) as client:
+        r = await client.get(feed_url, headers=headers)
+        r.raise_for_status()
+        root = r.json()
+    products = kontur_products(root)
+    async for sp in _stream_blob(kontur_sorted(products), KonturBuilder(tenant.client_id)):
+        yield sp
+
+
 _STREAMERS = {
     "sellvio": stream_sellvio,
     "woocommerce": stream_woo,
     "shoprenter": stream_shoprenter,
     "unas": stream_unas,
     "webdoc": stream_webdoc,
+    "kontur": stream_kontur,   # m96
 }
 
 SUPPORTED_PLATFORMS = frozenset(_STREAMERS)
