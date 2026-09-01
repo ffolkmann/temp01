@@ -248,3 +248,52 @@ def test_settings_server_flag():
     assert _settings({"server": {"enabled": False}})["server"] is False
     assert _settings({"server": True})["server"] is False
     assert _settings({"server": {"enabled": True}})["server"] is True
+
+
+# --------------------------------------------------------------------------- #
+# ssq/4
+# --------------------------------------------------------------------------- #
+def test_ssq4_shape_px_to_x():
+    row = sq.shape({"i": "1", "n": "X", "px": ["technologia=Tintasugaras", "szin=fekete", "rossz", "c=d", "e=f"]})
+    assert row["x"] == "technologia: Tintasugaras | szin: fekete | c: d"
+    assert "x" not in sq.shape({"i": "1", "n": "X"})
+    assert "x" not in sq.shape({"i": "1", "n": "X", "px": []})
+
+
+def test_ssq4_answer_skip_signal():
+    """Kapu-elutasitas -> {"skip":1}; ismeretlen/kikapcsolt tenant -> {} (valtozatlan)."""
+    sa = _load("app/services/searchanswer.py", "ssq4_searchanswer")
+    assert sa.is_question("telefontarto kelene model 3-hoz ami eleg biztosan tart")
+    assert sa.is_question("kene egy telefontarto a model 3-hoz")
+    assert not sa.is_question("magsafe tarto model 3")
+
+    class _Req:
+        def __init__(self, body):
+            self._b = json.dumps(body).encode("utf-8")
+
+        async def body(self):
+            return self._b
+
+    class _ServicesA(_Services):
+        def __enter__(self):
+            super().__enter__()
+            sys.modules["app.services"].searchanswer = sa
+            sys.modules["app.services.searchanswer"] = sa
+            return self
+
+        def __exit__(self, *a):
+            sys.modules.pop("app.services.searchanswer", None)
+            super().__exit__(*a)
+
+    def _ans(cfg, body):
+        with _ServicesA():
+            resp = asyncio.run(SS.search_answer(_Req(body), session=FakeSession(cfg)))
+        return json.loads(resp.body.decode("utf-8"))
+
+    q_question = "melyik tarto illik a model 3-hoz"
+    base = {"client_id": "t", "q": q_question, "total": 5, "candidates": [{"i": "1", "n": "X", "a": 1}]}
+    assert _ans({}, base) == {}                                             # kikapcsolt tenant
+    assert _ans({"enabled": True}, base) == {"skip": 1}                     # nincs ai_answer
+    assert _ans({"enabled": True, "ai_answer": True},
+                dict(base, q="magsafe tarto model 3")) == {"skip": 1}       # nem kerdes, van talalat
+    assert _ans({"enabled": True, "ai_answer": True, "ai_daily_cap": 0}, base) == {"skip": 1}   # plafon 0

@@ -431,7 +431,9 @@ async def search_answer(
     """AI-válasz a kereséshez.
 
     Siker: ``{"answer": "...", "pids": [...], "cached": 0|1}``; minden más esetben
-    ``{}`` (nincs válasz-sáv). MINDIG 200 — a widget sosem törhet el emiatt.
+    ``{}`` (nincs válasz-sáv). Kapu-elutasításnál (nincs AI, nem kérdés, napi
+    plafon) ``{"skip": 1}`` — a widget ilyenkor sávot sem mutat (ssq/4). MINDIG 200 —
+    a widget sosem törhet el emiatt.
     """
     try:
         from app.services import searchanswer as sa   # lazy: fake app.services a tesztekben
@@ -458,9 +460,9 @@ async def search_answer(
         # ismeretlen vagy kikapcsolt tenant: a végpont nyilvános, LLM-et nem hívunk
         return JSONResponse({})
     if not (cfg.get("ai_answer") or force):
-        return JSONResponse({})
+        return JSONResponse({"skip": 1})
     if not sa.needs_answer(q, _int(data.get("total")), force):
-        return JSONResponse({})
+        return JSONResponse({"skip": 1})
 
     key = (cid, sa.norm_q(q))
     hit = ai_cache_get(key)
@@ -474,7 +476,7 @@ async def search_answer(
 
     if not ai_take(cid, ai_cap(cfg)):
         logger.warning("search/answer: napi plafon elerve (%s)", cid)
-        return JSONResponse({})
+        return JSONResponse({"skip": 1})
 
     try:
         from app.core.llm import generate_reply   # lazy: nehéz import (Anthropic SDK)

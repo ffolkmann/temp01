@@ -35,6 +35,7 @@ QUESTION_STEMS = (
     "kell", "lehet", "erdemes", "érdemes", "ajanl", "ajánl", "javasol", "keres",
     "szeretn", "tudtok", "tudsz", "illik", "passzol", "kompatibilis", "alkalmas",
     "jobb", "legjobb", "kulonbseg", "különbség", "valaszt", "választ", "bir", "bír",
+    "kene", "kéne", "kelene",     # ssq/4: "kene / kelene" = elgepelt "kellene"
 )
 
 

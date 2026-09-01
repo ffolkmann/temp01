@@ -393,6 +393,20 @@ def shape(pl):
            "d": pl.get("d", 0)}
     if pl.get("o") is not None:
         row["o"] = pl["o"]
+    # ssq/4: rovid parameter-szoveg az AI-jeloltekhez (a kliens-oldali aiParams parja)
+    px = pl.get("px")
+    if isinstance(px, list) and px:
+        parts = []
+        for tag in px:
+            tag = str(tag)
+            if "=" in tag:
+                n, v = tag.split("=", 1)
+                if n and v:
+                    parts.append(n + ": " + v)
+            if len(parts) >= 3:
+                break
+        if parts:
+            row["x"] = " | ".join(parts)[:160]
     return row
 
 
