@@ -238,7 +238,7 @@ def test_tenant_kapcsolo_force_nelkul_is_enged():
 # --------------------------------------------------------------------------- #
 def test_kapu_ki_nincs_llm_hivas():
     _reset()
-    assert _post(_payload(force=False), _Sess(cfg={"enabled": True})) == {}
+    assert _post(_payload(force=False), _Sess(cfg={"enabled": True})) == {"skip": 1}   # ssq/4
     assert CALLS == []
 
 
@@ -253,7 +253,7 @@ def test_kikapcsolt_vagy_ismeretlen_tenant_force_ellenere_sem_hiv():
 def test_trigger_nem_teljesul_sima_kereses():
     _reset()
     sess = _Sess(cfg={"enabled": True, "ai_answer": True})
-    assert _post(_payload(q="uleshuzat", total=120, force=False), sess) == {}
+    assert _post(_payload(q="uleshuzat", total=120, force=False), sess) == {"skip": 1}   # ssq/4
     assert CALLS == []
     # ugyanez nulla talalattal MAR fut (nincs jo talalat -> segitunk)
     assert _post(_payload(q="uleshuzat", total=0, force=False), sess)["pids"] == ["1"]
@@ -306,13 +306,13 @@ def test_napi_plafon_felett_nincs_hivas():
     _reset()
     sess = _Sess(cfg={"enabled": True, "ai_daily_cap": 1})
     assert _post(_payload(q="melyik szonyeg jo ide"), sess)["pids"] == ["1"]
-    assert _post(_payload(q="melyik felni illik ra"), sess) == {}
+    assert _post(_payload(q="melyik felni illik ra"), sess) == {"skip": 1}   # ssq/4: plafon = kapu
     assert len(CALLS) == 1
 
 
 def test_plafon_nulla_teljesen_kikapcsol():
     _reset()
-    assert _post(_payload(), _Sess(cfg={"enabled": True, "ai_daily_cap": 0})) == {}
+    assert _post(_payload(), _Sess(cfg={"enabled": True, "ai_daily_cap": 0})) == {"skip": 1}   # ssq/4
     assert CALLS == []
 
 
