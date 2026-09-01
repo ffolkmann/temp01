@@ -513,6 +513,37 @@ async def facets(client, alias, base, text_f, total):
 # --------------------------------------------------------------------------- #
 # fo belepesi pont
 # --------------------------------------------------------------------------- #
+LOOKUP_MAX = 30
+
+
+async def lookup(client, cid, skus, root=None):
+    """ssq/5: kuralt cikkszam-lista -> kompakt rekordok a MEGADOTT sorrendben (a widget
+    'Nepszeru termekek' blokkja szerver-modban). Egy scroll-hivas: ks match any.
+    Ismeretlen cikkszam csendben kimarad. Kivetel: SearchUnavailable / RuntimeError."""
+    t0 = time.time()
+    tix = load_tenant(cid, root=root)
+    keys = []
+    for s in (skus or []):
+        k = qtext.compact_sku(s)
+        if k and k not in keys:
+            keys.append(k)
+        if len(keys) >= LOOKUP_MAX:
+            break
+    hits = []
+    if keys:
+        rows = await q_scroll(client, tix.alias, {"must": [{"key": "ks", "match": {"any": keys}}]}, len(keys) * 2)
+        by = {}
+        for pl in rows:
+            by.setdefault(qtext.compact_sku(pl.get("k")), pl)
+        hits = [shape(by[k]) for k in keys if k in by]
+    return {"tenant": cid, "q": "", "mode": "sku", "sort": "rel", "offset": 0, "limit": len(keys),
+            "total": len(hits), "hits": hits,
+            "url_prefix": tix.manifest.get("url_prefix") or "",
+            "img_prefix": tix.manifest.get("img_prefix") or "",
+            "v": tix.manifest.get("v") or "", "count": tix.manifest.get("count") or 0,
+            "ms": int((time.time() - t0) * 1000)}
+
+
 async def search(client, cfg, cid, q, limit=8, offset=0, sort="rel", want_facets=False,
                  fb=(), fc=(), fpr="", fpx=(), avail=False, root=None, today=None):
     """Kereses a tenant Qdrant-profiljan. Kivetel: SearchUnavailable (nincs profil),

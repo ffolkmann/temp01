@@ -165,7 +165,7 @@ class _Services:
 
 def _call(cfg, **kw):
     args = dict(client_id="t", q="epson", limit=8, offset=0, sort="rel", facets=0, fb=[], fc=[],
-                fpr="", fpx=[], avail=0, session_id="", session=FakeSession(cfg))
+                fpr="", fpx=[], avail=0, session_id="", sku="", session=FakeSession(cfg))
     args.update(kw)
     with _Services():
         return asyncio.run(SS.search_q(**args))
@@ -297,3 +297,25 @@ def test_ssq4_answer_skip_signal():
     assert _ans({"enabled": True, "ai_answer": True},
                 dict(base, q="magsafe tarto model 3")) == {"skip": 1}       # nem kerdes, van talalat
     assert _ans({"enabled": True, "ai_answer": True, "ai_daily_cap": 0}, base) == {"skip": 1}   # plafon 0
+
+
+def test_ssq5_sku_lookup():
+    """sku= : kuralt lista a megadott sorrendben, ismeretlen kimarad, nincs ss_q esemeny."""
+    LOGGED.clear()
+    cfg = {"enabled": True, "server": {"enabled": True}}
+    with tempfile.TemporaryDirectory() as tmp:
+        SS._qclient = FakeQdrant(_profile(tmp))
+        old = sq.ROOT
+        sq.ROOT = tmp
+        try:
+            r = _call(cfg, q="", sku="NINCS-ILYEN, wf-m5899 ,,")
+            assert r.status_code == 200
+            b = _body(r)
+            assert b["mode"] == "sku" and b["total"] == 1 and b["hits"][0]["k"] == "WF-M5899"
+            assert b["url_prefix"] == "https://x.hu"
+            assert _body(_call(cfg, q="", sku=",,"))["mode"] == "sku"
+            assert not LOGGED                                                  # sku-lookup nem naploz
+            assert _body(_call(cfg, q="epson", sku=""))["mode"] == "and"     # ures sku -> rendes kereses
+            assert len(LOGGED) == 1
+        finally:
+            sq.ROOT = old

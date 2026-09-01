@@ -547,9 +547,12 @@ async def search_q(
     fpx: list[str] = Query(default=[]),
     avail: int = Query(0, ge=0, le=1),
     session_id: str = Query("", max_length=64),
+    sku: str = Query("", max_length=1500),
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """Szerver-oldali kereses a tenant Qdrant-profiljan (lasd a blokk-kommentet)."""
+    """Szerver-oldali kereses a tenant Qdrant-profiljan (lasd a blokk-kommentet).
+    ``sku=A,B,C`` (ssq/5): kuralt cikkszam-lista -> rekordok a megadott sorrendben,
+    kereses nelkul (a widget zero-state 'Nepszeru termekek' blokkja szerver-modban)."""
     try:
         from app.services import searchq as sq   # lazy: fake app.services a tesztekben
     except Exception:  # noqa: BLE001
@@ -562,11 +565,14 @@ async def search_q(
     if not cid or not cfg.get("enabled") or not scfg.get("enabled"):
         return JSONResponse({"error": "not_found"}, status_code=404)
     try:
-        out = await sq.search(
-            qdrant_client(), cfg, cid, q, limit=limit, offset=offset, sort=sort,
-            want_facets=bool(facets), fb=fb[:20], fc=fc[:20], fpr=fpr, fpx=fpx[:40],
-            avail=bool(avail),
-        )
+        if sku.strip():
+            out = await sq.lookup(qdrant_client(), cid, [s for s in sku.split(",") if s.strip()])
+        else:
+            out = await sq.search(
+                qdrant_client(), cfg, cid, q, limit=limit, offset=offset, sort=sort,
+                want_facets=bool(facets), fb=fb[:20], fc=fc[:20], fpr=fpr, fpx=fpx[:40],
+                avail=bool(avail),
+            )
     except sq.SearchUnavailable as e:
         logger.warning("search/q: %s", e)
         return JSONResponse({"error": "no_index"}, status_code=404)
