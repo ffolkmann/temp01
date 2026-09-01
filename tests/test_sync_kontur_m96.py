@@ -95,7 +95,7 @@ def test_text_shape_and_payload():
                         "Kategória: Textil termékek > Pólók/T-Shirt. 100% amerikai pamut"), t
     assert "Paraméterek: Nem: Unisex; Anyag: 100% Pamut, Pamut/Poliészter; Fazon: Körkötött; " \
            "Származási hely: Bangladesh, Honduras; Grammsúly: 180 g/m²; Méretek: S, M, 3XL; " \
-           "Színek: Antique Cherry Red, White; Nettó ár: 858–1536 Ft; " \
+           "Színek: Antique Cherry Red, White; Cikkszám: U GI5000; Nettó ár: 858–1536 Ft; " \
            "Készlet: összesen 2539 db, 4 szín-méret variáns, ebből 3 raktáron" in t, t
     # a leírás záró pontja nem duplázódik a szegmens-elválasztóval
     assert "kínál. Paraméterek:" in t and ".. " not in t
@@ -155,6 +155,9 @@ def test_hash_split_static_vs_dynamic():
     # leírás változás -> content_hash MÁS
     d = _one(_prod(description="Más leírás."))
     assert a.content_hash != d.content_hash
+    # m97: a cikkszám a statikus tartalom része (text + content_hash)
+    e = _one(_prod(sku="U MAS-1"))
+    assert "Cikkszám: U MAS-1" in e.text and a.content_hash != e.content_hash
 
 
 def test_skip_and_root_shapes():

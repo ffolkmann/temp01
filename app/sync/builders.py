@@ -1035,6 +1035,9 @@ class KonturBuilder:
             colors = [_s(x).strip() for x in (p.get("colors") or []) if _s(x).strip()]
             if colors:
                 params.append("Színek: " + trunc(", ".join(colors), _KONTUR_COLORS_MAX))
+            # m97: a cikkszám a textben is — a B2B vevő cikkszámra kérdez ("GI64000"), a
+            # lexikális rerank csak így fogja meg (a payload sku nincs az embedben)
+            params.append("Cikkszám: " + sku)
             # dinamikus sáv (ár/készlet/kifutó) — a ps_hash része, a content_hash-é NEM
             dyn: list[str] = []
             if sm["pmin"] > 0:
