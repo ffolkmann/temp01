@@ -211,6 +211,27 @@ def parse_cap(value):
 
 
 # --------------------------------------------------------------------------- #
+# akcentus-szin (sscol/1)
+# --------------------------------------------------------------------------- #
+_HEXD = "0123456789abcdef"
+
+
+def parse_accent(value):
+    """Widget-akcentus szin -> "#rrggbb" (kisbetus). Ures/ervenytelen -> "".
+
+    Az ures ertek TUDATOS: a widget ilyenkor a sajat beepitett alapszinet
+    hasznalja, tehat egy elirt hex sosem valtoztat meg semmit a boltban.
+    A 3 jegyu alak kifejtve tarolodik.
+    """
+    raw = _one(value, 16).replace(" ", "").lower().lstrip("#")
+    if len(raw) == 3 and all(c in _HEXD for c in raw):
+        raw = "".join(c * 2 for c in raw)
+    if len(raw) == 6 and all(c in _HEXD for c in raw):
+        return "#" + raw
+    return ""
+
+
+# --------------------------------------------------------------------------- #
 # urlap <-> config
 # --------------------------------------------------------------------------- #
 def merge_preserving(old, new):
@@ -244,6 +265,7 @@ def form_to_config(form):
         "ai_answer": _as_bool(f.get("ai_answer")),
         "ai_daily_cap": parse_cap(f.get("ai_daily_cap")),
         "ai_examples": parse_examples(f.get("ai_examples")),
+        "accent": parse_accent(f.get("accent")),
     }
 
 
@@ -260,6 +282,7 @@ def config_to_form(cfg):
         "ai_answer": _as_bool(c.get("ai_answer")),
         "ai_daily_cap": parse_cap(c.get("ai_daily_cap")),
         "ai_examples": list_to_text(c.get("ai_examples")),
+        "accent": parse_accent(c.get("accent")),
     }
 
 

@@ -278,6 +278,23 @@ async def auto_ids(session: AsyncSession, client_id: str) -> list[str]:
 # --------------------------------------------------------------------------- #
 # végpontok
 # --------------------------------------------------------------------------- #
+_ACCENT_HEXD = "0123456789abcdef"
+
+
+def accent_color(raw: Any) -> str:
+    """Akcentus-szin a widgetnek: "#rrggbb" kisbetus alak, kulonben "".
+
+    A mentes utjan a searchcfg.parse_accent mar normalizal; ez a masodik kapu a
+    kezzel vagy DB-bol irt ertekekre. Ures ertek = a widget sajat alapszine.
+    """
+    s = str(raw or "").strip().lower().lstrip("#")
+    if len(s) == 3 and all(c in _ACCENT_HEXD for c in s):
+        s = "".join(c * 2 for c in s)
+    if len(s) == 6 and all(c in _ACCENT_HEXD for c in s):
+        return "#" + s
+    return ""
+
+
 @router.get("/search/settings")
 async def search_settings(
     client_id: str = Query("", max_length=64),
@@ -301,6 +318,9 @@ async def search_settings(
         # s2-15: a widget szerver-modja - true-nal a widget index-letoltes helyett
         # a GET /search/q vegpontot hasznalja
         "server": bool(isinstance(cfg.get("server"), dict) and cfg["server"].get("enabled")),
+        # sscol/1: a widget akcentus-szine a tenant configjabol; "" eseten a
+        # widget beepitett alapszine marad (elirt hex sem valtoztat semmit)
+        "accent": accent_color(cfg.get("accent")),
     }
     if cfg.get("enabled"):
         if not body["popular_terms"]:
