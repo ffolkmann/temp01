@@ -1043,6 +1043,10 @@ class KonturBuilder:
             if sm["pmin"] > 0:
                 dyn.append(f"Nettó ár: {huf(sm['pmin'])}–{huf(sm['pmax'])} Ft" if sm["pmax"] > sm["pmin"]
                            else f"Nettó ár: {huf(sm['pmin'])} Ft")
+            else:
+                # m97a: a feedben egyetlen variánsnak sincs ára (13 AP-termék, 2026-09-01, Sanyi:
+                # ilyenkor nincs információ) -> a bot ne találgasson, ajánlatkérésre irányítson
+                dyn.append("Ár: jelenleg nincs elérhető ár, kérj egyedi ajánlatot")
             if sm["n"]:
                 dyn.append(f"Készlet: összesen {huf(sm['stock'])} db, {sm['n']} szín-méret variáns, "
                            f"ebből {sm['in_stock']} raktáron")

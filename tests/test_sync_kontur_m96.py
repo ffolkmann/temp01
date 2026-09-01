@@ -173,6 +173,20 @@ def test_skip_and_root_shapes():
     assert [o.sku for o in out] == ["AA", "ZZ"]
 
 
+def test_no_price_at_all_asks_for_quote():
+    # m97a: se variáns-ár, se price_net_from -> nincs ár a textben, ajánlatkérés-sáv, price=""
+    p = _prod(price_net_from=0, variants=[{"variant_sku": "x", "color": "Kék", "size": "S", "stock": 6160,
+                                           "price_net": 0}])
+    sp = _one(p)
+    assert sp.price == "" and "Ft-tól" not in sp.text and "Nettó ár:" not in sp.text
+    assert "Ár: jelenleg nincs elérhető ár, kérj egyedi ajánlatot" in sp.text
+    assert sp.available is True and sp.stock_str == "6160"
+    # az ár-hiány a ps_hash-ben van, a content_hash-ben nem
+    q = _one(_prod(price_net_from=0, variants=[{"variant_sku": "x", "color": "Kék", "size": "S", "stock": 6160,
+                                                "price_net": 500}]))
+    assert q.content_hash == sp.content_hash and q.ps_hash_str != sp.ps_hash_str
+
+
 def test_price_fallback_and_long_colors():
     # variáns-ár nélkül a price_net_from a padló
     p = _prod(variants=[{"variant_sku": "x", "color": "Kék", "size": "S", "stock": 3}])
