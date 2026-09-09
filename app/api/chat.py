@@ -673,6 +673,67 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
                     parsed = _dc_replace96(parsed, reply=_new96)
     except Exception:  # noqa: BLE001 - az orseg hibaja sose torje a valaszt
         pass
+    # m98: LINK-UTOVALIDACIO - a valaszban kiment termek-linkek determinisztikus
+    # ellenorzese. Mert lelet (d09b_ctxscan.py, 144 valodi valasz / 261 link,
+    # kellegyszerszam): 11 link (4,2%) FABRIKALT slugra mutat -> garantalt 404
+    # ("DENZEL 1200W 15L ... porszivo" nev + kitalalt URL). A KONTEXTUS NEM jo
+    # referencia: a linkek 32%-a letezo termekre mutat ugy, hogy a mostani
+    # poolban nincs benne (page_context terméke, korabbi fordulo, SKU-s
+    # follow-up) - a naiv "ismeretlen URL -> ki" 94 vagasbol 83 JOT vagna.
+    # Ezert a hivatkozasi alap a KATALOGUS (Qdrant `url` payload, m67 ota
+    # keyword-indexelt): csak a kontextuson KIVULI URL-eket kerdezzuk le.
+    # Ketto fail-safe: (a) a find_by_url hibat is None-nal jelez, ezert vagas
+    # elott egy ISMERT ctx-URL-lel ellenorizzuk, hogy a lookup egyaltalan
+    # mukodik; (b) barmi kivetel -> a valasz valtozatlan.
+    # A log_turn ELOTT fut (m96-mintara), hogy a naplo es az e-mail-atirat is
+    # azt orizze, amit a latogato TENYLEG latott.
+    try:
+        from app.services import linkvalidate as _lv98
+        _ctx98: dict = {}
+        for _h98 in (hits or []):
+            _pl98 = (_h98.get("payload") or {}) if isinstance(_h98, dict) else {}
+            if str(_pl98.get("type") or "") == "product" and _pl98.get("url"):
+                _ctx98[str(_pl98["url"])] = str(_pl98.get("name") or "")
+        if isinstance(current, dict):
+            _plc98 = current.get("payload") if isinstance(current.get("payload"), dict) else current
+            if _plc98.get("url"):
+                _ctx98.setdefault(str(_plc98["url"]), str(_plc98.get("name") or ""))
+        _cand98 = _lv98.lookup_candidates(parsed.reply, set(_ctx98))
+        _miss98: set = set()
+        if _cand98:
+            from app.core.qdrant import get_qdrant as _gq98
+            _qc98 = _gq98()
+
+            async def _known98(u: str) -> bool:
+                for _v in (u, u.rstrip("/"), u.rstrip("/") + "/"):
+                    if await _qc98.find_by_url(req.client_id, _v):
+                        return True
+                return False
+
+            for _u98 in _cand98:
+                if not await _known98(_u98):
+                    _miss98.add(_u98)
+            if _miss98:
+                # fail-safe (a): mukodik-e egyaltalan a lookup? (qdrant-hiba
+                # eseten a find_by_url is None-t ad -> minden link "hianyzo")
+                _probe98 = next(iter(_ctx98), None)
+                if _probe98 is None or not await _known98(str(_probe98)):
+                    logger.warning(
+                        "m98 linkfix: a katalogus-lookup nem igazolhato -> kihagyva "
+                        "(client=%s)", req.client_id)
+                    _miss98 = set()
+        _new98, _i98 = _lv98.apply_fixes(parsed.reply, _ctx98, _miss98)
+        if _new98 != parsed.reply:
+            logger.info(
+                "m98 linkfix: removed=%d retargeted=%d client=%s",
+                _i98.get("removed", 0), _i98.get("retargeted", 0), req.client_id)
+            try:
+                parsed.reply = _new98
+            except Exception:  # noqa: BLE001 - frozen dataclass eseten
+                from dataclasses import replace as _dc_replace98
+                parsed = _dc_replace98(parsed, reply=_new98)
+    except Exception:  # noqa: BLE001 - az orseg hibaja sose torje a valaszt
+        logger.exception("m98 linkfix hiba (a valasz valtozatlan)")
     # m67: a search_fallback esemény-log a lassú szakasz UTÁN (rövid, friss kapcsolat)
     if _sfb_meta:
         await log_event(session, req.client_id, req.session_id, "search_fallback", _sfb_meta)
