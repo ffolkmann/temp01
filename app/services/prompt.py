@@ -220,8 +220,8 @@ _M63_STOCK_FIRST = (
     u"l\u00e1togat\u00f3 konkr\u00e9tan arra a term\u00e9kre k\u00e9rdez r\u00e1 (n\u00e9vvel, "
     u"cikksz\u00e1mmal, linkkel) \u2014 ilyenkor v\u00e1laszolj r\u00f3la, \u00e9s jelezd, hogy "
     u"nincs rakt\u00e1ron; vagy (2) a k\u00e9rd\u00e9sre illeszked\u0151 rakt\u00e1ron l\u00e9v\u0151 "
-    u"tal\u00e1latod nincs \u2014 ilyenkor mondd ki, hogy az \u00e1ltalad l\u00e1tott rakt\u00e1ron "
-    u"l\u00e9v\u0151 tal\u00e1latok k\u00f6z\u00f6tt most nincs ilyen, \u00e9s aj\u00e1nld a webshop "
+    u"tal\u00e1latod nincs \u2014 ilyenkor mondd ki, hogy a web\u00e1ruh\u00e1zban most nem "
+    u"l\u00e1tsz rakt\u00e1ron l\u00e9v\u0151 ilyen term\u00e9ket, \u00e9s aj\u00e1nld a webshop "
     u"keres\u0151j\u00e9t. Ha nem rakt\u00e1ron l\u00e9v\u0151 term\u00e9ket eml\u00edtesz, MINDIG "
     u"jelezd egy\u00e9rtelm\u0171en, hogy nincs rakt\u00e1ron. Kiv\u00e9tel: ha a # KERESESI MOD "
     u"blokk m\u00e1st mond, az az ir\u00e1nyad\u00f3."
@@ -290,6 +290,31 @@ def _now_block(now=None) -> str:
         return ""
 
 
+def _name_block(tenant) -> str:
+    """m102/2 (G3): a widget fejleceben latszo bot-nev a promptba (statikus, tenantonkent allando).
+
+    d10c: a tenant bot_name mezoje (kellegyszerszam "Sanyi", fishingoutlet "Ponty Peti",
+    teslashop "Teslashop Optimus") eddig SEHOL nem jutott el a modellhez -> a latogato a
+    fejlecben latott neven szolitotta, a bot letagadta ("nem Sanyi vagyok"). URL-szeru vagy
+    ures nevnel nincs blokk. Hiba -> "".
+    """
+    try:
+        nm = str(getattr(tenant, "bot_name", "") or "").strip().strip('"')
+        low = nm.lower()
+        if (not nm or len(nm) > 40 or "://" in low or low.startswith("www.")
+                or low.rstrip("/").endswith((".hu", ".com", ".eu", ".net", ".org"))):
+            return ""
+        return (
+            "\n\n# A NEVED\n"
+            "A chatablak fejleceben a latogato ezt a nevet latja: \"" + nm + "\". Ez a te neved: "
+            "ha a latogato ezen a neven szolit, vagy megkerdezi, ki vagy, hogy hivnak, vallald ezt "
+            "a nevet (a webaruhaz online asszisztensekent), es SOHA ne mondd, hogy nincs neved, "
+            "vagy hogy nem igy hivnak. Magadtol nem kell minden valaszban bemutatkoznod."
+        )
+    except Exception:  # noqa: BLE001 - a prompt sose torjon
+        return ""
+
+
 def build_system_prompt_parts(
     tenant: Tenant,
     hits: list[dict[str, Any]],
@@ -309,7 +334,7 @@ def build_system_prompt_parts(
     base = (tenant.system_prompt or "").strip() or _DEFAULT_BASE
     # m33: platform-szintu teny-korlat MINDEN tenantnak. A base utan, a dinamikus
     # blokkok elott -> a statikus prefix tenantonkent allando marad (prompt-cache).
-    static = base + _factuality_block()
+    static = base + _factuality_block() + _name_block(tenant)  # m102/2: nev (G3)
     system = _now_block()  # m101: aktualis datum/nap/ido (dinamikus, nem cache-elt)
 
     # 2) # AKTUALIS TERMEK
