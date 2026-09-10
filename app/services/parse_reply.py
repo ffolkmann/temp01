@@ -61,6 +61,13 @@ def parse_reply(text: str) -> ParsedReply:
                 # parsolt envelope-nal a reply KIZAROLAG az envelope-bol jon; ures ->
                 # a lenti fallback (korabban a nyers JSON ment ki - latens bug).
                 reply = str(o.get("reply") or "")
+                if not reply.strip():
+                    # m99: a modell neha mas kulcs ala teszi a valaszt -> mentes
+                    for _k in ("answer", "message", "response", "text", "valasz"):
+                        _v = o.get(_k)
+                        if isinstance(_v, str) and _v.strip():
+                            reply = _v
+                            break
                 if isinstance(o.get("collect_lead"), bool):
                     collect = o["collect_lead"]
                 if isinstance(o.get("order_form"), bool):

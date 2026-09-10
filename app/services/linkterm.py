@@ -25,6 +25,9 @@ _FILLER = {
     "hali", "jonapot", "napot", "kivanok", "elore", "kerem", "kerek",
     "mikor", "mennyibe", "ugye", "azt", "ezt", "itt", "ott", "akarok",
     "akarom", "csak",
+    # m99: parbeszed-szavak — ertelmetlen kereso-term lenne ("Igen", "Rendben")
+    "igen", "nem", "rendben", "oke", "okes", "persze", "ertem", "varom",
+    "tessek", "akkor",
 }
 _NAME_STOP = {
     "maximum", "meretu", "notebookokhoz", "laptopokhoz", "szinben",
@@ -33,6 +36,22 @@ _NAME_STOP = {
     # "3 ev garanciaval") ne nyerjenek keresotermkent
     "billentyuzet", "billentyuzettel", "magyar", "garancia", "garanciaval",
 }
+
+# m99: szemelyes adat (e-mail, telefonszam, hosszu szamsor pl. rendelesszam) sose
+# keruljon kereso-URL-be. Mert lelet (d10a, m95 ota): 17 kereso-linkben a latogato
+# e-mail-cime volt a keresoszo ("search=kovacsotto+gmail").
+_PII = re.compile(
+    r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+"
+    r"|(?:\+36|\b06)[\s/-]?\d{1,2}[\s/-]?\d{3}[\s/-]?\d{3,4}"
+    r"|\b\d{7,}\b")
+
+
+def has_pii(s):
+    return bool(_PII.search(str(s or "")))
+
+
+def scrub_pii(s):
+    return _PII.sub(" ", str(s or ""))
 
 
 def _fold(s):
@@ -102,7 +121,13 @@ def link_search_term(message, hit_names=None, brands=None, context=None):
     nev-alapu term csak akkor ervenyes, ha abbol levezetheto — kulonben a
     pool zajanak tekintjuk (pl. "jelgenerator" kerdesre a forrasztopakas
     talalatnevek), es a kerdes-alapu topicra esunk vissza. Ures visszateres
-    = a hivo NE tegyen ki zaro-linket. context=None: regi viselkedes."""
+    = a hivo NE tegyen ki zaro-linket. context=None: regi viselkedes.
+    m99: szemelyes adatot tartalmazo uzenetre ures (nincs link); a kontextusbol
+    a szemelyes adat kiesik, mielott a levezethetoseget nezzuk."""
+    if has_pii(message):
+        return ""
+    if context is not None:
+        context = scrub_pii(context)
     t = _name_term(hit_names or [], brands)
     if t and (context is None or _derivable(t, context)):
         return t

@@ -490,6 +490,15 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
         return ChatResponse(reply=_fb)
 
     parsed = parse_reply(raw)
+    # m99: a JSON-hibas tartalek-valasz ("Hagyd meg az e-mail-cimed") okat eddig nem
+    # lattuk (napi ~0,5 eset, e-mailt megado uzenetre is) -> a nyers kimenet a logba
+    try:
+        from app.services.parse_reply import _FALLBACK as _prfb99
+        if parsed.reply == _prfb99:
+            logger.warning("m99 parse fallback: raw_len=%d raw=%r client=%s",
+                           len(str(raw or "")), str(raw or "")[:500], req.client_id)
+    except Exception:  # noqa: BLE001 - a naplozas sose torje a valaszt
+        pass
     # m89: ZARO-LINK KAPU - a "Tovabbi talalatok" kereso-link CSAK akkor, ha a
     # beszelgetes TERMEKRE iranyul. Merve 3526 valodi valaszon: a linkesek 14,1%-a
     # policy-kerdesre ment ki (notebookstore: 96-bol 89). Fail-safe: hiba eseten
@@ -515,6 +524,21 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
     except Exception:  # noqa: BLE001 - a kapu hibaja sose torje a valaszt
         _link_ok = True
         _link_ok_shop = True
+    # m99: rendeles-urlapos (order_status_form) valaszra, es olyan uzenetre, amiben a
+    # latogato e-mail-cimet / telefonszamot / rendelesszamot irt, nincs zaro kereso-link
+    # (d10a, m95 ota: 56 rendeles-urlapos + 27 szemelyes-adatos link, 17-ben az e-mail
+    # a kereso-URL-ben). Fail-safe: hiba eseten a mai viselkedes.
+    try:
+        from app.services.linkterm import has_pii as _hp99
+        _of99 = getattr(parsed, "action", None) == "order_status_form"
+        if _of99 or _hp99(message):
+            if _link_ok or _link_ok_shop:
+                logger.info("m99 link gate: nincs zaro-link (%s) client=%s",
+                            "rendeles-urlap" if _of99 else "szemelyes adat", req.client_id)
+            _link_ok = False
+            _link_ok_shop = False
+    except Exception:  # noqa: BLE001 - a kapu hibaja sose torje a valaszt
+        pass
     # m62: szuperlativusz/keszlet-modnal determinisztikus kereso-link a valasz vegen
     # (mint az m25-os zarolink) — a latogato egy kattintassal a bolt keresojeben folytathatja.
     if _rmode and not shop_hits and _link_ok:  # m89 kapu
