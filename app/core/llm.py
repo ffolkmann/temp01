@@ -56,6 +56,28 @@ def _log_usage(resp, model):
         pass
 
 
+def _text_of(resp) -> str:
+    """A valasz osszes text-blokkja osszefuzve (nem-text blokk - pl. thinking - kimarad)."""
+    try:
+        parts = [b.text for b in (getattr(resp, "content", None) or [])
+                 if getattr(b, "type", None) == "text"]
+        return "".join(parts).strip()
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _log_empty(resp, which: str) -> None:
+    """m101/1: text nelkuli valasz diagnosztikaja (stop_reason + blokktipusok). Fail-safe."""
+    try:
+        logger.warning(
+            "m101n1 ures llm-valasz (%s): stop=%s blocks=%s", which,
+            getattr(resp, "stop_reason", None),
+            [getattr(b, "type", None) for b in (getattr(resp, "content", None) or [])],
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+
 async def generate_reply(
     system_prompt: str | tuple[str, str],
     history: list[HistoryItem],
@@ -108,5 +130,27 @@ async def generate_reply(
             await asyncio.sleep(_delay + random.uniform(0, 0.5))
     # válasz: content[0].text (manual 1.)
     _log_usage(resp, _used)
-    parts = [b.text for b in resp.content if getattr(b, "type", None) == "text"]
-    return "".join(parts).strip()
+    out = _text_of(resp)
+    if not out:
+        # m101/1: a modell NEHA egyetlen text-blokk nelkul valaszol (d10b: m99-naplo
+        # raw_len=0 mellett out=165 / out=318 kimeneti token -> nem-text blokkba ment).
+        # Ez adta a "Hagyd meg az e-mail-cimed" tartalek-valaszt (~25 eset / 30 nap,
+        # rendeles-kovetokerdeseknel E2E-ben 3/27). Egy ujraproba; ha az is ures, a
+        # hivo tartalek-valasza marad.
+        _log_empty(resp, "elso")
+        try:
+            resp2 = await _client.messages.create(
+                model=_used,
+                max_tokens=_settings.max_tokens,
+                system=_system,
+                messages=messages,
+            )
+            _log_usage(resp2, _used)
+            out = _text_of(resp2)
+            if out:
+                logger.warning("m101n1 ujraproba sikeres (len=%d)", len(out))
+            else:
+                _log_empty(resp2, "ujraproba")
+        except Exception:  # noqa: BLE001 - a hivo tartalek-valasza marad
+            logger.exception("m101n1 ujraproba hiba")
+    return out
