@@ -564,9 +564,14 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
         if _link_ok or _link_ok_shop:
             from app.services.linkgate import shop_topic as _st102
             from app.services.linkgate import reply_has_product_link as _rpl102
-            if _st102(message) and not _rpl102(parsed.reply, hits, shop_hits):
-                logger.info("m102 link gate: nincs zaro-link (bolti tema) client=%s",
-                            req.client_id)
+            # m102/3: identitas-/meta-kerdes ("Hogy hivnak?", "Te vagy Sanyi?",
+            # "robot vagy?", "bena robot vagy") - d10d: 6/6 ertelmetlen termu link.
+            from app.services.linkgate import meta_topic as _mt102
+            _w102 = "bolti tema" if _st102(message) else (
+                "identitas/meta" if _mt102(message) else "")
+            if _w102 and not _rpl102(parsed.reply, hits, shop_hits):
+                logger.info("m102 link gate: nincs zaro-link (%s) client=%s",
+                            _w102, req.client_id)
                 _link_ok = False
                 _link_ok_shop = False
     except Exception:  # noqa: BLE001 - a kapu hibaja sose torje a valaszt

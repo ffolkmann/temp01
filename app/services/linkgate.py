@@ -197,6 +197,38 @@ def shop_topic(message: str) -> bool:
     return bool(_SHOPTOPIC.search(fold(message)))
 
 
+# --- 5. m102/3: IDENTITAS- / META-KERDES -----------------------------------
+# Mert lelet (d10d, 30 nap, 3341 valodi kerdes): a botnak szolo kerdesek ala is
+# kiment a zaro kereso-link, a kerdes szavaibol epitett, ertelmetlen termmel
+# ("Miert nem Zolinak hivnak?" -> search=Miert+nem, "Te vagy az Sanyi?" ->
+# search=vagy+Sanyi, "Mesterseges inteligencia vagy?" -> keyword=..., "jo bena
+# robot vagy" -> k=bena+robot); E2E-ben mind az 5 nevkerdes keyword=hivnak
+# linket kapott. Sweep: 6 talalat / 3341, mind valodi, mind linkes, 0 FP.
+# CSAPDAK (ezert a lookahead-ek): "Fekete vagy acelszurke?" (a "te vagy" csak
+# szohatarral), "robot vagy kezi funyiro?" / "buta vagy okostelefon?" (termek-
+# alternativa: az "X vagy" csak kerdes-/mondatvegen), "ki vagy bekapcsolhato"
+# (a "ki vagy" csak mondatvegen), "ember vagyok" (a vagy utan szohatar),
+# "ha te vagy a helyemben" (termek-tanacskeres). A "hivjak" SZANDEKOSAN nincs
+# benne ("hogy hivjak azt a szerszamot..." termek-kerdes).
+_META = re.compile(
+    r"\bhivnak\b|\bneved\b|hogy szolithatlak|"
+    r"\bki vagy\s*(te\b)?\s*(?=[?!.,;]|$)|"
+    r"\bkivel (beszelek|beszelgetek|chatelek|levelezek|irok|irogatok)\b|"
+    r"\bte vagy (az?|egy) (?!helyem)|\bte vagy \w+( \w+)?\s*(?=[?!.]|$)|"
+    r"\bte (egy )?(robot|bot|chatbot|gep|ember|ai)\b|"
+    r"\b(robot|bot|chatbot|gep|ai|mesterseges\s+intel+\w*|ember|elo ember|valodi ember|"
+    r"igazi ember|elo szemely)\s+vagy\s*(te\s*)?(?=[?!.,;]|$|\s+vagy\b)|"
+    r"\b(buta|hulye|bena|haszontalan|ertelmetlen)\s+(vagy|bot|robot|gep)\s*(te\s*)?(?=[?!.,;]|$)|"
+    r"\b(hogy(an)?|mire|mivel) akarsz segiteni"
+)
+
+
+def meta_topic(message: str) -> bool:
+    """m102/3: a kerdes a botnak szol (neve, kiletele, "robot vagy?", minosites),
+    nem termekre - ala nem kell kereso-link."""
+    return bool(_META.search(fold(message)))
+
+
 _MDURL = re.compile(r"\]\(((?:https?://|/)[^)\s]+)\)")
 
 
