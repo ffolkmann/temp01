@@ -49,13 +49,15 @@ def extract_contact(message):
     if not msg.strip() or _FORM_ORDER_RE.search(msg):
         return None
     m = EMAIL_RE.search(msg)
-    if not m:
-        return None
-    email = m.group(0).strip().strip(".")[:MAX_EMAIL]
+    email = m.group(0).strip().strip(".")[:MAX_EMAIL] if m else ""
     if "@" not in email:
-        return None
+        email = ""
     ph = PHONE_RE.search(msg)
     phone = re.sub(r"\s+", " ", ph.group(0)).strip()[:MAX_PHONE] if ph else ""
+    # m101: a CSAK telefonszamot megado latogato is lead (d10b: 12 eset / 30 nap,
+    # 8 fishingoutlet - "felirtam a szamod, kollega hiv" - de senki nem kapta meg)
+    if not email and not phone:
+        return None
     return {"email": email, "phone": phone}
 
 
@@ -76,4 +78,24 @@ def is_shop_email(email, domains) -> bool:
             d = d[4:]
         if d and (dom == d or dom.endswith("." + d)):
             return True
+    return False
+
+
+def phone_digits(phone) -> str:
+    """m101: telefonszam -> belfoldi szamjegyek (+36 / 06 elotag nelkul)."""
+    d = re.sub(r"\D", "", str(phone or ""))
+    if d.startswith("36") or d.startswith("06"):
+        d = d[2:]
+    return d
+
+
+def is_known_phone(phone, texts) -> bool:
+    """m101: a bolt SAJAT szama (tenant-prompt, a bot korabbi valaszai) nem latogatoi lead."""
+    pd = phone_digits(phone)
+    if len(pd) < 8:
+        return False
+    for t in texts or []:
+        for mm in PHONE_RE.finditer(str(t or "")):
+            if phone_digits(mm.group(0)) == pd:
+                return True
     return False

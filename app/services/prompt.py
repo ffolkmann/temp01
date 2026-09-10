@@ -12,6 +12,7 @@ katalógusú platformoknál.
 
 from dataclasses import dataclass
 from datetime import date
+from datetime import datetime as _dt  # m101
 from typing import Any
 
 from app.models.db_models import Coupon, Tenant
@@ -259,6 +260,36 @@ def order_form_hint(platform: str | None) -> str:
     return _ORDER_HINT_ZIP if plat == "webdoc" else _ORDER_HINT_EMAIL
 
 
+_HU_DAYS = ("hetfo", "kedd", "szerda", "csutortok", "pentek", "szombat", "vasarnap")
+_HU_MONTHS = ("januar", "februar", "marcius", "aprilis", "majus", "junius", "julius",
+              "augusztus", "szeptember", "oktober", "november", "december")
+
+
+def _now_block(now=None) -> str:
+    """m101: aktualis datum / nap / ido (Europe/Budapest) a DINAMIKUS promptba.
+
+    d10b: a promptban datum csak a kupon-lejarat szuresehez volt -> a bot 80
+    datumfuggo kerdesre (ma, holnap, nyitva vagytok, most hivhatom) nem tudta,
+    milyen nap van ("Nem tudom pontosan, hogy most milyen nap van" - fishingoutlet).
+    A dinamikus reszbe megy, a cache-elt statikus prefixet nem erinti. Hiba -> "".
+    """
+    try:
+        if now is None:
+            from zoneinfo import ZoneInfo
+            now = _dt.now(ZoneInfo("Europe/Budapest"))
+        return (
+            "\n\n# AKTUALIS IDOPONT\n"
+            "Most: %d. %s %d., %s, %02d:%02d (magyarorszagi ido). Ha a kerdes napra vagy "
+            "idopontra vonatkozik (ma, holnap, hetvegen, most nyitva vagytok, most hivhatom, "
+            "mikorra er ide), ebbol szamolj, es ne mondd, hogy nem tudod, milyen nap van. "
+            "Munkanapok szamolasakor a szombat es a vasarnap nem munkanap."
+            % (now.year, _HU_MONTHS[now.month - 1], now.day, _HU_DAYS[now.weekday()],
+               now.hour, now.minute)
+        )
+    except Exception:  # noqa: BLE001 - a prompt sose torjon
+        return ""
+
+
 def build_system_prompt_parts(
     tenant: Tenant,
     hits: list[dict[str, Any]],
@@ -279,7 +310,7 @@ def build_system_prompt_parts(
     # m33: platform-szintu teny-korlat MINDEN tenantnak. A base utan, a dinamikus
     # blokkok elott -> a statikus prefix tenantonkent allando marad (prompt-cache).
     static = base + _factuality_block()
-    system = ""
+    system = _now_block()  # m101: aktualis datum/nap/ido (dinamikus, nem cache-elt)
 
     # 2) # AKTUALIS TERMEK
     current_text = current.text if current else ""
@@ -519,7 +550,16 @@ def build_system_prompt_parts(
         "collect_lead-et hasznald: ilyenkor az order_form legyen true es a collect_lead false, a "
         "reply-ban pedig roviden kerd meg, hogy a megjeleno urlapon adja meg a rendelesszamat es a "
         + order_form_hint(tenant.platform)
-        + "Konkret rendelesi adatot (allapot, cim, tetel) SOHA ne irj a chatbe."
+        + "Konkret rendelesi adatot (allapot, cim, tetel) sajat magadtol SOHA ne irj a chatbe, "
+        "es ne talalj ki. KIVETEL (m101): ha a beszelgetesben mar szerepel a rendszer "
+        "rendeles-lekerdezesenek eredmenye (\"A(z) #... rendelesed allapota: ...\" kezdetu "
+        "uzenet), az hitelesitett, valos adat, amit a latogato a sajat rendelesszamaval es "
+        "azonositojaval kert le: arra nyugodtan hivatkozhatsz es elmagyarazhatod (mit jelent az "
+        "allapot, a feltuntetett szallitasi ido szerint nagyjabol mikorra varhato). Ilyenkor NE "
+        "nevezd pontatlannak, NE mondd, hogy biztonsagi okbol nem oszthatod meg, es "
+        "ugyanarra a rendelesre NE kerd ujra az urlapot (az order_form legyen false). Amit a "
+        "lekerdezes nem tartalmaz (csomagszam, pontos kezbesitesi nap), arrol mondd, hogy a "
+        "visszaigazolo e-mailben vagy az ugyfelszolgalatnal talalja."
     )
 
     # m32: elo atadas felajanlasa — CSAK ha eppen van online ugyintezo.

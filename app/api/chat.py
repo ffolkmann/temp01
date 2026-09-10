@@ -697,6 +697,32 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
                     parsed = _dc_replace96(parsed, reply=_new96)
     except Exception:  # noqa: BLE001 - az orseg hibaja sose torje a valaszt
         pass
+    # m101: (a) relativ termek-link abszolutra (4mfrigo: 8 domain nelkuli link / 30 nap
+    # -> torott), a m98 validacio ELOTT; (b) SHADOW-meres: sikeres rendeles-lekeres utan
+    # ujra kert rendeles-urlap (d10b: 157 lekereses sessionbol 29-ben a bot letagadta a
+    # lekerest es ujra urlapot kert; a javitas prompt-oldali, ez a maradekot szamolja).
+    try:
+        from app.services.linkvalidate import absolutize_links as _abs101
+        _base101 = str(getattr(tenant, "public_url", "") or "").strip()
+        if not _base101:
+            _d101 = [x.strip() for x in str(getattr(tenant, "domain", "") or "").split(",") if x.strip()]
+            _base101 = ("https://" + _d101[0]) if _d101 else ""
+        if _base101:
+            _new101, _n101 = _abs101(parsed.reply, _base101)
+            if _n101:
+                logger.info("m101 relativ link -> abszolut: %d client=%s", _n101, req.client_id)
+                try:
+                    parsed.reply = _new101
+                except Exception:  # noqa: BLE001 - frozen dataclass eseten
+                    from dataclasses import replace as _dc_replace101
+                    parsed = _dc_replace101(parsed, reply=_new101)
+        if getattr(parsed, "action", None) == "order_status_form" and any(
+                getattr(_h, "role", "") == "assistant"
+                and str(getattr(_h, "content", "") or "").startswith("A(z) #")
+                for _h in (req.history or [])):
+            logger.info("m101 order-form ismetles lekeres utan (shadow) client=%s", req.client_id)
+    except Exception:  # noqa: BLE001 - sose torje a valaszt
+        pass
     # m98: LINK-UTOVALIDACIO - a valaszban kiment termek-linkek determinisztikus
     # ellenorzese. Mert lelet (d09b_ctxscan.py, 144 valodi valasz / 261 link,
     # kellegyszerszam): 11 link (4,2%) FABRIKALT slugra mutat -> garantalt 404
@@ -804,15 +830,29 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
         if _c100 and (not _cl100.should_capture(getattr(parsed, "action", None))
                       or _cl100.is_shop_email(_c100["email"], getattr(tenant, "domain", None))):
             _c100 = None
+        if _c100 and not _c100["email"]:
+            # m101: csak telefonszam -> a bolt SAJAT szamat (tenant-prompt, a bot korabbi
+            # valaszai) nem rogzitjuk latogatoi leadkent
+            _known101 = [str(getattr(tenant, "system_prompt", "") or "")] + [
+                str(getattr(_h, "content", "") or "") for _h in (req.history or [])
+                if getattr(_h, "role", "") == "assistant"]
+            if _cl100.is_known_phone(_c100["phone"], _known101):
+                _c100 = None
         if _c100 and req.session_id:
             _dup100 = None
             try:
                 from sqlalchemy import text as _t100
-                _dup100 = (await session.execute(
-                    _t100("SELECT 1 FROM leads WHERE client_id = :c AND session_id = :s "
-                          "AND lower(email) = lower(:e) LIMIT 1"),
-                    {"c": req.client_id, "s": req.session_id, "e": _c100["email"]},
-                )).first()
+                if _c100["email"]:
+                    _q100 = ("SELECT 1 FROM leads WHERE client_id = :c AND session_id = :s "
+                             "AND lower(email) = lower(:e) LIMIT 1")
+                    _p100 = {"c": req.client_id, "s": req.session_id, "e": _c100["email"]}
+                else:
+                    _q100 = ("SELECT 1 FROM leads WHERE client_id = :c AND session_id = :s "
+                             "AND right(regexp_replace(coalesce(phone, ''), '[^0-9]', '', 'g'), 8)"
+                             " = :p LIMIT 1")
+                    _p100 = {"c": req.client_id, "s": req.session_id,
+                             "p": _cl100.phone_digits(_c100["phone"])[-8:]}
+                _dup100 = (await session.execute(_t100(_q100), _p100)).first()
             except Exception:  # noqa: BLE001
                 logger.exception("m100 chat lead: dup-ellenorzes hiba -> nincs rogzites")
                 _dup100 = True
@@ -842,10 +882,11 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
     if _lead100:
         try:
             _req100 = req.model_copy(update={
-                "email": _lead100["email"], "phone": _lead100.get("phone") or None,
+                "email": _lead100["email"] or None, "phone": _lead100.get("phone") or None,
                 "source": "chat", "type": "lead"})
             await store_lead(session, _req100)
-            logger.info("m100 chat lead: rogzitve (telefon=%s) client=%s",
+            logger.info("m100 chat lead: rogzitve (email=%s telefon=%s) client=%s",
+                        "igen" if _lead100.get("email") else "nem",
                         "igen" if _lead100.get("phone") else "nem", req.client_id)
         except Exception:  # noqa: BLE001 - a rogzites hibaja sose torje a valaszt
             logger.exception("m100 chat lead: rogzites hiba client=%s", req.client_id)

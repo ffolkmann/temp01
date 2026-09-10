@@ -446,6 +446,11 @@ async def _woo_lookup(tenant: "Tenant", order: "OrderIntent") -> tuple[bool, str
     if not isinstance(data, dict) or not data.get("id"):
         return False, "ismeretlen", ""
     status = str(data.get("status") or "ismeretlen")
+    try:  # m101: a Woo nyers (angol) statusz-slugja magyarul megy ki ("processing")
+        from app.services.orderlabels import woo_status_hu as _wsh101
+        status = _wsh101(status)
+    except Exception:  # noqa: BLE001
+        pass
     billing = data.get("billing") if isinstance(data.get("billing"), dict) else {}
     email = norm_email((billing or {}).get("email"))
     if not email or email != norm_email(order.order_email):

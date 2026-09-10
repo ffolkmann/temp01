@@ -369,3 +369,36 @@ def apply_fixes(reply, ctx, missing, repaired=None) -> tuple:
         return m.group(0)
 
     return _LINK.sub(_repl, reply), info
+
+
+def absolutize_links(reply, base):
+    """m101: a domain nelkuli markdown-link celjat a tenant alap-URL-jevel egesziti ki.
+
+    d10b: 4mfrigon 8 link ment ki "[FCP ...](fcp-univerzalis-lyuk-takaro-1539)"
+    alakban -> torott link. Abszolut, mailto:, tel:, # es // cel erintetlen.
+    Visszaad: (uj_valasz, javitott_db).
+    """
+    import re as _re
+    b = str(base or "").strip()
+    if not b.lower().startswith(("http://", "https://")):
+        return reply, 0
+    b = b.rstrip("/")
+    n = [0]
+
+    def _fix(m):
+        tgt = m.group(2)
+        low = tgt.lower()
+        if low.startswith(("http://", "https://", "mailto:", "tel:", "#", "//")):
+            return m.group(0)
+        if low.startswith("www."):
+            n[0] += 1
+            return "[%s](https://%s)" % (m.group(1), tgt)
+        if ":" in tgt.split("/")[0]:
+            return m.group(0)
+        if not _re.match(r"^/?[A-Za-z0-9][A-Za-z0-9._~%/+-]*(\?\S*)?$", tgt):
+            return m.group(0)
+        n[0] += 1
+        return "[%s](%s/%s)" % (m.group(1), b, tgt.lstrip("/"))
+
+    new = _re.sub(r"\[([^\]]+)\]\(([^)\s]+)\)", _fix, str(reply or ""))
+    return new, n[0]

@@ -80,8 +80,7 @@ def test_kapcsolat_kinyeres():
 def test_nem_lead():
     for s in ("", "   ", "Van raktáron Einhell kompresszor?",
               "rendelésszám #57035, e-mail: abc@freemail.hu",
-              "Rendelésszám #31437, e-mail: x@gmail.com",
-              "hivjanak: +36 30 623 2322"):
+              "Rendelésszám #31437, e-mail: x@gmail.com"):
         assert cl.extract_contact(s) is None, s
 
 
