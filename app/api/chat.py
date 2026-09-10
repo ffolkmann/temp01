@@ -539,6 +539,22 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
             _link_ok_shop = False
     except Exception:  # noqa: BLE001 - a kapu hibaja sose torje a valaszt
         pass
+    # m102: BOLTI TEMA - kupon, nyitvatartas, szemelyes atvetel, "mikor jon meg",
+    # telefon/ugyfelszolgalat, reszlet/hitel/utalas, szamla, regisztracio. Merve
+    # (d10c, 1886 valasz 08-27 ota): 107 zaro kereso-link ment ki ilyen kerdes ala.
+    # Csak akkor vagunk, ha a valasz NEM linkel kontextusbeli termeket (vegyes
+    # kerdesnel a kereso-link marad). Fail-safe: hiba eseten a mai viselkedes.
+    try:
+        if _link_ok or _link_ok_shop:
+            from app.services.linkgate import shop_topic as _st102
+            from app.services.linkgate import reply_has_product_link as _rpl102
+            if _st102(message) and not _rpl102(parsed.reply, hits, shop_hits):
+                logger.info("m102 link gate: nincs zaro-link (bolti tema) client=%s",
+                            req.client_id)
+                _link_ok = False
+                _link_ok_shop = False
+    except Exception:  # noqa: BLE001 - a kapu hibaja sose torje a valaszt
+        pass
     # m62: szuperlativusz/keszlet-modnal determinisztikus kereso-link a valasz vegen
     # (mint az m25-os zarolink) — a latogato egy kattintassal a bolt keresojeben folytathatja.
     if _rmode and not shop_hits and _link_ok:  # m89 kapu
@@ -673,6 +689,24 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
             except Exception:  # noqa: BLE001 — frozen dataclass eseten
                 from dataclasses import replace as _dc_replace
                 parsed = _dc_replace(parsed, reply=_newreply)
+    # m102: ha a kapu a zaro-linket NEM engedte, az LLM altal (a m25 prompt-utasitasra)
+    # maga beirt "Tovabbi talalatok" linket is levesszuk (08-27 ota 3 ilyen szivargas,
+    # de a m102-es bolti temaknal a bolti kereso-ag gyakoribb). Fail-safe.
+    try:
+        _fin102 = _link_ok_shop if shop_hits else _link_ok
+        if not _fin102 and u"[Tov\u00e1bbi tal\u00e1latok a web\u00e1ruh\u00e1zban](" in parsed.reply:
+            from app.services.linkgate import strip_more_link as _sml102
+            _new102 = _sml102(parsed.reply)
+            if _new102 != parsed.reply and _new102.strip():
+                logger.info("m102 link gate: LLM-irta zaro-link levetele client=%s",
+                            req.client_id)
+                try:
+                    parsed.reply = _new102
+                except Exception:  # noqa: BLE001 - frozen dataclass eseten
+                    from dataclasses import replace as _dc_replace102
+                    parsed = _dc_replace102(parsed, reply=_new102)
+    except Exception:  # noqa: BLE001 - a kapu hibaja sose torje a valaszt
+        pass
     # m96: VALASZ-ORSEG - tenant-szintu kapcsolat-redakcio (tenants.answer_policy).
     # Ugyfel-keres (Kontur Reklam): az e-mail-cim sose menjen ki, a telefonszam
     # csak akkor, ha a LATOGATO kerdezett ra. Merve 54 valodi valaszon: 43% / 44%

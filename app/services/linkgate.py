@@ -71,6 +71,8 @@ _GREET = {
     "igen", "nem", "aha", "jol", "szuper", "remek", "tokeletes", "kesz",
     # egyszavas nyugtázó válaszok a beszélgetés közepén
     "hetfo", "kedd", "szerda", "csutortok", "pentek", "szombat", "vasarnap",
+    # m102: bucsuzo formulak ("Szep napot", "Nagyon szep koszonom", "Szep hetveget")
+    "szep", "kivanok", "delutant", "hetveget",
 }
 _FILLER = {
     "van", "vannak", "volt", "lesz", "lehet", "kell", "kene", "szeretnek",
@@ -79,6 +81,8 @@ _FILLER = {
     "akkor", "csak", "ott", "itt", "ezt", "azt", "ezek", "azok", "meg", "mar",
     "tudsz", "tudna", "tudnal", "tudnatok", "segit", "segiteni", "segitseg",
     "jo", "nagyon", "szepen", "elore", "is", "es", "de", "vagy", "majd",
+    # m102
+    "most", "kerestem", "ennyi", "mindent", "megvan", "ugye",
 }
 
 # --- 2b. m95: INFO-/ÜGYMENET-KÉRÉS ----------------------------------------
@@ -137,6 +141,105 @@ def has_product_hit(hits) -> bool:
     except Exception:  # noqa: BLE001 — a kapu hibája sose törje a választ
         return True
     return False
+
+
+# --- 4. m102: BOLTI TEMA ----------------------------------------------------
+# Mert lelet (d10c, 2026-09-10, 1886 valasz 08-27 ota): a zaro kereso-link ~100
+# valodi bolti kerdes ala is kiment (kupon, nyitvatartas, szemelyes atvetel,
+# "mikor jon meg", telefon/ugyfelszolgalat, reszlet/hitel/utalas, szamla,
+# regisztracio) - a _SHOPINFO / _INFOREQ ezeket a fordulatokat nem ismerte.
+# Az "akcio" SZANDEKOSAN nincs benne ("Vannak akcios termekek?", "akcios
+# notebook" termek-kereses - ott a link a leghasznosabb), ahogy a puszta
+# "telefon", "kartya", "hazhoz" sem (copygo telefonbolt, memoria-/videokartya,
+# "vasarolnek belole hazhoz szallitassal").
+# A hivo (chat.py) CSAK akkor vag, ha a valaszban nincs termek-link
+# (reply_has_product_link) - vegyes kerdesnel ("Laptop taskat szeretnek, az
+# uzletben is at lehet venni?") a link marad.
+_SHOPTOPIC = re.compile(
+    # kupon / kedvezmenykod
+    r"\bkupon|kedvezmeny ?kod|\bwelcome ?\d{0,2}\b|kodom\w* (erveny|bevalt|nem mukodik)|"
+    r"kedvezmeny\w*[^.?!]{0,30}\bkap|kedvezmeny\w* lehetoseg|valami(lyen)? kedvezmeny|"
+    r"(elso|uj|visszatero) (vasarlo|vasarlas|regisztral)\w*[^.?!]{0,40}kedvezmeny|"
+    r"kedvezmeny\w*[^.?!]{0,40}(visszatero|elso|uj) (vasarl|regisztral)|"
+    # nyitvatartas, fizikai uzlet
+    r"\bnyitva\b|fizikai uzlet|(van|mukodik)( a| az)? (uzlet|bolt)(etek|otok|juk|uk|unk)?\b|"
+    r"\b(uzlet|bolt)(etek|otok|uk|jaitok|eitek)\b|"
+    r"(uzlet|bolt|szakuzlet)\w* hol (van|talalhato|lehet)|(bolt|uzlet)\w* (telefon)?szama|"
+    # szemelyes atvetel
+    r"szemelyes(en)? (atvet|avet|atveh|atvenn|elhoz)|szemelyesen at( \w+)? venni|"
+    r"(at lehet venni|atveheto|atvehet\w*|atvenni)[^.?!]{0,30}(szemelyesen|uzlet|bolt)|"
+    r"(uzlet|bolt)\w*[^.?!]{0,30}(at lehet venni|atveheto|atvehet|atvenni)|"
+    r"hol (lehet|tudom|tudok|lehetne)( \w+)? atvenni|mikor (lehet|tudom)( \w+)? atvenni|"
+    r"\batveheto ma\b|ma is atveheto|\b(ma|holnap)( \w+)? atvehet|"
+    # szallitasi ido / mod
+    r"mikor (jon|er|erkezne|erne|jonne) (meg|ide)\b|mikor er ide|mikorra (jon|er|kapnam)|"
+    r"hany nap (alatt|mulva|mire)|holnapra[^.?!]{0,30}kap|megkapnom|"
+    r"hazhoz (kerem|kerne\w*|rendel\w*)|(hozzak|hoznak|hozna\w*|kihoz\w*) hazhoz|\bautomataba\b|"
+    # rendeles utani erdeklodes (idohatarozoval: a puszta "rendeltem" termek-follow-up is lehet)
+    r"\b(tegnap|ma|mar|mult heten|hetfon|kedden|szerdan|csutortokon|penteken|szombaton|vasarnap)"
+    r"( \w+)? meg ?rendeltem|\b(tegnap|ma|mult heten)( \w+)? rendeltem|"
+    # telefon, ugyfelszolgalat
+    r"telefon ?szam|\bhivhat\w*|fel ?tudom hivni|felhivhat\w*|\bhivtam\b|ugyfelszolg\w*|"
+    r"(erni|erlek|egyeztetni) telefonon|telefonon (nem |is )?(lehet|tudok|el)|munkaidoben|"
+    # fizetes (a policy_filter fizet/utanvet/reszletfizet mintai mellett)
+    r"\breszletre\b|kamatmentes|\bhitel(re|t|lel)\b|aruhitel|\butalhat\w*|\b(el)?utaltam\b|"
+    r"hova (kell )?utal|bankszamla ?szam|dijbekero|elolegbekero|\butalvany|bevaltan|"
+    # szamla, ceges vasarlas
+    r"szamlaj\w*|pdf szamla|letoltheto\w* szamla|\bcegre( nem)? (lehet|vasarol|venni|rendel|vonatkoz)|"
+    # fiok
+    r"regisztral|jelszav|visszaigazolo e-?mail"
+)
+
+
+def shop_topic(message: str) -> bool:
+    """m102: a kerdes bolti temara (kupon, nyitvatartas, atvetel, szallitasi ido,
+    telefon, fizetes, szamla, fiok) iranyul-e."""
+    return bool(_SHOPTOPIC.search(fold(message)))
+
+
+_MDURL = re.compile(r"\]\(((?:https?://|/)[^)\s]+)\)")
+
+
+def _ukey(u) -> str:
+    u = str(u or "").strip().split("#", 1)[0]
+    if "://" in u:
+        u = u.split("://", 1)[1]
+        u = "/" + u.split("/", 1)[1] if "/" in u else "/"
+    return u.rstrip("/").lower()
+
+
+def reply_has_product_link(reply, hits=None, shop_hits=None) -> bool:
+    """m102: a valasz linkel-e a kontextus (Qdrant-hits / bolti kereso) valamelyik
+    termekere. Az URL-t utvonal+query szerint vetjuk ossze (domain, zaro / nelkul).
+    Hiba eseten True (= a link marad, a mai viselkedes)."""
+    try:
+        known = set()
+        for h in hits or []:
+            if not isinstance(h, dict):
+                continue
+            p = h.get("payload") or {}
+            if str(p.get("type") or "") == "product" and p.get("url"):
+                known.add(_ukey(p.get("url")))
+        for h in shop_hits or []:
+            if isinstance(h, dict) and h.get("url"):
+                known.add(_ukey(h.get("url")))
+        known.discard("")
+        if not known:
+            return False
+        return any(_ukey(u) in known for u in _MDURL.findall(str(reply or "")))
+    except Exception:  # noqa: BLE001 - az or hibaja sose vigye el a linket
+        return True
+
+
+_MORELINK = re.compile(u"\\s*\\[Tov\u00e1bbi tal\u00e1latok a web\u00e1ruh\u00e1zban\\]\\([^)\\s]*\\)[ \\t]*")
+
+
+def strip_more_link(reply: str) -> str:
+    """m102: az LLM altal (a m25 prompt-utasitasra) beirt "Tovabbi talalatok a
+    webaruhazban" linket leveszi, ha a kapu a zaro-linket nem engedte."""
+    r = str(reply or "")
+    out = _MORELINK.sub("", r)
+    return out.rstrip() if out != r else r
 
 
 def should_offer_link(message: str, hits=None, is_policy: bool = False,
