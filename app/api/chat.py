@@ -699,18 +699,36 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
             if _plc98.get("url"):
                 _ctx98.setdefault(str(_plc98["url"]), str(_plc98.get("name") or ""))
         _cand98 = _lv98.lookup_candidates(parsed.reply, set(_ctx98))
+        _rg98 = _lv98.repair_guesses(parsed.reply, set(_ctx98))   # m98/2 R3
         _miss98: set = set()
-        if _cand98:
+        _names98: dict = {}
+        _rep98: dict = {}
+        if _cand98 or _rg98:
             from app.core.qdrant import get_qdrant as _gq98
             _qc98 = _gq98()
 
             async def _known98(u: str) -> bool:
                 for _v in (u, u.rstrip("/"), u.rstrip("/") + "/"):
-                    if await _qc98.find_by_url(req.client_id, _v):
+                    _pt98 = await _qc98.find_by_url(req.client_id, _v)
+                    if _pt98:
+                        # m98/2 (B): a kontextuson kivuli linkelt termek NEVE is
+                        # kell, hogy R2/R2b arra is fusson (d10a: +3 jo csere)
+                        _pl98b = (_pt98.get("payload") or {}) if isinstance(_pt98, dict) else {}
+                        if _pl98b.get("name"):
+                            _names98[u] = str(_pl98b.get("name"))
                         return True
                 return False
 
+            # m98/2 R3: dupla URL / elirt utvonal-elotag -> csak IGAZOLT tipp
+            _ck98 = {_lv98.url_key(_x) for _x in _ctx98}
+            for _o98, _gl98 in _rg98.items():
+                for _g98 in _gl98:
+                    if _lv98.url_key(_g98) in _ck98 or await _known98(_g98):
+                        _rep98[_o98] = _g98
+                        break
             for _u98 in _cand98:
+                if _u98 in _rep98:
+                    continue
                 if not await _known98(_u98):
                     _miss98.add(_u98)
             if _miss98:
@@ -730,12 +748,14 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
                 "m98 linkfix shadow: would_remove=%d client=%s",
                 len(_miss98), req.client_id)
             _miss98 = set()
-        _new98, _i98 = _lv98.apply_fixes(parsed.reply, _ctx98, _miss98)
+        for _nu98, _nn98 in _names98.items():
+            _ctx98.setdefault(_nu98, _nn98)
+        _new98, _i98 = _lv98.apply_fixes(parsed.reply, _ctx98, _miss98, _rep98)
         if _new98 != parsed.reply:
             logger.info(
-                "m98 linkfix: removed=%d retargeted=%d num=%d client=%s",
+                "m98 linkfix: removed=%d retargeted=%d num=%d repaired=%d client=%s",
                 _i98.get("removed", 0), _i98.get("retargeted", 0), _i98.get("num", 0),
-                req.client_id)
+                _i98.get("repaired", 0), req.client_id)
             try:
                 parsed.reply = _new98
             except Exception:  # noqa: BLE001 - frozen dataclass eseten

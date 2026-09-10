@@ -56,6 +56,19 @@ m98/1 (2026-09-10, d10a mérés, 31 napos teljes korpusz, 2500 linkes válasz):
     (katalógus-mérés: „YATO vezetőlemez" -> láncvezető-lemez FESZÍTŐ lett volna).
     Mérés (kontextus-pool): kellegyszerszam 10 jelölt, kézzel 10/10 helyes;
     notebookstore / copygo / nagyonallatshop: 0 jelölt.
+
+m98/2 (2026-09-10, d10a_m982scan, 6 tenant):
+  - (B) A hívó a kontextuson KÍVÜLI, de a katalógusban létező linkelt termék
+    NEVÉT is átadja (find_by_url payload) -> R2/R2b arra is fut. Mérés:
+    kellegyszerszam +3 csere (MAGUS Stereo 8TH, DENZEL 1200W 15L, FIELDMANN
+    FZG 3011), kézzel 3/3 helyes; a többi tenanton 0.
+  - R3 URL-JAVÍTÁS: (a) dupla URL („https://x/hu/https://x/hu/…") -> a belső
+    URL; (b) elírt útvonal-előtag („/termem/<slug>") -> a tenant termék-alakja
+    ugyanazzal a sluggal. CSAK ha a javított URL a kontextusban van vagy a
+    katalógus-lookup igazolja (a hívó dönt). Mérés: teslashop 3 dupla URL,
+    nagyonallatshop 2 „/termem/" — mind létező termékre javul.
+  - A laza betű-fedés (R2c, T=0,85…0,66) a B-n felül 0 új jelöltet adott ->
+    NEM került be.
 """
 
 import re
@@ -267,17 +280,62 @@ def numeric_retarget(anchor, key, ctxp):
     return hit[0]
 
 
-def apply_fixes(reply, ctx, missing) -> tuple:
+def repair_guesses(reply, ctx_urls, limit: int = 4) -> dict:
+    """R3 (m98/2): hibás termék-URL javítás-JELÖLTJEI -> {url_key(eredeti): [tipp, ...]}.
+
+    (a) dupla URL: a legutolsó 'http' utáni belső URL;
+    (b) elírt útvonal-előtag: ha az URL NEM termék-alakú, a tenant termék-alakjaiból
+        (kontextus) épített URL ugyanazzal az utolsó szegmenssel.
+    Csak terméknév-anchor, csak kontextuson kívüli, nem kereső-URL. A tippet a
+    hívónak kell igazolnia (kontextus vagy katalógus-lookup) — itt nincs I/O.
+    """
+    ctx = {url_key(u) for u in (ctx_urls or ())}
+    shp = shapes(ctx)
+    out: dict = {}
+    for anchor, url in _LINK.findall(reply or ""):
+        k = url_key(url)
+        if k in ctx or k in out or any(s in url for s in _SEARCHY):
+            continue
+        if not is_product_anchor(anchor):
+            continue
+        guesses = []
+        i = url.rfind("http")
+        if i > 0:
+            guesses.append(url_key(url[i:]))
+        elif shp and not same_shape(k, shp):
+            host, segs = _parts(k)
+            if host and segs:
+                slug = segs[-1]
+                for h, depth, s0 in sorted(shp):
+                    if h != host:
+                        continue
+                    if depth == 1:
+                        g = "%s/%s" % (h, slug)
+                    elif depth == 2 and s0:
+                        g = "%s/%s/%s" % (h, s0, slug)
+                    else:
+                        continue
+                    if g != k and g not in guesses:
+                        guesses.append(g)
+        if guesses:
+            out[k] = guesses[:2]
+        if len(out) >= limit:
+            break
+    return out
+
+
+def apply_fixes(reply, ctx, missing, repaired=None) -> tuple:
     """-> (uj_valasz, {"removed": n, "retargeted": n})
 
     ctx     : {url: termeknev} a kontextusbol (hits + page_context terméke)
     missing : a katalogusbol BIZONYITOTTAN hianyzo URL-ek halmaza
     """
-    info = {"removed": 0, "retargeted": 0, "num": 0}
+    info = {"removed": 0, "retargeted": 0, "num": 0, "repaired": 0}
     if not reply:
         return reply, info
     ctxk = {url_key(u): str(n or "") for u, n in (ctx or {}).items()}
     miss = {url_key(u) for u in (missing or set())}
+    reps = {url_key(u): str(v) for u, v in (repaired or {}).items() if v}
     exact: dict = {}
     for u, n in ctxk.items():
         if n:
@@ -290,6 +348,9 @@ def apply_fixes(reply, ctx, missing) -> tuple:
         k = url_key(url)
         if any(s in url for s in _SEARCHY) or not is_product_anchor(anchor):
             return m.group(0)
+        if k in reps:                                   # R3 (m98/2)
+            info["repaired"] += 1
+            return "[%s](%s)" % (anchor, reps[k])
         if k in miss:                                   # R1
             info["removed"] += 1
             return anchor

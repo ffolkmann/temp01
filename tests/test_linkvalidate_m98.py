@@ -31,7 +31,7 @@ def test_letezo_link_erintetlen():
     reply = "Van keszleten: [MTX palack emelo 12T](%s)." % U12
     out, info = lv.apply_fixes(reply, CTX, set())
     assert out == reply
-    assert info == {"removed": 0, "retargeted": 0, "num": 0}
+    assert info == {"removed": 0, "retargeted": 0, "num": 0, "repaired": 0}
 
 
 def test_kereso_zarolink_erintetlen():
@@ -83,7 +83,7 @@ def test_zaro_slash_es_fragment_egybeesik():
     reply = "[MTX palack emelo 12T](%s/#tab)" % U12
     out, info = lv.apply_fixes(reply, CTX, set())
     assert out == reply
-    assert info == {"removed": 0, "retargeted": 0, "num": 0}
+    assert info == {"removed": 0, "retargeted": 0, "num": 0, "repaired": 0}
 
 
 def test_html_entitas_a_nevben_nem_okoz_cserét():
@@ -141,7 +141,7 @@ SCTX = {S12: "STELS 12T 230-465mm hidraulikus palack emelő",
 def test_r2b_szamtoken_elteres_csere():
     reply = "Ajánlom: [STELS 2T 181-345mm hidraulikus palack emelő](%s) - 9 990 Ft" % S12
     out, info = lv.apply_fixes(reply, SCTX, set())
-    assert info == {"removed": 0, "retargeted": 0, "num": 1}
+    assert info == {"removed": 0, "retargeted": 0, "num": 1, "repaired": 0}
     assert S2 in out and S12 not in out
 
 
@@ -167,7 +167,7 @@ def test_r2b_kod_elotag_nem_illeszkedik():
            b: "Asus VivoBook 15 Notebook (X1504VA-BQ1105W)"}
     reply = "[Asus Vivobook 15 (X1504VA-BQ1105)](%s)" % a
     out, info = lv.apply_fixes(reply, ctx, set())
-    assert out == reply and info == {"removed": 0, "retargeted": 0, "num": 0}
+    assert out == reply and info == {"removed": 0, "retargeted": 0, "num": 0, "repaired": 0}
 
 
 def test_r2b_tobbertelmu_nincs_csere():
@@ -188,3 +188,52 @@ def test_r2b_szamsorrend_szamit():
     reply = "[FESTA 1/4-3/8 adapter](%s)" % l_
     out, info = lv.apply_fixes(reply, ctx, set())
     assert out == reply and info["num"] == 0
+
+
+# ---------------------------------------------------------------- m98/2 R3
+TCTX = {"https://teslashop.hu/hu/valami-termek/termek/1": "Valami termek"}
+NCTX = {"https://nagyonallatshop.hu/termek/oke-duo-krok-20kg": "Oké Duo Krok Classic 20kg"}
+
+
+def test_r3_dupla_url_belso_url_a_tipp():
+    bad = "https://teslashop.hu/hu/https://teslashop.hu/hu/autos-narancs-disz/termek/4003"
+    reply = "[Autós Narancs Illatú Karácsonyi Dísz](%s)" % bad
+    g = lv.repair_guesses(reply, set(TCTX))
+    assert g == {bad: ["https://teslashop.hu/hu/autos-narancs-disz/termek/4003"]}
+    out, info = lv.apply_fixes(reply, TCTX, set(), {bad: g[bad][0]})
+    assert info["repaired"] == 1
+    assert "hu/https://" not in out and "/autos-narancs-disz/termek/4003)" in out
+
+
+def test_r3_elirt_utvonal_elotag():
+    bad = "https://nagyonallatshop.hu/termem/gemon-dog-20kg-barany-rizs/"
+    reply = "[Gemon Dog 20kg kutyatáp bárány-rizs](%s)" % bad
+    g = lv.repair_guesses(reply, set(NCTX))
+    assert g == {"https://nagyonallatshop.hu/termem/gemon-dog-20kg-barany-rizs":
+                 ["https://nagyonallatshop.hu/termek/gemon-dog-20kg-barany-rizs"]}
+
+
+def test_r3_nem_nyul_ctx_kereso_mutato_termekalaku_linkre():
+    reply = ("[Oké Duo Krok Classic 20kg](https://nagyonallatshop.hu/termek/oke-duo-krok-20kg/) "
+             "[Kutyaeledel ajanlatok 20kg](https://nagyonallatshop.hu/?post_type=product&s=kutya) "
+             "[szállítási feltételek](https://nagyonallatshop.hu/termem/x) "
+             "[Whiskas 1,4 kg marha](https://nagyonallatshop.hu/termek/whiskas-14kg)")
+    assert lv.repair_guesses(reply, set(NCTX)) == {}
+
+
+def test_r3_ures_kontextus_nincs_slug_tipp():
+    reply = "[Gemon Dog 20kg kutyatáp](https://nagyonallatshop.hu/termem/gemon-dog)"
+    assert lv.repair_guesses(reply, set()) == {}
+
+
+def test_r3_elsobbseg_az_r1_torlessel_szemben():
+    bad = "https://kellegyszerszam.hu/termem/mtx-palack-emelo-2t"
+    good = "https://kellegyszerszam.hu/termek/mtx-palack-emelo-2t"
+    reply = "[MTX palack emelo 2T](%s)" % bad
+    out, info = lv.apply_fixes(reply, CTX, {bad}, {bad: good})
+    assert info["repaired"] == 1 and info["removed"] == 0 and good in out
+
+
+def test_apply_fixes_regi_hivasi_alak_mukodik():
+    out, info = lv.apply_fixes("[MTX palack emelo 12T](%s)" % U12, CTX, set())
+    assert info["repaired"] == 0
