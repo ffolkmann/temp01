@@ -499,6 +499,22 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
                            len(str(raw or "")), str(raw or "")[:500], req.client_id)
     except Exception:  # noqa: BLE001 - a naplozas sose torje a valaszt
         pass
+    # m102/1: UJRAKOSZONES-ORSEG. d10c: a folyamatban levo beszelgetesek nem-elso
+    # koreinek 11%-a (fishingoutlet 24%) "Szia!"-val kezdodott, holott a latogato nem
+    # koszont ujra. Determinisztikus levagas (stilus-hibara a prompt nem eleg, m77).
+    # Csak ha van korabbi bot-valasz a history-ban. Fail-safe: hiba -> valtozatlan.
+    try:
+        from app.services.greetguard import strip_regreet as _srg102
+        _new102g = _srg102(parsed.reply, message, req.history)
+        if _new102g != parsed.reply:
+            logger.info("m102/1 regreet: koszones levagva client=%s", req.client_id)
+            try:
+                parsed.reply = _new102g
+            except Exception:  # noqa: BLE001 - frozen dataclass eseten
+                from dataclasses import replace as _dc_replace102g
+                parsed = _dc_replace102g(parsed, reply=_new102g)
+    except Exception:  # noqa: BLE001 - az or hibaja sose torje a valaszt
+        pass
     # m89: ZARO-LINK KAPU - a "Tovabbi talalatok" kereso-link CSAK akkor, ha a
     # beszelgetes TERMEKRE iranyul. Merve 3526 valodi valaszon: a linkesek 14,1%-a
     # policy-kerdesre ment ki (notebookstore: 96-bol 89). Fail-safe: hiba eseten
