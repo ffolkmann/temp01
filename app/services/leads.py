@@ -50,6 +50,9 @@ async def store_lead(session: AsyncSession, req: ChatRequest) -> None:
         f"Nev: {req.name or ''}\nEmail: {req.email or ''}\n"
         f"Telefon: {req.phone or ''}\nUzenet: {req.message or ''}"
     )
+    if req.source == "chat":  # m100
+        text += ("\nForras: a latogato a chatbe irta be az elerhetoseget "
+                 "(nem a lead-urlapon).")
     if convo:
         text += f"\n\n--- TELJES BESZELGETES ---\n{convo}"
     logger.info(

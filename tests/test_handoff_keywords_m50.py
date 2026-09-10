@@ -28,6 +28,7 @@ def _load(modname, path):
 
 _load("app.models.db_models", ROOT / "app" / "models" / "db_models.py")
 _load("app.services.handoff_offer", ROOT / "app" / "services" / "handoff_offer.py")
+_load("app.services.chatlead", ROOT / "app" / "services" / "chatlead.py")  # m100
 _it = _load("intent_m50_under_test", ROOT / "app" / "services" / "intent.py")
 
 for _k in [x for x in list(sys.modules) if x == "sqlalchemy" or x.startswith("sqlalchemy.")]:

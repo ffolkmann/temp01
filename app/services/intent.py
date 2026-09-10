@@ -10,6 +10,7 @@ import unicodedata
 from dataclasses import dataclass
 
 from app.models.db_models import Tenant
+from app.services.chatlead import strip_contacts as _strip_contacts  # m100
 
 # konfigurátor webhook bázis (a prod Detect Configurator-ból)
 _CONFIG_BASE = "https://n8n.codexpress.cloud/webhook/"
@@ -109,20 +110,27 @@ def detect_order_intent(message: str, tenant: Tenant, live_api: bool) -> OrderIn
     m = _EMAIL_RE.search(msg)
     email = m.group(0).strip() if m else ""
 
+    # m100: a rendelesszamot a latogato e-mail-cime es telefonszama NELKUL keressuk
+    # (d10b: a "0630/235-7558" telefonszam "235-7558" rendelesszamnak, a
+    # "kovacs.1985@..." cim "1985"-nek latszott -> a kapcsolatfelvetel rendeles-
+    # lekeresbe fulladt, "ha tartozik rendeles, elkuldtuk" valasszal). A jelolo
+    # nelkuli (csupasz) szam legalabb 3 jegyu - az "1 db" nem rendelesszam.
+    omsg = _strip_contacts(msg)
+    olow = omsg.lower()
     order_id = ""
-    m = re.search(r"#\s*(\d{3,6}-\d{4,9}|\d{1,7})", msg)
+    m = re.search(r"#\s*(\d{3,6}-\d{4,9}|\d{1,7})", omsg)
     if m:
         order_id = m.group(1)
     if not order_id:
-        m = re.search(r"\b(\d{3,6}-\d{4,9})\b", msg)
+        m = re.search(r"\b(\d{3,6}-\d{4,9})\b", omsg)
         if m:
             order_id = m.group(1)
     if not order_id:
-        m = re.search(r"(?:rendel\w*|order|azonos\w*)\D{0,12}(\d{1,7})", low)
+        m = re.search(r"(?:rendel\w*|order|azonos\w*)\D{0,12}(\d{1,7})", olow)
         if m:
             order_id = m.group(1)
     if not order_id:
-        nums = re.findall(r"\b\d{1,7}\b", msg)
+        nums = re.findall(r"\b\d{3,7}\b", omsg)
         if len(nums) == 1:
             order_id = nums[0]
 

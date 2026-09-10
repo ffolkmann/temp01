@@ -790,10 +790,69 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
     # m67: a search_fallback esemény-log a lassú szakasz UTÁN (rövid, friss kapcsolat)
     if _sfb_meta:
         await log_event(session, req.client_id, req.session_id, "search_fallback", _sfb_meta)
+    # m100: a chatbe GEPELT e-mail-cim -> lead (source="chat") + ertesito a boltnak.
+    # d10b: 30 nap alatt 18 valaszban igerte a bot, hogy "rogzitettem / kollegank
+    # hamarosan felveszi veled a kapcsolatot", de lead CSAK a widget-urlapbol
+    # keletkezett -> a bolt sosem tudott rola (koztuk egy rendeles-lemondas).
+    # Feco dontese: checkbox nelkul is lead. Itt csak ELOKESZITUNK (dup-szures, a
+    # lead-urlap ne jojjon fel ujra); a rogzites a log_turn UTAN fut, hogy az
+    # ertesito atiratban a mostani kor is benne legyen. Fail-safe: hiba -> mai ut.
+    _lead100 = None
+    try:
+        from app.services import chatlead as _cl100
+        _c100 = _cl100.extract_contact(message)
+        if _c100 and (not _cl100.should_capture(getattr(parsed, "action", None))
+                      or _cl100.is_shop_email(_c100["email"], getattr(tenant, "domain", None))):
+            _c100 = None
+        if _c100 and req.session_id:
+            _dup100 = None
+            try:
+                from sqlalchemy import text as _t100
+                _dup100 = (await session.execute(
+                    _t100("SELECT 1 FROM leads WHERE client_id = :c AND session_id = :s "
+                          "AND lower(email) = lower(:e) LIMIT 1"),
+                    {"c": req.client_id, "s": req.session_id, "e": _c100["email"]},
+                )).first()
+            except Exception:  # noqa: BLE001
+                logger.exception("m100 chat lead: dup-ellenorzes hiba -> nincs rogzites")
+                _dup100 = True
+                try:
+                    await session.rollback()
+                except Exception:  # noqa: BLE001
+                    pass
+            if _dup100:
+                logger.info("m100 chat lead: nincs uj rogzites (dup) client=%s", req.client_id)
+                _c100 = None
+        if _c100:
+            _lead100 = _c100
+            if getattr(parsed, "action", None) == "collect_lead":
+                try:
+                    parsed.action = None
+                except Exception:  # noqa: BLE001 - frozen dataclass eseten
+                    from dataclasses import replace as _dc_replace100
+                    parsed = _dc_replace100(parsed, action=None)
+    except Exception:  # noqa: BLE001 - a lead-elokeszites sose torje a valaszt
+        logger.exception("m100 chat lead: elokeszites hiba client=%s", req.client_id)
+        _lead100 = None
     # megválaszolatlan-naplózás (Eval Unanswered): low_score / collect_lead / order_form
     await log_unanswered(session, req.client_id, req.session_id, message, top_score, parsed.action)
     # beszélgetés-napló (m22): a stat.html visszanéző + e-mail átiratok forrása
     await log_turn(session, req.client_id, req.session_id, message, parsed.reply, parsed.action)
+    # m100: a chatbe irt elerhetoseg rogzitese (elokeszites fent, a log_unanswered elott)
+    if _lead100:
+        try:
+            _req100 = req.model_copy(update={
+                "email": _lead100["email"], "phone": _lead100.get("phone") or None,
+                "source": "chat", "type": "lead"})
+            await store_lead(session, _req100)
+            logger.info("m100 chat lead: rogzitve (telefon=%s) client=%s",
+                        "igen" if _lead100.get("phone") else "nem", req.client_id)
+        except Exception:  # noqa: BLE001 - a rogzites hibaja sose torje a valaszt
+            logger.exception("m100 chat lead: rogzites hiba client=%s", req.client_id)
+            try:
+                await session.rollback()
+            except Exception:  # noqa: BLE001
+                pass
     # termékajánlás-számláló (m22): a válaszban linkelt webshop-termékek
     rec_n = count_product_links(parsed.reply, tenant)
     if rec_n:
