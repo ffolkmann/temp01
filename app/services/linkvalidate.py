@@ -31,6 +31,31 @@ Minden más érintetlen.
 
 PURE, stdlib-only modul (mint a linkgate.py): az I/O (Qdrant-lookup) a hívóé,
 így a teszt közvetlenül fájl-betöltheti.
+
+m98/1 (2026-09-10, d10a mérés, 31 napos teljes korpusz, 2500 linkes válasz):
+  - R1 PLATFORM-KAPU. A „katalógusban nincs => fabrikált" premissza CSAK Unason
+    igaz. HTTP-ellenőrzés az R1 által vágandó URL-eken: kellegyszerszam 24/26
+    404 (a maradék: követő-paraméteres élő link, ld. lent), DE copygo 22/23 és
+    fishingoutlet 28/32 ÉLŐ termékoldal, notebookstore 4/4 élő (a Shoprenter/
+    Webdoc index nem teljes, a bolti kereső-fallback nem indexelt élő terméket
+    is ad, és a /withdrawal, /adatvedelmi-szabalyzat oldal is termék-alakú).
+    Ezért R1 csak `r1_enabled(platform)` esetén vág; máshol a hívó shadow-logol.
+  - Követő paraméterek (gad_*, gclid, utm_*, fbclid…) le a kulcsból: a Google
+    Ads-ből érkező látogató page_context URL-je élő termék, a query miatt
+    „hiányzónak" látszott.
+  - Kereső-minták: Unas shop_search.php?search=, WooCommerce ?s=&post_type=,
+    Shoprenter keyword= (nagyonallatshopon 3 kereső-link termék-alakú volt).
+  - Szabályzat-anchorok a mutató szavak közé (elállási nyilatkozat, adatvédelmi
+    szabályzat, jótállás bejelentése).
+  - R2b SZÁM/KÓD-CSERE. Ha a linkelt (kontextusbeli) termék neve NEM fedi az
+    anchor valamelyik szám/kód-tokenjét („2T" vs „12T"), és a kontextusban
+    PONTOSAN EGY termék fedi az anchor minden tokenjét (a számokat azonos
+    sorrendben) -> URL-csere. Szám/kód-token csak a név egymás utáni tokenjeinek
+    PONTOS összefűzéseként illeszkedik („205x275mm" = „205x"+„275"+„mm", de
+    „bq1105" != „bq1105w", „2t" != „12t"). Betűs eltérésre NINCS csere
+    (katalógus-mérés: „YATO vezetőlemez" -> láncvezető-lemez FESZÍTŐ lett volna).
+    Mérés (kontextus-pool): kellegyszerszam 10 jelölt, kézzel 10/10 helyes;
+    notebookstore / copygo / nagyonallatshop: 0 jelölt.
 """
 
 import re
@@ -52,10 +77,25 @@ _DEICTIC = (
     "nezed", "nezel", "kattint", "itt talalod", "itt elerheto", "reszletek",
     "bovebben", "tovabbi talalat", "webaruhaz", "kereso", "keresoben",
     "aszf", "adatkezel", "szallitas", "kapcsolat", "vasarlasi feltetel",
+    "elallasi", "adatvedelm", "jotallas bejelent",                 # m98/1
 )
 
 # kereső-/kategória-/címke-linkek: az m25/m62/m79b/m82b ág terméke, nem termék-URL
-_SEARCHY = ("/termek-kereses", "/kereses", "/search", "?k=", "&k=", "/cimke/", "/kategoria")
+_SEARCHY = ("/termek-kereses", "/kereses", "/search", "?k=", "&k=", "/cimke/", "/kategoria",
+            # m98/1: Unas / WooCommerce / Shoprenter bolti kereső
+            "shop_search", "search=", "keyword=", "?s=", "&s=", "post_type=", "route=product/list")
+
+# m98/1: követő paraméterek — a kulcsból kiesnek (a nem-követő query marad)
+_TRACK = re.compile(
+    r"^(utm_[a-z0-9_]+|gclid|gbraid|wbraid|gad_source|gad_campaignid|fbclid|msclkid|srsltid|_gl|mc_cid|mc_eid)$",
+    re.I)
+
+# m98/1: R1 (törlés) csak ott, ahol a premissza MÉRVE van (d10a: Unas 24/26 404;
+# Shoprenter/Webdoc: a „hiányzó" URL-ek ~90%-a élő oldal)
+R1_PLATFORMS = frozenset({"unas"})
+
+_STOP = frozenset({"es", "az", "egy", "db", "ft", "the", "and", "raktaron",
+                   "keszleten", "akcios", "uj", "is"})
 
 _CODE = re.compile(r"(?=[a-z0-9]*[a-z])(?=[a-z0-9]*[0-9])[a-z0-9]{4,}")
 
@@ -92,8 +132,22 @@ def is_product_anchor(anchor) -> bool:
 
 
 def url_key(url) -> str:
-    """Összehasonlítható URL-alak (fragment le, záró / le)."""
-    return str(url or "").split("#")[0].rstrip("/")
+    """Összehasonlítható URL-alak (fragment le, követő paraméterek le, záró / le).
+
+    A nem-követő query-t (pl. Shoprenter index.php?route=...&product_id=) BETŰRE
+    megtartja — nincs újrakódolás, különben a katalógus-URL-lel nem egyezne.
+    """
+    u = str(url or "").split("#")[0]
+    if "?" in u:
+        base, q = u.split("?", 1)
+        keep = [p for p in q.split("&") if p and not _TRACK.match(p.split("=", 1)[0])]
+        u = base + ("?" + "&".join(keep) if keep else "")
+    return u.rstrip("/")
+
+
+def r1_enabled(platform) -> bool:
+    """Vághat-e az R1 ezen a platformon (ld. R1_PLATFORMS)."""
+    return str(platform or "").strip().lower() in R1_PLATFORMS
 
 
 def _parts(url):
@@ -146,13 +200,80 @@ def lookup_candidates(reply, ctx_urls, limit: int = 4) -> list:
     return out[:limit]
 
 
+def _hasdig(t) -> bool:
+    return any(c.isdigit() for c in t)
+
+
+def content_tokens(s) -> list:
+    """Tartalmi tokenek: szám/kód-token mindig, betű-token >=3 karakter, stopszó nélkül."""
+    return [t for t in norm_name(s).split()
+            if t not in _STOP and (_hasdig(t) or len(t) >= 3)]
+
+
+def _nums(s) -> list:
+    return re.findall(r"[0-9]+", norm_name(s))
+
+
+def _prep(name) -> tuple:
+    nt = norm_name(name).split()
+    return nt, "".join(nt), _nums(name)
+
+
+def _dig_cov(tok, nt) -> bool:
+    """Szám/kód-token: a név EGYMÁS UTÁNI tokenjeinek pontos összefűzése."""
+    n = len(nt)
+    for i in range(n):
+        acc = ""
+        for j in range(i, min(n, i + 5)):
+            acc += nt[j]
+            if acc == tok:
+                return True
+            if len(acc) >= len(tok):
+                break
+    return False
+
+
+def _subseq(a, b) -> bool:
+    it = iter(b)
+    return all(x in it for x in a)
+
+
+def _covers(toks, nums, p) -> bool:
+    nt, tn, pn = p
+    if not toks:
+        return False
+    for t in toks:
+        if _hasdig(t):
+            if not _dig_cov(t, nt):
+                return False
+        elif t not in tn:
+            return False
+    return _subseq(nums, pn)
+
+
+def numeric_retarget(anchor, key, ctxp):
+    """R2b: szám/kód-eltérés a linkelt névvel + PONTOSAN EGY teljes fedésű
+    kontextus-termék -> annak kulcsa; különben None."""
+    toks = content_tokens(anchor)
+    if len(toks) < 2 or key not in ctxp:
+        return None
+    dt = [t for t in toks if _hasdig(t)]
+    if not dt or all(_dig_cov(t, ctxp[key][0]) for t in dt):
+        return None
+    nums = _nums(anchor)
+    hit = [k for k, p in ctxp.items() if _covers(toks, nums, p)]
+    if len(hit) != 1 or hit[0] == key:
+        return None
+    return hit[0]
+
+
 def apply_fixes(reply, ctx, missing) -> tuple:
     """-> (uj_valasz, {"removed": n, "retargeted": n})
 
     ctx     : {url: termeknev} a kontextusbol (hits + page_context terméke)
     missing : a katalogusbol BIZONYITOTTAN hianyzo URL-ek halmaza
     """
-    info = {"removed": 0, "retargeted": 0}
+    info = {"removed": 0, "retargeted": 0, "num": 0}
     if not reply:
         return reply, info
     ctxk = {url_key(u): str(n or "") for u, n in (ctx or {}).items()}
@@ -162,6 +283,7 @@ def apply_fixes(reply, ctx, missing) -> tuple:
         if n:
             exact.setdefault(norm_name(n), u)
             exact.setdefault(tight(n), u)
+    ctxp = {u: _prep(n) for u, n in ctxk.items() if n}
 
     def _repl(m):
         anchor, url = m.group(1), m.group(2)
@@ -178,6 +300,10 @@ def apply_fixes(reply, ctx, missing) -> tuple:
                 tgt = exact.get(an) or exact.get(at)
                 if tgt and url_key(tgt) != k:
                     info["retargeted"] += 1
+                    return "[%s](%s)" % (anchor, tgt)
+                tgt = numeric_retarget(anchor, k, ctxp)      # R2b (m98/1)
+                if tgt:
+                    info["num"] += 1
                     return "[%s](%s)" % (anchor, tgt)
         return m.group(0)
 

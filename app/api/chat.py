@@ -722,11 +722,20 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
                         "m98 linkfix: a katalogus-lookup nem igazolhato -> kihagyva "
                         "(client=%s)", req.client_id)
                     _miss98 = set()
+        if _miss98 and not _lv98.r1_enabled(getattr(tenant, "platform", "")):
+            # m98/1: R1 csak ott vag, ahol a premissza MERVE van (Unas). Mashol
+            # shadow-log a kesobbi meresnek (d10a HTTP-check: copygo 22/23,
+            # fishingoutlet 28/32 "hianyzo" URL ELO termekoldal volt).
+            logger.info(
+                "m98 linkfix shadow: would_remove=%d client=%s",
+                len(_miss98), req.client_id)
+            _miss98 = set()
         _new98, _i98 = _lv98.apply_fixes(parsed.reply, _ctx98, _miss98)
         if _new98 != parsed.reply:
             logger.info(
-                "m98 linkfix: removed=%d retargeted=%d client=%s",
-                _i98.get("removed", 0), _i98.get("retargeted", 0), req.client_id)
+                "m98 linkfix: removed=%d retargeted=%d num=%d client=%s",
+                _i98.get("removed", 0), _i98.get("retargeted", 0), _i98.get("num", 0),
+                req.client_id)
             try:
                 parsed.reply = _new98
             except Exception:  # noqa: BLE001 - frozen dataclass eseten
