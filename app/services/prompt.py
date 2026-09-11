@@ -84,10 +84,16 @@ def _parse_rel_list(s: str) -> list[str]:
     return out
 
 
-def _m104_line(code: str) -> str:
-    """m104: a latogato altal megadott cikkszam a termek-blokk elejen (a text-ben tobbnyire nincs)."""
-    return (u"[Cikksz\u00e1m: " + str(code) + u" \u2014 a l\u00e1togat\u00f3 \u00e1ltal megadott "
-            u"cikksz\u00e1m ehhez a term\u00e9khez tartozik.]\n")
+def _m104_line(code: str, oos: bool = False) -> str:
+    """m104: a latogato altal megadott cikkszam a termek-blokk elejen (a text-ben tobbnyire nincs).
+    m105: nem raktaros termeknel (hide_oos mellett is a kontextusban) a letagadas ellen."""
+    s = (u"[Cikksz\u00e1m: " + str(code) + u" \u2014 a l\u00e1togat\u00f3 \u00e1ltal megadott "
+         u"cikksz\u00e1m ehhez a term\u00e9khez tartozik.")
+    if oos:
+        s += (u" Ez a term\u00e9k jelenleg NINCS rakt\u00e1ron (nem rendelhet\u0151): a l\u00e1togat\u00f3 "
+              u"konkr\u00e9tan erre k\u00e9rdez, ez\u00e9rt v\u00e1laszolj r\u00f3la, mondd meg, hogy most "
+              u"nem rendelhet\u0151, \u00e9s aj\u00e1nlj rakt\u00e1ron l\u00e9v\u0151 alternat\u00edv\u00e1t.")
+    return s + u"]\n"
 
 
 def _chunks(hits: list[dict[str, Any]]) -> list[str]:
@@ -98,7 +104,7 @@ def _chunks(hits: list[dict[str, Any]]) -> list[str]:
         if t:
             _c104 = r.get("m104_sku") if isinstance(r, dict) else ""
             if _c104:  # m104: a kerdes kodjaval egyezo termek
-                t = _m104_line(_c104) + str(t)
+                t = _m104_line(_c104, bool(r.get("m105_oos"))) + str(t)
             out.append(str(t))
     return out
 
@@ -350,7 +356,7 @@ def build_system_prompt_parts(
     current_text = current.text if current else ""
     _c104 = str(getattr(current, "m104_sku", "") or "") if current else ""
     if current_text and _c104:  # m104: a latogato altal megadott cikkszam
-        current_text = _m104_line(_c104) + current_text
+        current_text = _m104_line(_c104, bool(getattr(current, "m105_oos", False))) + current_text
     if ctx.page_is_product and current_text:
         system += (
             "\n\n# AKTUALIS TERMEK (pontos, ellenorzott adatlap)\n"

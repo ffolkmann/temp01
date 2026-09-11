@@ -139,8 +139,10 @@ def _cover(qt, idf, nf, matchers):
     return sum(idf[t] for t in qt if matchers[t](nf)) / tot
 
 
-def pick(entries, message, pool_names, hide_oos=False, exclude_ids=()):
-    """Tiszta fuggveny (tesztelheto): -> (sku_ids, name_ids, info)."""
+def pick(entries, message, pool_names, hide_oos=False, exclude_ids=(), sku_oos=False):
+    """Tiszta fuggveny (tesztelheto): -> (sku_ids, name_ids, info).
+    m105: sku_oos=True -> a CIKKSZAM-ag hide_oos mellett is visz nem raktaros termeket (a
+    latogato pontosan azt nevezte meg; a nev-ag tovabbra is csak raktarost)."""
     info = {}
     excl = set(str(x) for x in exclude_ids)
 
@@ -149,7 +151,7 @@ def pick(entries, message, pool_names, hide_oos=False, exclude_ids=()):
 
     sku_ids = []
     for s in sku_tokens(message):
-        hit = [e for e in entries if e[2] and usable(e)
+        hit = [e for e in entries if e[2] and (usable(e) or (sku_oos and str(e[0]) not in excl))
                and (e[2] == s or (len(s) >= 6 and not s.isdigit() and e[2].endswith(s)))]
         hit.sort(key=lambda e: (not e[3], len(e[1]), str(e[0])))
         for e in hit[:_MAX_ADD]:
@@ -304,7 +306,13 @@ async def augment(hits, message, client_id, hide_oos=False, wait=False, stats=No
         pl = h.get("payload") or {}
         if str(pl.get("type") or "") == "product":
             pool_names.append(pl.get("name") or "")
-    sku_ids, name_ids, info = pick(ents, message, pool_names, hide_oos=hide_oos, exclude_ids=have)
+    sku_ids, name_ids, info = pick(ents, message, pool_names, hide_oos=hide_oos, exclude_ids=have,
+                                   sku_oos=True)  # m105
+    if hide_oos and sku_ids:  # m105: hany nem raktaros termeket hozott a cikkszam-ag
+        _sid105 = {str(x) for x in sku_ids}
+        _oos105 = sum(1 for e in ents if str(e[0]) in _sid105 and not e[3])
+        if _oos105:
+            logger.info("m105 sku oos: %d client=%s", _oos105, client_id)
     if stats is not None:
         stats.update(info)
         stats["sku"] = len(sku_ids)
@@ -375,10 +383,14 @@ def mark_sku(hits, message, current=None):
         code = sku_match(pl.get("sku"), message)
         if code:
             h["m104_sku"] = code
+            if pl.get("available") is False:  # m105: nem raktaros - a prompt-sor jelzi
+                h["m105_oos"] = True
             n += 1
     if current is not None:
         code = sku_match(getattr(current, "sku", ""), message)
         if code:
             setattr(current, "m104_sku", code)
+            if (getattr(current, "payload", None) or {}).get("available") is False:  # m105
+                setattr(current, "m105_oos", True)
             n += 1
     return n
