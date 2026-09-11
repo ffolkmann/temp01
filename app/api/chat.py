@@ -312,6 +312,14 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
     hits, top_score, _rmode = await retrieve(
         embed_input, _det_msg, req.client_id, ctx.page_url, ctx.page_url_norm, hide_oos=_hide_oos
     )
+    # m103: hamis "nem talaltam" ellen - cikkszam- es lexikai nev-ag a dense pool mellett
+    # (d10d_fn2: 288 "nincs" valaszbol ~10 igazolt hamis negativ, a termek az indexben volt;
+    # d10d_fn3: max 3 termek a pool VEGERE, normal kerdesek ~3%-an fut). Fail-safe.
+    try:
+        from app.services.lexmatch import augment as _lx103
+        hits = await _lx103(hits, message, req.client_id, hide_oos=_hide_oos)
+    except Exception:  # noqa: BLE001 - a lexikai ag hibaja ne torje a chatet
+        logger.exception("m103 lexmatch hiba")
     current = await get_current_product(req.client_id, ctx.page_url_norm)
     # élő ár/készlet a megnyitott termékre (plan.live_api-gated, csak termékoldalon);
     # FAIL-SAFE: hiba/None -> a synced adatlap marad
