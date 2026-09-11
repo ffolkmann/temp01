@@ -321,6 +321,15 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
     except Exception:  # noqa: BLE001 - a lexikai ag hibaja ne torje a chatet
         logger.exception("m103 lexmatch hiba")
     current = await get_current_product(req.client_id, ctx.page_url_norm)
+    # m104: a kerdesben megadott cikkszam lathatova tetele a promptban (d11a: a sku a text-ben
+    # tobbnyire nincs -> a m103 altal betett YT-82992-t a modell nem ismerte fel). Fail-safe.
+    try:
+        from app.services.lexmatch import mark_sku as _mk104
+        _n104 = _mk104(hits, message, current)
+        if _n104:
+            logger.info("m104 sku jeloles: %d client=%s", _n104, req.client_id)
+    except Exception:  # noqa: BLE001 - a jeloles hibaja ne torje a chatet
+        logger.exception("m104 sku jeloles hiba")
     # élő ár/készlet a megnyitott termékre (plan.live_api-gated, csak termékoldalon);
     # FAIL-SAFE: hiba/None -> a synced adatlap marad
     live = None

@@ -55,6 +55,8 @@ _TOK = re.compile(r"[a-z0-9]+")
 # parhuzamos feladatvegzes. Konfigu...") -> a nev-agban nem jelolt
 _MKT = re.compile(r"[a-z]{3}\. [a-z]|&lt;|&gt;|<br")
 _SKU_RAW = re.compile(r"[A-Za-z0-9][A-Za-z0-9./-]*[A-Za-z0-9]")
+# m104: csupa-szam token utan penznem -> osszeg, nem cikkszam ("20000 ft-om", "43.590 Ft")
+_MONEY = re.compile(r"\s*(?:-\s*)?(?:ft\b|ft-|forint|huf\b|eur\b|euro|\u20ac)", re.I)
 
 
 def fold(s):
@@ -90,13 +92,17 @@ def query_tokens(message):
 def sku_tokens(message):
     """Kodszeru tokenek normalizalva: >=3 szamjegy, >=5 alnum karakter, nem telefonszam-szeru."""
     out = []
-    for raw in _SKU_RAW.findall(str(message or "")):
+    msg = str(message or "")
+    for mt in _SKU_RAW.finditer(msg):
+        raw = mt.group(0)
         n = norm_sku(raw)
         digits = sum(c.isdigit() for c in n)
         if len(n) < 5 or digits < 3:
             continue
         if n.isdigit() and len(n) >= 9:  # telefonszam / rendelesszam-gyanu
             continue
+        if n.isdigit() and (_MONEY.match(msg, mt.end()) or msg[max(0, mt.start() - 1):mt.start()] == "#"):
+            continue  # m104: osszeg ("20000 ft-om") vagy rendelesszam ("#30781")
         if n not in out:
             out.append(n)
     return out[:3]
@@ -317,3 +323,62 @@ async def augment(hits, message, client_id, hide_oos=False, wait=False, stats=No
     logger.info("m103 lexmatch: sku=%d nev=%d pool=%s best=%s tier=%s client=%s",
                 len(sku_ids), len(name_ids), info.get("pool"), info.get("best"), info.get("tier"), client_id)
     return hits
+
+
+# --- m104: a latogato altal megadott cikkszam lathatova tetele a promptban ------------
+# d11a lelet: a sku a payloadban van, de a text-ben (amit a prompt # TUDASBAZIS-a mutat)
+# tobbnyire nincs (kellegyszerszam 14/300, fishingoutlet 1/300, nagyonallatshop, teslashop,
+# smartzilla 0/300) -> a m103 cikkszam-aga betette a YT-82992 termeket a kontextusba, a
+# modell megis "nem talalom"-ot mondott, mert a kodot sehol nem latta. Csak a KERDES
+# kodjaval egyezo termeket jeloljuk (a pick() sku-aganak szabalyaval), es a latogato sajat
+# kodjat mutatjuk: a belso, szallito-elotagos sku (pl. "tolnagro-143167") nem kerul ki.
+
+def _codes(message):
+    """[(normalizalt, ahogy a latogato irta), ...] a sku_tokens() feltetelei szerint."""
+    want = sku_tokens(message)
+    out, seen = [], set()
+    for raw in _SKU_RAW.findall(str(message or "")):
+        n = norm_sku(raw)
+        if n in want and n not in seen:
+            seen.add(n)
+            out.append((n, raw.strip()))
+    return out
+
+
+def sku_match(sku_raw, message):
+    """-> a megjelenitendo kod, ha a termek sku-ja egyezik a kerdes egy kodszeru tokenjevel
+    (pontos egyezes: a katalogus-alak; betus tokennel vegzodes-egyezes, pl. szallito-elotag:
+    a latogato sajat alakja); kulonben ''."""
+    s = norm_sku(sku_raw)
+    if not s:
+        return ""
+    for n, raw in _codes(message):
+        if s == n:
+            return str(sku_raw).strip()
+        if len(n) >= 6 and not n.isdigit() and s.endswith(n):
+            return raw
+    return ""
+
+
+def mark_sku(hits, message, current=None):
+    """m104: a kerdes kodjaval egyezo termek-talalatok jelolese (hit["m104_sku"]) es az
+    aktualis termeke (current.m104_sku). A szoveget a prompt rajzolja. -> jeloltek szama."""
+    if not _codes(message):
+        return 0
+    n = 0
+    for h in hits or []:
+        if not isinstance(h, dict):
+            continue
+        pl = h.get("payload") or {}
+        if str(pl.get("type") or "") != "product":
+            continue
+        code = sku_match(pl.get("sku"), message)
+        if code:
+            h["m104_sku"] = code
+            n += 1
+    if current is not None:
+        code = sku_match(getattr(current, "sku", ""), message)
+        if code:
+            setattr(current, "m104_sku", code)
+            n += 1
+    return n

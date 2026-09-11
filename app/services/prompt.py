@@ -84,12 +84,21 @@ def _parse_rel_list(s: str) -> list[str]:
     return out
 
 
+def _m104_line(code: str) -> str:
+    """m104: a latogato altal megadott cikkszam a termek-blokk elejen (a text-ben tobbnyire nincs)."""
+    return (u"[Cikksz\u00e1m: " + str(code) + u" \u2014 a l\u00e1togat\u00f3 \u00e1ltal megadott "
+            u"cikksz\u00e1m ehhez a term\u00e9khez tartozik.]\n")
+
+
 def _chunks(hits: list[dict[str, Any]]) -> list[str]:
     out: list[str] = []
     for r in hits:
         p = r.get("payload", {}) or {}
         t = p.get("text") or p.get("content") or p.get("chunk") or ""
         if t:
+            _c104 = r.get("m104_sku") if isinstance(r, dict) else ""
+            if _c104:  # m104: a kerdes kodjaval egyezo termek
+                t = _m104_line(_c104) + str(t)
             out.append(str(t))
     return out
 
@@ -339,6 +348,9 @@ def build_system_prompt_parts(
 
     # 2) # AKTUALIS TERMEK
     current_text = current.text if current else ""
+    _c104 = str(getattr(current, "m104_sku", "") or "") if current else ""
+    if current_text and _c104:  # m104: a latogato altal megadott cikkszam
+        current_text = _m104_line(_c104) + current_text
     if ctx.page_is_product and current_text:
         system += (
             "\n\n# AKTUALIS TERMEK (pontos, ellenorzott adatlap)\n"
