@@ -976,9 +976,48 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
         if parsed.action == "order_status_form"
         else None
     )
-    return ChatResponse(
+    # m106: CX Konfigurator-felajanlas (tenants.konf_config.chat_cta). Ha a latogato
+    # nyomtatot valasztana / bizonytalan / rakerdez a konfiguratorra -> gomb a valasz
+    # alatt, sessiononkent legfeljebb egyszer (events kind='konf_cta'). Fail-safe.
+    _cta106 = None
+    try:
+        from app.services import konfcta as _kc106
+        _cc106 = _kc106.cta_cfg(getattr(tenant, "konf_config", None))
+        if _cc106 and not parsed.action and req.session_id:
+            _pu106 = [str(getattr(_h, "content", "") or "") for _h in (req.history or [])
+                      if str(getattr(_h, "role", "") or "") == "user"]
+            if _pu106 and _pu106[-1].strip() == message:
+                _pu106 = _pu106[:-1]
+            if (_kc106.detect(message, _pu106, _cc106.get("nouns"))
+                    and not _kc106.same_page(ctx.page_url, _cc106["url"])):
+                from sqlalchemy import text as _t106
+                _seen106 = (await session.execute(_t106(
+                    "SELECT 1 FROM events WHERE client_id = :c AND session_id = :s "
+                    "AND kind = 'konf_cta' LIMIT 1"),
+                    {"c": req.client_id, "s": req.session_id})).first()
+                if _seen106:
+                    logger.info("m106 konf cta: mar felajanlva (session) client=%s", req.client_id)
+                else:
+                    from app.models.schemas import CtaRef as _CtaRef106
+                    _cta106 = _CtaRef106(label=_cc106["label"], url=_cc106["url"])
+                    await log_event(session, req.client_id, req.session_id, "konf_cta", None)
+                    logger.info("m106 konf cta: felajanlva client=%s", req.client_id)
+    except Exception:  # noqa: BLE001 - a felajanlas sose torje a valaszt
+        logger.exception("m106 konf cta hiba client=%s", req.client_id)
+        _cta106 = None
+        try:
+            await session.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+    _resp106 = ChatResponse(
         reply=parsed.reply, action=parsed.action, configurator=None, order_form=_of
     )
+    if _cta106 is not None:
+        try:
+            _resp106.cta = _cta106
+        except Exception:  # noqa: BLE001 - regi/fake ChatResponse
+            pass
+    return _resp106
 
 
 @router.post("/chat", response_model=None)

@@ -82,6 +82,18 @@ class ChatResponse(BaseModel):
     ) = None
     configurator: ConfiguratorRef | None = None
     order_form: OrderFormRef | None = None
+    # m106: CX Konfigurator-felajanlas (gomb a valasz alatt); None -> nincs
+    cta: "CtaRef | None" = None
+
+
+class CtaRef(BaseModel):
+    """m106: a widget gombkent rendereli a valasz alatt (label, url)."""
+
+    label: str
+    url: str
+
+
+ChatResponse.model_rebuild()
 
 
 class EventAck(BaseModel):
