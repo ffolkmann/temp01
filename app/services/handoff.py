@@ -12,9 +12,9 @@ from app.services.intent import HandoffIntent
 
 logger = logging.getLogger("cx.handoff")
 
-# a prod Respond Handoff válasza (bitre azonos)
+# a prod Respond Handoff válasza; m107: semleges címzett (nem minden tenant webshop)
 HANDOFF_REPLY = (
-    "Természetesen! 📨 Továbbítottam a beszélgetésünket a webshop munkatársának. "
+    "Természetesen! 📨 Továbbítottam a beszélgetésünket a kollégáinknak. "
     "Kérlek, add meg az e-mail-címed (és ha szeretnéd, a telefonszámod), hogy mielőbb "
     "fel tudják venni veled a kapcsolatot."
 )
