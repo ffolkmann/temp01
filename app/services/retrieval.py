@@ -294,6 +294,22 @@ async def retrieve(
             avail_pool = _ap or None
         except Exception:  # noqa: BLE001 — a szurt pool hibaja ne torje a chatet
             avail_pool = None
+        # m108: LEXIKAI jelolt-pool (CX Smart Search index + a tenant szinonima-szotara),
+        # ha a dense tema-pool nem fedi a temat. Eles eset (copygo, 4x ugyanaz a kerdes):
+        # 'legolcsobb lezer nyomtato' -> a dense pool Laser Pointer / eger / vonalkod-olvaso,
+        # 0 nyomtato, holott 72 raktaros lezernyomtato van. Csak kereso-profillal rendelkezo
+        # tenantnal fut, es csak ha a kategoria-kapuk (m82/m86) nem szurtek; fail-safe.
+        if not _wide82 and len(_topic) >= 3:
+            try:
+                from app.services.lexpool import superlative_lex_pool as _slp108
+                from app.services.superlative import availability as _av108
+                _lx108 = await _slp108(client_id, _topic, hits, superlative)
+                if _lx108:
+                    hits = _lx108
+                    avail_pool = [h for h in _lx108 if _av108(h) is True] or None
+            except Exception:  # noqa: BLE001 - a lexikai pool hibaja ne torje a chatet
+                import logging as _lg108
+                _lg108.getLogger("cx.retrieval").warning("m108 lex pool hiba (client=%s)", client_id, exc_info=True)
         # m75: eszkoz-temaju szuperlativusznal (notebook/laptop) a kiegeszito-zaj
         # (taska/dokkolo/tolto...) kiszurese a poolokbol, mielott az ar-rendezes fut.
         _hits_f = accessory_filter(hits, _topic or message)
