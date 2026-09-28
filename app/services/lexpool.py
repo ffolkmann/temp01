@@ -261,6 +261,7 @@ async def superlative_lex_pool(
         return None
     raw: list[dict] = []
     totals = []
+    fzm: dict = {}  # m109: a Smart Search elgepeles-javitasai (token -> [javitasok])
     psort = "pd" if direction == "desc" else "pa"
     for qv in query_variants(topic):
         res = await search_fn(qv, "rel", 0) or {}
@@ -268,6 +269,8 @@ async def superlative_lex_pool(
             continue  # csak a teljes (minden tokenes) egyezes szamit
         total = int(res.get("total") or 0)
         totals.append(total)
+        for k, v in (res.get("fuzzy") or {}).items():
+            fzm.setdefault(k, list(v))
         raw.extend(res.get("hits") or [])
         for page in range(PRICE_PAGES):
             off = page * LEX_LIMIT
@@ -275,6 +278,8 @@ async def superlative_lex_pool(
                 break
             pr = await search_fn(qv, psort, off) or {}
             raw.extend(pr.get("hits") or [])
+    if fzm:  # m109: 'lezernyomtto' -> a nevben 'lezernyomtato' is fedjen
+        groups = [g + [a for a in fzm.get(g[0], []) if a not in g] for g in groups]
     rows = pick_rows(raw, topic, groups)
     if len(rows) < MIN_HITS:
         logger.info("m108 lex pool: no-go totals=%s kept=%d dense_cover=%d topic=%r client=%s",

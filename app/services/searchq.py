@@ -17,7 +17,8 @@ tokenizalas (app/search/qtext.py), ugyanazok a szinonima-, intent- es merch-szab
             kihagyva szamol (a widget rpFilter(base, except) parja)
   rendezes: rel (fent) | pa/pd (scroll order_by p) | nm (nev, Python-oldalon, plafon)
 
-TUDATOS ELTERESEK a widgettol (v1): nincs elgepeles-tures (MiniSearch fuzzy 0.15);
+TUDATOS ELTERESEK a widgettol (v1): elgepeles-tures csak m109 ota, es csak a MA 0 prefix-
+talalatos tokenre (a szotar legkozelebbi gyakori szava, lasd TenantIndex.correct);
 a merch/intent atrendezes csak a lekert top-CAND_MAX jeloltre hat, nem a teljes listara.
 
 A Qdrant-hivasok egy `client` objektumon (httpx.AsyncClient-alaku: .post(path, json=...))
@@ -58,6 +59,17 @@ FACET_COV = 0.2        # lefedettseg-kuszob (widget RP_COV)
 FACET_MIN = 5          # ... de legalabb ennyi termek (widget need = max(5, ceil(n*0.2)))
 FACET_API_LIMIT = 2000
 STOCK_BOOST = 0.15
+# m109: elgepeles-tures. Csak az a token kap javitast, aminek MA egyetlen szotar-szo sem
+# kezdodik vele (0 prefix-talalat -> a kereses biztosan ures / kaszkadra esik). Javitas: a
+# legkozelebbi GYAKORI szotar-szo(k) azonos kezdobetuvel, Damerau-Levenshtein <= 1 (5-7
+# betu) ill. <= 2 (8+ betu). A javitas ALTERNATIVAKENT kerul a token melle (should), az
+# eredeti token is marad. FP-scan (d28a_fz1, 120 nap valodi keresesei): copygo 1424 token-
+# bol 31 javitas, teslashop 130-bol 7 (a 'keresek' -> 'kerekek' tipusu toltelekszot a STOP kizarja).
+FUZZY_MIN_LEN = 5
+FUZZY_D2_LEN = 8
+FUZZY_MIN_DF = 10
+FUZZY_MAX_ALTS = 2
+FUZZY_CACHE_MAX = 4096
 PRICE_BUCKETS = [("0", 0, 20000), ("1", 20000, 50000), ("2", 50000, 100000),
                  ("3", 100000, 200000), ("4", 200000, 300000), ("5", 300000, 500000),
                  ("6", 500000, None)]
@@ -87,11 +99,51 @@ class SearchUnavailable(Exception):
 # tenant-szotar (manifest + vocab) - cache
 # --------------------------------------------------------------------------- #
 class TenantIndex:
-    __slots__ = ("cid", "manifest", "terms", "dfs", "loaded", "mtime")
+    __slots__ = ("cid", "manifest", "terms", "dfs", "loaded", "mtime", "_fzb", "_fzc")
 
     def __init__(self, cid, manifest, terms, dfs, mtime):
         self.cid, self.manifest, self.terms, self.dfs = cid, manifest, terms, dfs
         self.mtime, self.loaded = mtime, time.time()
+        self._fzb = None   # m109: (kezdobetu, hossz) -> [(szo, df)] a gyakori szavakra
+        self._fzc = {}     # m109: token -> javitasok (tenant-index eletciklusaig)
+
+    def has_prefix(self, tok):
+        """Van-e olyan szotar-szo, ami tok-kal kezdodik (a kereso prefix-egyezese)."""
+        i = bisect.bisect_left(self.terms, tok)
+        return i < len(self.terms) and self.terms[i].startswith(tok)
+
+    def _fuzzy_buckets(self):
+        if self._fzb is None:
+            b = {}
+            for t, d in zip(self.terms, self.dfs):
+                if d >= FUZZY_MIN_DF and len(t) >= 4 and t.isalpha():
+                    b.setdefault((t[0], len(t)), []).append((t, d))
+            self._fzb = b
+        return self._fzb
+
+    def correct(self, tok):
+        """m109: a 0 prefix-talalatos token legkozelebbi gyakori szotar-szavai (max 2), kulonben []."""
+        hit = self._fzc.get(tok)
+        if hit is not None:
+            return hit
+        out = []
+        if (len(tok) >= FUZZY_MIN_LEN and tok.isalpha() and tok not in qtext.STOP
+                and self.terms and not self.has_prefix(tok)):
+            maxd = 1 if len(tok) < FUZZY_D2_LEN else 2
+            best = []
+            buckets = self._fuzzy_buckets()
+            for ln in range(len(tok) - maxd, len(tok) + maxd + 1):
+                for t, d in buckets.get((tok[0], ln), ()):
+                    dd = _dl(tok, t, maxd)
+                    if dd <= maxd:
+                        best.append((dd, -d, t))
+            if best:
+                best.sort()
+                m = best[0][0]
+                out = [t for dd, _, t in best if dd == m][:FUZZY_MAX_ALTS]
+        if len(self._fzc) < FUZZY_CACHE_MAX:
+            self._fzc[tok] = out
+        return out
 
     @property
     def alias(self):
@@ -234,6 +286,46 @@ def stock_boost(cfg):
 # --------------------------------------------------------------------------- #
 # lekerdezes-epites
 # --------------------------------------------------------------------------- #
+def _dl(a, b, maxd):
+    """Korlatozott Damerau-Levenshtein tavolsag (szomszedos csere = 1), korai kilepessel."""
+    la, lb = len(a), len(b)
+    if abs(la - lb) > maxd:
+        return maxd + 1
+    prev2 = None
+    prev = list(range(lb + 1))
+    for i in range(1, la + 1):
+        cur = [i] + [0] * lb
+        lo = i
+        ai = a[i - 1]
+        for j in range(1, lb + 1):
+            v = min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ai != b[j - 1]))
+            if i > 1 and j > 1 and ai == b[j - 2] and a[i - 2] == b[j - 1]:
+                v = min(v, prev2[j - 2] + 1)
+            cur[j] = v
+            if v < lo:
+                lo = v
+        if lo > maxd:
+            return maxd + 1
+        prev2, prev = prev, cur
+    return prev[lb]
+
+
+def apply_fuzzy(groups, tix):
+    """m109: az egy-alternativas (szinonima/egyiranyu nelkuli) csoportok 0 prefix-talalatos
+    tokenjei melle a javitas(ok). Visszaad: (uj csoportok, {token: [javitasok]})."""
+    out, fz = [], {}
+    corr = getattr(tix, "correct", None)
+    for alts in groups:
+        if corr and len(alts) == 1:
+            c = corr(alts[0])
+            if c:
+                fz[alts[0]] = list(c)
+                out.append([alts[0]] + [x for x in c if x != alts[0]])
+                continue
+        out.append(alts)
+    return out, fz
+
+
 def logical_groups(toks, syn, ow):
     """Tokenenkent az alternativak listaja (szinonima-csoport / egyiranyu kiterjesztes)."""
     out = []
@@ -556,6 +648,9 @@ async def search(client, cfg, cid, q, limit=8, offset=0, sort="rel", want_facets
     toks = qtext.tokens(q)
     syn, ow = synonyms(cfg), oneway(cfg)
     groups = logical_groups(toks, syn, ow)
+    groups, fz = apply_fuzzy(groups, tix)  # m109
+    if fz:
+        logger.info("m109 fuzzy %s tenant=%s", fz, cid)
     base = base_conditions(fb, fc, fpr, fpx, avail)
     limit = max(1, min(int(limit or 8), 100))
     offset = max(0, min(int(offset or 0), 5000))
@@ -603,6 +698,8 @@ async def search(client, cfg, cid, q, limit=8, offset=0, sort="rel", want_facets
            "url_prefix": tix.manifest.get("url_prefix") or "",
            "img_prefix": tix.manifest.get("img_prefix") or "",
            "v": tix.manifest.get("v") or "", "count": tix.manifest.get("count") or 0}
+    if fz:
+        out["fuzzy"] = fz  # m109: {eredeti token: [javitasok]} (a widget kiirhatja: 'erre kerestunk')
     if want_facets:
         text_f = {"must": [c for c in flt.get("must", []) if c not in conds_except(base)]}
         if flt.get("min_should"):
