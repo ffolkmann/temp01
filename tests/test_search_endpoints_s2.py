@@ -497,3 +497,44 @@ def test_s3_event_db_configban_kikapcsolva(tmp_path):
         _clear_cfg()
     assert resp.status_code == 204
     assert LOGGED == []
+
+
+# --------------------------------------------------------------------------- #
+# m110: kikapcsolt tenant -> settings.disabled (a w.js loader ezt nezi)
+# --------------------------------------------------------------------------- #
+def _settings(tmp_path, tenants, cid, sess=None):
+    _with_cfg(_write_cfg(tmp_path, tenants))
+    try:
+        return _body(asyncio.run(SS.search_settings(client_id=cid, session=sess or _Session())))
+    finally:
+        _clear_cfg()
+
+
+def test_m110_bekapcsolt_tenant_nem_disabled(tmp_path):
+    b = _settings(tmp_path, {"teslashop": {"enabled": True, "popular_terms": ["a"], "popular_skus": ["s"]}}, "teslashop")
+    assert b["disabled"] is False
+
+
+def test_m110_kikapcsolt_tenant_disabled(tmp_path):
+    b = _settings(tmp_path, {"teslashop": {"enabled": False, "synonyms": [["felni", "kerek"]]}}, "teslashop")
+    assert b["disabled"] is True
+    assert b["groups"] == [["felni", "kerek"]]      # a tobbi mezo valtozatlanul megy
+
+
+def test_m110_enabled_kulcs_nelkul_disabled(tmp_path):
+    assert _settings(tmp_path, {"teslashop": {"popular_terms": ["a"]}}, "teslashop")["disabled"] is True
+
+
+def test_m110_ismeretlen_es_ures_tenant_disabled(tmp_path):
+    assert _settings(tmp_path, {"teslashop": {"enabled": True}}, "nincsilyen")["disabled"] is True
+    assert _settings(tmp_path, {"teslashop": {"enabled": True}}, "")["disabled"] is True
+
+
+def test_m110_db_config_kapcsoloja_dont(tmp_path):
+    # a fajl szerint menne, a DB szerint ki van kapcsolva -> a DB nyer
+    b = _settings(tmp_path, {"teslashop": {"enabled": True}}, "teslashop",
+                  sess=_CfgSession(cfg={"enabled": False, "popular_terms": ["a"]}))
+    assert b["disabled"] is True
+    b = _settings(tmp_path, {}, "teslashop",
+                  sess=_CfgSession(cfg={"enabled": True, "popular_terms": ["a"], "popular_skus": ["s"]}))
+    assert b["disabled"] is False

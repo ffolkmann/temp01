@@ -321,6 +321,10 @@ async def search_settings(
         # sscol/1: a widget akcentus-szine a tenant configjabol; "" eseten a
         # widget beepitett alapszine marad (elirt hex sem valtoztat semmit)
         "accent": accent_color(cfg.get("accent")),
+        # m110: a widget-betolto (w.js) ebbol tudja, hogy a tenant keresoje KI van
+        # kapcsolva (admin: search_config.enabled) -> a widget el sem indul, a bolt
+        # sajat keresoje marad. Ismeretlen tenant is disabled.
+        "disabled": not bool(cfg.get("enabled")),
     }
     if cfg.get("enabled"):
         if not body["popular_terms"]:
