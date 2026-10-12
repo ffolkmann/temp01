@@ -304,8 +304,9 @@ async def konf_lead(
     if to:
         subject, body = kl.compose(cid, p, lead_cfg)
         try:
-            from app.core.mailer import schedule_email
-            schedule_email(to, subject, body)
+            from app.core.mailer import safe_reply_to, schedule_email
+            # m113: a bolt valasza kozvetlenul a latogatohoz menjen
+            schedule_email(to, subject, body, reply_to=safe_reply_to(p.get("email")))
         except Exception:  # noqa: BLE001 - a lead mar el van mentve
             logger.exception("konf-lead[%s]: e-mail utemezes sikertelen", cid)
     else:

@@ -10,6 +10,7 @@ csak logol. Hiba esetén logol, SOHA nem dob (a /chat mindig fusson tovább).
 
 import asyncio
 import logging
+import re
 
 import httpx
 
@@ -39,6 +40,16 @@ def format_from(from_addr: str, name: str = "") -> str:
         "".join(" " if ch in '"<>\\\r\n' else ch for ch in str(name or "")).split()
     )[:60]
     return f'"{clean}" <{addr}>' if clean else (from_addr or "")
+
+
+_REPLY_RE = re.compile(r"^[^@\s,;<>\"']+@[^@\s,;<>\"']+\.[a-z]{2,}$", re.I)
+
+
+def safe_reply_to(email) -> str:
+    """m113: egyetlen, ervenyes e-mail-cim Reply-To-nak (pl. a latogato cime a lead-ertesitoben).
+    Ervenytelen / tobb cim / fejlec-toro karakter -> '' (nincs Reply-To)."""
+    e = str(email or "").strip()
+    return e if (len(e) <= 254 and _REPLY_RE.match(e)) else ""
 
 
 async def send_email(to: str, subject: str, text: str, reply_to: str = "", from_name: str = "") -> bool:

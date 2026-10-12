@@ -9,7 +9,7 @@ import logging
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.mailer import schedule_email
+from app.core.mailer import safe_reply_to, schedule_email
 from app.services.conversations import format_history, format_transcript, get_transcript
 from app.models.db_models import Lead, Tenant
 from app.models.schemas import ChatRequest
@@ -53,10 +53,15 @@ async def store_lead(session: AsyncSession, req: ChatRequest) -> None:
     if req.source == "chat":  # m100
         text += ("\nForras: a latogato a chatbe irta be az elerhetoseget "
                  "(nem a lead-urlapon).")
+    reply_to = safe_reply_to(req.email)  # m113: a bolt valasza kozvetlenul a latogatohoz menjen
+    if reply_to:
+        text += ("\n\nErre a levelre valaszolva kozvetlenul az erdeklodonek irsz "
+                 f"({reply_to}).")
     if convo:
         text += f"\n\n--- TELJES BESZELGETES ---\n{convo}"
     logger.info(
         "LEAD[%s] -> e-mail to=%s email=%s phone=%s source=%s",
         req.client_id, lead_email, req.email, req.phone, req.source,
     )
-    schedule_email(lead_email, subject, text)
+    logger.info("m113 lead reply-to: %d client=%s", 1 if reply_to else 0, req.client_id)
+    schedule_email(lead_email, subject, text, reply_to=reply_to)
