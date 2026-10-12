@@ -28,7 +28,20 @@ def _enabled(settings) -> bool:
     return (settings.mailgun_api_key or "").strip().lower() not in _DISABLED_KEYS
 
 
-async def send_email(to: str, subject: str, text: str) -> bool:
+def format_from(from_addr: str, name: str = "") -> str:
+    """m112: feladó megjelenő névvel — '"Bolt neve" <noreply@...>'. A cím marad a mienk
+    (SPF/DKIM a codexpress.hu-n), csak a megjelenő név változik. Üres név -> változatlan.
+    A névből a fejléc-törő karakterek (idézőjel, <>, sortörés) kimaradnak."""
+    addr = (from_addr or "").strip()
+    if "<" in addr and ">" in addr:
+        addr = addr[addr.index("<") + 1:addr.index(">")].strip()
+    clean = " ".join(
+        "".join(" " if ch in '"<>\\\r\n' else ch for ch in str(name or "")).split()
+    )[:60]
+    return f'"{clean}" <{addr}>' if clean else (from_addr or "")
+
+
+async def send_email(to: str, subject: str, text: str, reply_to: str = "", from_name: str = "") -> bool:
     """Egy e-mail küldése Mailgunon át. True = elküldve, False = kihagyva/hiba.
 
     Soha nem dob kivételt — a hívó ágnak (chat) tovább kell futnia.
@@ -42,7 +55,10 @@ async def send_email(to: str, subject: str, text: str) -> bool:
         return False
 
     url = f"{settings.mailgun_base_url.rstrip('/')}/v3/{settings.mailgun_domain}/messages"
-    data = {"from": settings.mailgun_from, "to": to, "subject": subject, "text": text}
+    data = {"from": format_from(settings.mailgun_from, from_name), "to": to, "subject": subject, "text": text}
+    if (reply_to or "").strip():
+        # m112: a vevő válasza a bolthoz menjen, ne a noreply-ra
+        data["h:Reply-To"] = reply_to.strip()
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.post(url, auth=("api", settings.mailgun_api_key), data=data)
@@ -54,12 +70,12 @@ async def send_email(to: str, subject: str, text: str) -> bool:
         return False
 
 
-def schedule_email(to: str, subject: str, text: str) -> None:
+def schedule_email(to: str, subject: str, text: str, reply_to: str = "", from_name: str = "") -> None:
     """Fire-and-forget e-mail: azonnal visszatér, a küldés háttérben fut.
 
     Async request-handlerből hívandó (futó event loop kell). A taskra erős
     referenciát tartunk a GC ellen, a done-callback törli.
     """
-    task = asyncio.create_task(send_email(to, subject, text))
+    task = asyncio.create_task(send_email(to, subject, text, reply_to=reply_to, from_name=from_name))
     _bg_tasks.add(task)
     task.add_done_callback(_bg_tasks.discard)

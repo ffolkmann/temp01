@@ -652,6 +652,34 @@ _LOOKUPS = {
 }
 
 
+# m112: a tenant értesítési címei (lead_email) közül ezek NEM a bolt címei
+# (Codexpress-másolat) — Reply-To-ba nem kerülnek. Env: CX_REPLY_TO_EXCLUDE (vesszős lista).
+_OWN_DOMAINS = ("codexpress.hu", "codexpress.cloud", "sellv.io")
+_OWN_EMAILS_DEFAULT = "folkmann.ferenc@gmail.com"
+_EMAIL_RE = re.compile(r"^[^@\s,;<>\"]+@[^@\s,;<>\"]+\.[a-z]{2,}$", re.I)
+
+
+def _own_emails() -> set[str]:
+    import os
+    raw = os.environ.get("CX_REPLY_TO_EXCLUDE", _OWN_EMAILS_DEFAULT)
+    return {e.strip().lower() for e in re.split(r"[,;\s]+", raw or "") if e.strip()}
+
+
+def _reply_to_addrs(lead_email) -> list[str]:
+    """m112 (pure): a lead_email címei a saját (Codexpress) címek nélkül, sorrendtartóan,
+    duplikáció nélkül, max 3. Üres lista -> nincs Reply-To."""
+    own = _own_emails()
+    out: list[str] = []
+    for a in re.split(r"[,;\s]+", str(lead_email or "")):
+        a = a.strip().strip("<>").lower()
+        if not a or not _EMAIL_RE.match(a) or a in own or a in out:
+            continue
+        if a.split("@", 1)[1] in _OWN_DOMAINS:
+            continue
+        out.append(a)
+    return out[:3]
+
+
 def _send_status_email(tenant: "Tenant", order: "OrderIntent", status: str, note: str = "") -> None:
     bot = str(tenant.bot_name or "").strip() or tenant.client_id
     subject = f"Rendelésed állapota – #{order.order_id}"
@@ -665,15 +693,26 @@ def _send_status_email(tenant: "Tenant", order: "OrderIntent", status: str, note
         )
     if note:
         body += f"\n\n{note}"
+    reply = _reply_to_addrs(getattr(tenant, "lead_email", ""))
+    if reply:
+        # m112: a vevő válasza (Reply-To) a bolt értesítési címére megy
+        footer = (
+            "Kérdésed van a rendeléseddel kapcsolatban? Válaszolj erre a levélre, "
+            f"vagy írj nekünk: {reply[0]}"
+        )
+    else:
+        footer = "Ez egy automatikus értesítés, kérjük, erre a levélre ne válaszolj."
     text = (
         "Kedves Vásárlónk!\n\n"
         f"{body}\n\n"
+        f"{footer}\n\n"
         f"Üdvözlettel,\n{bot}"
     )
     logger.info(
         "ORDER[%s] matched id=%s -> e-mail to=%s", tenant.client_id, order.order_id, order.order_email
     )
-    schedule_email(order.order_email, subject, text)
+    logger.info("m112 reply-to: %d client=%s", len(reply), tenant.client_id)
+    schedule_email(order.order_email, subject, text, reply_to=", ".join(reply), from_name=bot)
 
 
 def _neutral_reply(platform: str) -> str:
