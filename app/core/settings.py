@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     # LLM / embedding
     anthropic_api_key: str = ""
     openai_api_key: str = ""
-    chat_model: str = "claude-haiku-4-5-20251001"
+    chat_model: str = "claude-haiku-5-5"  # m111 (elesben a CHAT_MODEL env dont)
     embed_model: str = "text-embedding-3-small"
     max_tokens: int = 2048  # m24: 1024-nel a hosszu listas valaszok JSON-envelope-ja csonkolt -> nyers dump a widgetben
 

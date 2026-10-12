@@ -15,7 +15,7 @@ _settings = get_settings()
 _client = AsyncAnthropic(api_key=_settings.anthropic_api_key)
 
 _RETRY_SLEEPS = (1.5, 3.0)  # m53: 529-re ennyi varakozas a 2. es 3. probalkozas elott
-_FALLBACK_MODEL = "claude-sonnet-4-6"  # m54: ha a fo modell 529-re kimerul, egy proba evvel
+_FALLBACK_MODEL = "claude-sonnet-5-5"  # m54: ha a fo modell 529-re kimerul, egy proba evvel (m111: sonnet-4-6 -> sonnet-5-5)
 
 
 def _system_param(system_prompt):
