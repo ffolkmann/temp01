@@ -23,6 +23,19 @@ _FLAG_RES = {
     "order_form": re.compile(r'"order_form"\s*:\s*(true|false)', re.I),
 }
 
+# m114: a JSON-blokkon KIVULI szoveg mentese, ha az envelope reply-ja ures
+_FENCE_RE = re.compile(r"```(?:json)?", re.I)
+_M114_MIN_ALPHA = 15
+
+
+def _outside_text(text: str, start: int, end: int) -> str:
+    """A JSON-blokkon kivuli resz (fence-ek nelkul), vagy '' ha nem ertelmes szoveg."""
+    rest = _FENCE_RE.sub("", (text[:start] + text[end:])).strip()
+    if sum(1 for c in rest if c.isalpha()) < _M114_MIN_ALPHA:
+        return ""
+    return rest
+
+
 _FALLBACK = (
     "Elnezest, most nem tudok valaszolni. Hagyd meg az e-mail-cimed, es egy kollegank "
     "hamarosan jelentkezik."
@@ -33,6 +46,7 @@ _FALLBACK = (
 class ParsedReply:
     reply: str
     action: str | None = None
+    note: str | None = None  # m114: "m114" = a JSON-on kivuli szoveg lett a valasz
 
 
 def _unescape(s: str) -> str:
@@ -51,6 +65,7 @@ def parse_reply(text: str) -> ParsedReply:
     collect = False
     order_form = False
     parsed = False
+    note = None
 
     m = _JSON_RE.search(text)
     if m:
@@ -68,6 +83,15 @@ def parse_reply(text: str) -> ParsedReply:
                         if isinstance(_v, str) and _v.strip():
                             reply = _v
                             break
+                if not reply.strip():
+                    # m114: a modell sima szovegben valaszolt, es UTANA (vagy elotte)
+                    # egy ures reply-u / csak flag-es JSON-t is irt -> eddig a jo
+                    # szoveg elveszett es a tartalek-valasz ment ki (7 nap: 6 eset,
+                    # mind hibatlan termek-valasz). A blokkon kivuli szoveg a valasz.
+                    _out = _outside_text(text, m.start(), m.end())
+                    if _out:
+                        reply = _out
+                        note = "m114"
                 if isinstance(o.get("collect_lead"), bool):
                     collect = o["collect_lead"]
                 if isinstance(o.get("order_form"), bool):
@@ -98,4 +122,4 @@ def parse_reply(text: str) -> ParsedReply:
         action = "order_status_form"
     elif collect:
         action = "collect_lead"
-    return ParsedReply(reply=str(reply), action=action)
+    return ParsedReply(reply=str(reply), action=action, note=note)

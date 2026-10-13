@@ -512,8 +512,12 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
     try:
         from app.services.parse_reply import _FALLBACK as _prfb99
         if parsed.reply == _prfb99:
-            logger.warning("m99 parse fallback: raw_len=%d raw=%r client=%s",
-                           len(str(raw or "")), str(raw or "")[:500], req.client_id)
+            logger.warning("m99 parse fallback: raw_len=%d raw=%r tail=%r client=%s",
+                           len(str(raw or "")), str(raw or "")[:500],
+                           str(raw or "")[-300:], req.client_id)
+        if getattr(parsed, "note", None) == "m114":
+            logger.warning("m114 plain-text mentes: raw_len=%d tail=%r client=%s",
+                           len(str(raw or "")), str(raw or "")[-300:], req.client_id)
     except Exception:  # noqa: BLE001 - a naplozas sose torje a valaszt
         pass
     # m102/1: UJRAKOSZONES-ORSEG. d10c: a folyamatban levo beszelgetesek nem-elso
