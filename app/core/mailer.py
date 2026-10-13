@@ -52,7 +52,8 @@ def safe_reply_to(email) -> str:
     return e if (len(e) <= 254 and _REPLY_RE.match(e)) else ""
 
 
-async def send_email(to: str, subject: str, text: str, reply_to: str = "", from_name: str = "") -> bool:
+async def send_email(to: str, subject: str, text: str, reply_to: str = "", from_name: str = "",
+                     html: str = "") -> bool:
     """Egy e-mail küldése Mailgunon át. True = elküldve, False = kihagyva/hiba.
 
     Soha nem dob kivételt — a hívó ágnak (chat) tovább kell futnia.
@@ -67,6 +68,9 @@ async def send_email(to: str, subject: str, text: str, reply_to: str = "", from_
 
     url = f"{settings.mailgun_base_url.rstrip('/')}/v3/{settings.mailgun_domain}/messages"
     data = {"from": format_from(settings.mailgun_from, from_name), "to": to, "subject": subject, "text": text}
+    if (html or "").strip():
+        # m115: formazott HTML-resz; a text marad sima-szoveges tartalek
+        data["html"] = html
     if (reply_to or "").strip():
         # m112: a vevő válasza a bolthoz menjen, ne a noreply-ra
         data["h:Reply-To"] = reply_to.strip()
@@ -81,12 +85,14 @@ async def send_email(to: str, subject: str, text: str, reply_to: str = "", from_
         return False
 
 
-def schedule_email(to: str, subject: str, text: str, reply_to: str = "", from_name: str = "") -> None:
+def schedule_email(to: str, subject: str, text: str, reply_to: str = "", from_name: str = "",
+                   html: str = "") -> None:
     """Fire-and-forget e-mail: azonnal visszatér, a küldés háttérben fut.
 
     Async request-handlerből hívandó (futó event loop kell). A taskra erős
     referenciát tartunk a GC ellen, a done-callback törli.
     """
-    task = asyncio.create_task(send_email(to, subject, text, reply_to=reply_to, from_name=from_name))
+    task = asyncio.create_task(send_email(to, subject, text, reply_to=reply_to, from_name=from_name,
+                                          html=html))
     _bg_tasks.add(task)
     task.add_done_callback(_bg_tasks.discard)

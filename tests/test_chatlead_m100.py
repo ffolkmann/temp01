@@ -152,5 +152,8 @@ def test_chat_hook_sorrend():
 
 
 def test_ertesito_forras_sor():
+    # m115: a level-szoveg a leadmail.py-ba koltozott (ekezetes alak), a leads.py adja at a source-ot
     src = (ROOT / "app/services/leads.py").read_text(encoding="utf-8")
-    assert 'req.source == "chat"' in src and "chatbe irta" in src
+    assert "source=req.source" in src
+    src = (ROOT / "app/services/leadmail.py").read_text(encoding="utf-8")
+    assert 'source == "chat"' in src and "chatbe írta" in src

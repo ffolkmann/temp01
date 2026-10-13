@@ -10,7 +10,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.mailer import safe_reply_to, schedule_email
-from app.services.conversations import format_history, format_transcript, get_transcript
+from app.services.conversations import get_transcript
+from app.services.leadmail import build_lead_email  # m115
 from app.models.db_models import Lead, Tenant
 from app.models.schemas import ChatRequest
 
@@ -39,29 +40,27 @@ async def store_lead(session: AsyncSession, req: ChatRequest) -> None:
 
     # teljes beszélgetés (m22): DB-napló session szerint; fallback a widget history
     turns = await get_transcript(session, req.client_id, req.session_id)
-    convo = (
-        format_transcript(turns, (tenant.bot_name if tenant else None) or "Bot")
-        if turns else format_history(req.history)
-    )
+    bot_name = (tenant.bot_name if tenant else None) or "Bot"
+    # m115: fordulo-parok a formazott levelhez (DB-naplo; fallback a widget history)
+    if turns:
+        pairs = [(t.question, t.answer) for t in turns]
+    else:
+        pairs = []
+        for h in req.history or []:
+            role = getattr(h, "role", None) or (h.get("role") if isinstance(h, dict) else "")
+            content = getattr(h, "content", None) or (h.get("content") if isinstance(h, dict) else "")
+            if content:
+                pairs.append((content, None) if role == "user" else (None, content))
 
-    subject = f"Uj erdeklodo - {req.client_id} chatbot"
-    text = (
-        "Uj erdeklodo erkezett.\n\n"
-        f"Nev: {req.name or ''}\nEmail: {req.email or ''}\n"
-        f"Telefon: {req.phone or ''}\nUzenet: {req.message or ''}"
-    )
-    if req.source == "chat":  # m100
-        text += ("\nForras: a latogato a chatbe irta be az elerhetoseget "
-                 "(nem a lead-urlapon).")
     reply_to = safe_reply_to(req.email)  # m113: a bolt valasza kozvetlenul a latogatohoz menjen
-    if reply_to:
-        text += ("\n\nErre a levelre valaszolva kozvetlenul az erdeklodonek irsz "
-                 f"({reply_to}).")
-    if convo:
-        text += f"\n\n--- TELJES BESZELGETES ---\n{convo}"
+    subject, text, html_body = build_lead_email(
+        client_id=req.client_id, name=req.name, email=req.email, phone=req.phone,
+        message=req.message, source=req.source, reply_to=reply_to, turns=pairs,
+        bot_name=bot_name,
+    )
     logger.info(
         "LEAD[%s] -> e-mail to=%s email=%s phone=%s source=%s",
         req.client_id, lead_email, req.email, req.phone, req.source,
     )
     logger.info("m113 lead reply-to: %d client=%s", 1 if reply_to else 0, req.client_id)
-    schedule_email(lead_email, subject, text, reply_to=reply_to)
+    schedule_email(lead_email, subject, text, reply_to=reply_to, html=html_body)

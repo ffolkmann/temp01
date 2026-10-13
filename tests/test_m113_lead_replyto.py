@@ -81,9 +81,11 @@ def _load_leads(calls, real_reply):
     dbm.Lead, dbm.Tenant = Lead, Tenant
     sch = types.ModuleType("app.models.schemas")
     sch.ChatRequest = object
+    leadmail = _load("app/services/leadmail.py", "leadmail_m113_under_test")  # m115 (stdlib-only)
     mods = {"app": _pkg("app"), "app.core": _pkg("app.core"), "app.services": _pkg("app.services"),
             "app.models": _pkg("app.models"), "app.core.mailer": mailer,
-            "app.services.conversations": conv, "app.models.db_models": dbm, "app.models.schemas": sch}
+            "app.services.conversations": conv, "app.models.db_models": dbm, "app.models.schemas": sch,
+            "app.services.leadmail": leadmail}
     with _fake_modules(mods):
         mod = _load("app/services/leads.py", "leads_m113_under_test")
     mod.select = lambda *a, **k: types.SimpleNamespace(where=lambda *a, **k: None)
@@ -123,13 +125,14 @@ def test_lead_email_reply_to_visitor():
     args, kw = _run("vevo@example.com")
     assert args[0] == "info@bolt.hu"
     assert kw["reply_to"] == "vevo@example.com"
-    assert "kozvetlenul az erdeklodonek" in args[2]
+    assert "közvetlenül az érdeklődőnek" in args[2]  # m115: ekezetes szoveg
+    assert "közvetlenül az érdeklődőnek" in kw["html"]
 
 
 def test_lead_without_email_no_reply_to():
     args, kw = _run("")
     assert kw["reply_to"] == ""
-    assert "kozvetlenul az erdeklodonek" not in args[2]
+    assert "közvetlenül az érdeklődőnek" not in args[2]
 
 
 def test_konf_lead_uses_reply_to():
