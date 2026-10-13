@@ -394,3 +394,36 @@ def mark_sku(hits, message, current=None):
                 setattr(current, "m105_oos", True)
             n += 1
     return n
+
+
+# m117: zaro kereso-link keresoszava a katalogusban. Mert (d13c, 30 nap): az 1895 kiment
+# kereso-linkbol 573 keresoszavanak EGYETLEN tartalmas szava sem szerepel a bolt egyik
+# termeknevenben sem ("Cegunk szamara", "Vannak akcios", "Utca", nevek, cimek, szitokszo).
+# Ugyanaz az illeszto (_matcher), mint a m103 nev-agban; a toldalekturobb valtozat
+# (to-vagas 4-5 betuig) tobb szemetet hozott vissza, mint jot.
+_TERM_CACHE: dict = {}
+
+
+def term_in_catalog(client_id, term):
+    """True: a term legalabb egy tartalmas tokenje illeszkedik egy termeknevre (vagy nincs
+    tartalmas tokenje). False: egyik sem. None: a katalogus meg nincs kesz (fail-open)."""
+    toks = [t for t in _TOK.findall(fold(term)) if len(t) >= 3 and t not in STOP
+            and not t.isdigit()]
+    if not toks:
+        return True
+    cat = _catalog_nowait(client_id)
+    if not cat:
+        return None
+    built = (_cache.get(client_id) or (0, None))[0]
+    if len(_TERM_CACHE) > 20000:
+        _TERM_CACHE.clear()
+    for t in toks:
+        key = (client_id, built, t)
+        hit = _TERM_CACHE.get(key)
+        if hit is None:
+            mt = _matcher(t)
+            hit = any(mt(e[1]) for e in cat)
+            _TERM_CACHE[key] = hit
+        if hit:
+            return True
+    return False

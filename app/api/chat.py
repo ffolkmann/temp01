@@ -679,6 +679,16 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
             except Exception:  # noqa: BLE001 — a kapu hibaja sose torje a valaszt
                 _uctx95 = message
             _q2 = link_search_term(message, _hn, _hb, context=_uctx95)
+            try:  # m117: a keresoszo legalabb egy szava legyen meg a bolt termekneveiben
+                if _q2:
+                    from app.services.lexmatch import term_in_catalog as _tic117
+                    if _tic117(req.client_id, _q2) is False:
+                        logger.info("m117 link gate: keresoszo nincs a katalogusban "
+                                    "(len=%d) -> nincs kereso-link client=%s",
+                                    len(_q2), req.client_id)
+                        _q2 = ""
+            except Exception:  # noqa: BLE001 - a kapu hibaja sose torje a valaszt
+                pass
             _more_url = (_su2 + quote_plus(_q2)) if _q2 else None  # m95
             _more_url_base = _more_url  # m82b: valtozott-e a m79b fasetta-linkre
             # m79b: ha a kerdesben felismert megkotes van (paramextract) es letezik
@@ -762,7 +772,16 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
                     _lg_why89s, req.client_id)
     if shop_hits and _link_ok_shop:  # m89/1 kapu (a bolti talalat = termek-kontextus)
         _su = _shop_search_url(tenant)
-        if _su and _su not in parsed.reply and "További találatok a webáruházban" not in parsed.reply:
+        _ok117 = True
+        try:  # m117: ugyanaz a katalogus-kapu a bolti kereso-linkre
+            from app.services.lexmatch import term_in_catalog as _tic117b
+            _ok117 = _tic117b(req.client_id, (build_queries(message) or [message[:60]])[0]) is not False
+            if not _ok117:
+                logger.info("m117 link gate (bolti kereses): keresoszo nincs a katalogusban "
+                            "-> nincs kereso-link client=%s", req.client_id)
+        except Exception:  # noqa: BLE001
+            _ok117 = True
+        if _ok117 and _su and _su not in parsed.reply and "További találatok a webáruházban" not in parsed.reply:
             _q = quote_plus((build_queries(message) or [message[:60]])[0])
             _newreply = parsed.reply.rstrip() + "\n\n[További találatok a webáruházban](" + _su + _q + ")"
             try:
