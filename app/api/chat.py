@@ -520,6 +520,45 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
                            len(str(raw or "")), str(raw or "")[-300:], req.client_id)
     except Exception:  # noqa: BLE001 - a naplozas sose torje a valaszt
         pass
+    # m116: URLAP-IGERET OSSZHANG. A prompt kiiratja a modellel, hogy "a megjeleno urlapon
+    # add meg ...", es kozben order_form/collect_lead flaget ker; a modell neha csak a
+    # mondatot irja meg -> a latogato nem letezo urlapot keres. Merve (d13b, 30 nap, 3821
+    # valasz): a felismero 281/281 bekapcsolt urlapos valaszt fog, a 19 flag nelkuli
+    # igeret mind valodi (0 FP); ebbol 7 sessionben urlap sosem volt. Ha mar volt
+    # rendeles-urlap a sessionben, NEM dobjuk fel ujra (lekeres utan zavaro, m101) -> csak log.
+    try:
+        if getattr(parsed, "action", None) is None:
+            from app.services.formpromise import promised_form as _pf116
+            _k116 = _pf116(parsed.reply)
+            _act116 = None
+            if _k116 == "order":
+                _seen116 = False
+                if req.session_id:
+                    from sqlalchemy import text as _t116
+                    _seen116 = (await session.execute(_t116(
+                        "SELECT 1 FROM messages WHERE client_id = :c AND session_id = :s "
+                        "AND action = 'order_status_form' LIMIT 1"),
+                        {"c": req.client_id, "s": req.session_id})).first() is not None
+                if _seen116:
+                    logger.info("m116 urlap-igeret: order, mar volt urlap (shadow) client=%s",
+                                req.client_id)
+                else:
+                    _act116 = "order_status_form"
+            elif _k116 == "lead":
+                _act116 = "collect_lead"
+            if _act116:
+                logger.info("m116 urlap-igeret -> %s client=%s", _act116, req.client_id)
+                try:
+                    parsed.action = _act116
+                except Exception:  # noqa: BLE001 - frozen dataclass eseten
+                    from dataclasses import replace as _dc_replace116
+                    parsed = _dc_replace116(parsed, action=_act116)
+    except Exception:  # noqa: BLE001 - az or hibaja sose torje a valaszt
+        logger.exception("m116 urlap-igeret: or hiba client=%s", req.client_id)
+        try:
+            await session.rollback()
+        except Exception:  # noqa: BLE001
+            pass
     # m102/1: UJRAKOSZONES-ORSEG. d10c: a folyamatban levo beszelgetesek nem-elso
     # koreinek 11%-a (fishingoutlet 24%) "Szia!"-val kezdodott, holott a latogato nem
     # koszont ujra. Determinisztikus levagas (stilus-hibara a prompt nem eleg, m77).
