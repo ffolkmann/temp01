@@ -365,6 +365,15 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
         tenant, hits, current, coupons, ctx, live=live, shop_search=shop_hits,
         operator_online=op_online, retrieval_note=_rnote,
     )
+    # m119: e-mailes atadas utan a kanned "Tovabbitottam..." uzenet igaz - rendszer-teny a dinamikus
+    #       promptba, hogy a modell ne vonja vissza (notebookstore 10-14). Fail-safe.
+    try:
+        from app.services.handoffnote import NOTE as _M119_NOTE, handoff_done as _m119_done
+        if _m119_done(req.history) and isinstance(system_prompt, tuple) and len(system_prompt) == 2:
+            system_prompt = (system_prompt[0], system_prompt[1] + _M119_NOTE)
+            logger.info("m119 handoff-teny client=%s", req.client_id)
+    except Exception:  # noqa: BLE001
+        logger.exception("m119 handoff-teny hiba")
 
     try:
         raw = await generate_reply(system_prompt, req.history, message, model=getattr(tenant, "chat_model", None))
