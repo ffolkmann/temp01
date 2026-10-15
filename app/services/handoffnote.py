@@ -10,7 +10,15 @@ tudja, hogy igaz. Javitas: ha az elozmenyben ott a handoff-valasz, a dinamikus p
 rendszer-teny kerul.
 """
 
-HANDOFF_MARK = "Továbbítottam a beszélgetésünket"
+HANDOFF_MARK = "továbbítottam a beszélgetésünket"  # m120: kisbetus osszevetes (oszinte valtozat is)
+
+# m120: ha a latogato azt kerdezi/kerte, ember-e a bot, a kanned "Természetesen!" igennek hangzik ->
+#       a modell utana helyesbitett ("nem ember vagyok, az elozo felrevezeto volt"). Feco 10-15: oszinte eleje.
+HONEST_REPLY = (
+    "A bolt online asszisztense vagyok, de 📨 továbbítottam a beszélgetésünket a kollégáimnak. "
+    "Kérlek, add meg az e-mail-címed (és ha szeretnéd, a telefonszámod), hogy mielőbb fel tudják "
+    "venni veled a kapcsolatot."
+)
 
 NOTE = (
     "\n\n# KORÁBBI ÁTADÁS (rendszer-tény, igaz)\n"
@@ -34,6 +42,27 @@ def _field(h, name):
 def handoff_done(history) -> bool:
     """True, ha az elozmenyben van bot-oldali e-mailes atadas-uzenet."""
     for h in history or []:
-        if _field(h, "role") == "assistant" and HANDOFF_MARK in str(_field(h, "content")):
+        if _field(h, "role") == "assistant" and HANDOFF_MARK in str(_field(h, "content")).lower():
             return True
     return False
+
+
+_FOLD = str.maketrans("áéíóöőúüű", "aeiooouuu")
+import re as _re  # noqa: E402
+
+_HUMAN_RE = _re.compile(
+    r"\b(emberrel|ember vagy|ember-e|ember van|ember valaszol|ember ir|elo ember|valodi ember|"
+    r"valodi szem|hus.?ver|robot|gep(pel)? (beszel|irok|levelez)|gep vagy|bot vagy|botot|"
+    r"chatbot|mesterseges intelligencia|\bai\b|automata)"
+)
+
+
+def asks_human(message) -> bool:
+    """m120: a latogato arra kerdez/arra utal, hogy emberrel vagy geppel beszel-e."""
+    t = str(message or "").lower().translate(_FOLD)
+    return bool(_HUMAN_RE.search(t))
+
+
+def reply_for(message, default: str) -> str:
+    """m120: az e-mailes atadas kanned valasza - ember/robot-kerdesnel az oszinte valtozat."""
+    return HONEST_REPLY if asks_human(message) else default

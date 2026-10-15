@@ -240,16 +240,25 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
                     pass
 
         # e-mailes handoff (eredeti viselkedés / fallback)
+        # m120: ember/robot-kerdesnel oszinte valasz-eleje (Feco 10-15); fail-safe -> HANDOFF_REPLY
+        _ho_reply = HANDOFF_REPLY
+        try:
+            from app.services.handoffnote import reply_for as _m120_reply_for
+            _ho_reply = _m120_reply_for(message, HANDOFF_REPLY)
+            if _ho_reply != HANDOFF_REPLY:
+                logger.info("m120 oszinte atadas-valasz client=%s", req.client_id)
+        except Exception:  # noqa: BLE001
+            logger.exception("m120 atadas-valasz hiba")
         # előbb logolunk, hogy az aktuális kérés IS benne legyen a teljes átiratban
         await log_turn(
-            session, req.client_id, req.session_id, message, HANDOFF_REPLY, "collect_lead"
+            session, req.client_id, req.session_id, message, _ho_reply, "collect_lead"
         )
         turns = await get_transcript(session, req.client_id, req.session_id)
         transcript = format_transcript(turns, tenant.bot_name or "Bot") if turns else None
         await send_handoff_email(req.client_id, ho, transcript=transcript,
                                  turns=turns, bot_name=tenant.bot_name or "Bot")  # m118
         await log_event(session, req.client_id, req.session_id, "handoff", {"page": ho.page})
-        return ChatResponse(reply=HANDOFF_REPLY, action="collect_lead")
+        return ChatResponse(reply=_ho_reply, action="collect_lead")
 
     # --- RAG + LLM ---
     # embed-input: termékoldalon a termék neve + üzenet, különben csak az üzenet.
