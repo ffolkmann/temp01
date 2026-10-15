@@ -22,6 +22,7 @@ HANDOFF_REPLY = (
 
 async def send_handoff_email(
     client_id: str, intent: HandoffIntent, transcript: str | None = None,
+    turns: list | None = None, bot_name: str = "Bot",
 ) -> None:
     """Élő segítségkérés értesítő a partnernek — Mailgunon, háttérben.
 
@@ -37,5 +38,17 @@ async def send_handoff_email(
         f"--- TELJES BESZELGETES ---\n{body_transcript}\n\n"
         "Ha a latogato megadja az elerhetoseget, kulon lead-ertesitot is kuldunk."
     )
+    # m118: ekezetes szoveg + formazott HTML (latogato/bot buborekok) - hiba eseten a regi sima level
+    html_body = ""
+    try:
+        from app.services.leadmail import build_handoff_email
+        pairs = [(getattr(t, "question", None), getattr(t, "answer", None)) for t in (turns or [])]
+        subject, text, html_body = build_handoff_email(
+            client_id=client_id, page=intent.page, when=datetime.now(timezone.utc),
+            turns=pairs, bot_name=bot_name, transcript=body_transcript,
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("m118 handoff-level formazas hiba, sima szoveg megy")
     logger.info("HANDOFF[%s] -> e-mail to=%s page=%s", client_id, intent.to, intent.page)
-    schedule_email(intent.to, subject, text)
+    logger.info("m118 handoff html: %d client=%s", 1 if html_body else 0, client_id)
+    schedule_email(intent.to, subject, text, html=html_body)

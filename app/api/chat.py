@@ -246,7 +246,8 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
         )
         turns = await get_transcript(session, req.client_id, req.session_id)
         transcript = format_transcript(turns, tenant.bot_name or "Bot") if turns else None
-        await send_handoff_email(req.client_id, ho, transcript=transcript)
+        await send_handoff_email(req.client_id, ho, transcript=transcript,
+                                 turns=turns, bot_name=tenant.bot_name or "Bot")  # m118
         await log_event(session, req.client_id, req.session_id, "handoff", {"page": ho.page})
         return ChatResponse(reply=HANDOFF_REPLY, action="collect_lead")
 

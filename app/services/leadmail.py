@@ -13,7 +13,7 @@ A markdown-konverzio szuk es biztonsagos: elobb HTML-escape, utana csak **felkov
 import html as _html
 import re
 
-_LINK_RE = re.compile(r"\[([^\]\n]{1,300})\]\((https?://[^\s)]{1,2000})\)")
+_LINK_RE = re.compile(r"\[([^\]\n]{1,300})\]\(((?:https?://|mailto:|tel:)[^\s)]{1,2000})\)")  # m118: +tel/mailto
 _BOLD_RE = re.compile(r"\*\*([^*\n]{1,500})\*\*")
 
 
@@ -104,5 +104,95 @@ def build_lead_email(*, client_id, name, email, phone, message, source,
         'max-width:640px;color:#111827">'
         '<h2 style="margin:0 0 12px;font-size:18px">Új érdeklődő érkezett a chatbotból</h2>'
         f'<table style="border-collapse:collapse">{rows}</table>{notes}{convo}</div>'
+    )
+    return subject, text, html_body
+
+
+# --- m118: elo segitsegkeres (handoff) ertesito -------------------------------------------
+
+def _when_local(when):
+    """UTC datetime -> budapesti helyi ido '2026. 10. 14. 13:04' alakban (hiba eseten UTC)."""
+    try:
+        from zoneinfo import ZoneInfo
+        d = when.astimezone(ZoneInfo("Europe/Budapest"))
+    except Exception:  # noqa: BLE001
+        d = when
+    try:
+        return d.strftime("%Y. %m. %d. %H:%M")
+    except Exception:  # noqa: BLE001
+        return str(when or "")
+
+
+def _bubbles_html(turns, bot):
+    e = lambda v: _html.escape(str(v or ""), quote=False)  # noqa: E731
+    out = ""
+    for q, a in turns or []:
+        if q:
+            out += (
+                '<div style="margin:0 0 10px;padding:10px 14px;background:#eef2ff;'
+                'border-radius:12px;color:#111827">'
+                '<div style="font-size:12px;color:#4f46e5;font-weight:bold;margin-bottom:4px">'
+                f"Látogató</div>{md_to_html(q)}</div>")
+        if a:
+            out += (
+                '<div style="margin:0 0 16px;padding:10px 14px;background:#f3f4f6;'
+                'border-radius:12px;color:#111827">'
+                '<div style="font-size:12px;color:#374151;font-weight:bold;margin-bottom:4px">'
+                f"{e(bot)}</div>{md_to_html(a)}</div>")
+    return out
+
+
+def build_handoff_email(*, client_id, page, when, turns, bot_name, transcript=None):
+    """m118: elo segitsegkeres ertesito. turns: [(kerdes, valasz), ...] idorendben (DB-naplo);
+    ha ures, a `transcript` sima szoveg (widget-atirat) a tartalek. Vissza: (subject, text, html)."""
+    bot = str(bot_name or "Bot")
+    subject = f"Élő segítségkérés – {client_id} chatbot"
+    when_s = _when_local(when)
+    page = str(page or "").strip()
+
+    t = ["Egy látogató élő segítséget / munkatársat kért a chatbotban.", "",
+         f"Webshop: {client_id}", f"Oldal: {page or '–'}", f"Időpont: {when_s}"]
+    if turns:
+        t += ["", "— TELJES BESZÉLGETÉS —", ""]
+        for q, a in turns:
+            if q:
+                t += [f"Látogató: {md_to_text(q)}", ""]
+            if a:
+                t += [f"{bot}: {md_to_text(a)}", ""]
+    elif transcript:
+        t += ["", "— TELJES BESZÉLGETÉS —", "", str(transcript).strip(), ""]
+    t += ["", "Ha a látogató megadja az elérhetőségét, külön lead-értesítőt is küldünk."]
+    text = "\n".join(t).rstrip() + "\n"
+
+    e = lambda v: _html.escape(str(v or "–"), quote=False)  # noqa: E731
+    if page.startswith(("http://", "https://")) and not any(c in page for c in ' "<>'):
+        page_html = (f'<a href="{page}" style="color:#1a56db;text-decoration:underline">'
+                     f"{e(page)}</a>")
+    else:
+        page_html = e(page)
+    rows = "".join(
+        f'<tr><td style="padding:4px 12px 4px 0;color:#6b7280;white-space:nowrap">{k}</td>'
+        f'<td style="padding:4px 0;color:#111827"><strong>{v}</strong></td></tr>'
+        for k, v in (("Webshop", e(client_id)), ("Oldal", page_html), ("Időpont", e(when_s)))
+    )
+    bubbles = _bubbles_html(turns, bot)
+    if not bubbles and transcript:
+        bubbles = ('<div style="margin:0 0 16px;padding:10px 14px;background:#f3f4f6;'
+                   'border-radius:12px;color:#111827">'
+                   + _html.escape(str(transcript).strip(), quote=False).replace("\n", "<br>")
+                   + "</div>")
+    convo = ""
+    if bubbles:
+        convo = ('<h3 style="margin:24px 0 12px;font-size:15px;color:#111827">'
+                 f"Teljes beszélgetés</h3>{bubbles}")
+    html_body = (
+        '<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5;'
+        'max-width:640px;color:#111827">'
+        '<h2 style="margin:0 0 12px;font-size:18px">Élő segítségkérés a chatbotban</h2>'
+        '<p style="margin:0 0 12px">Egy látogató élő segítséget / munkatársat kért. '
+        "Érdemes mielőbb felvenni vele a kapcsolatot.</p>"
+        f'<table style="border-collapse:collapse">{rows}</table>{convo}'
+        '<p style="margin:16px 0 0;color:#6b7280;font-size:13px">Ha a látogató megadja az '
+        "elérhetőségét, külön lead-értesítőt is küldünk.</p></div>"
     )
     return subject, text, html_body
