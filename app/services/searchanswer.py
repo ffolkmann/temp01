@@ -144,7 +144,12 @@ def build_user_prompt(q, candidates):
 # --------------------------------------------------------------------------- #
 _FENCE = re.compile(r"```[a-zA-Z]*|```")
 # ar-gyanus reszlet: 3+ jegyu szam, vagy barmilyen szam penznem/egyseg mellett
-_PRICE = re.compile(r"\d[\d\s\u00a0.,]{2,}|\d+\s*(?:ft|huf|eur|forint|%)", re.I)
+# m121: a betuhoz/szamhoz tapado szam (DS223, DS725+, RTD1619B) NEM ar - korabban
+# az ilyen modellnevet tartalmazo mondat kiesett, es a NAS-kerdesre nem maradt sav.
+_PRICE = re.compile(
+    r"(?<![\w+\-])\d{1,3}(?:[\s\u00a0.,]?\d{3})+(?!\w)"
+    r"|\d+(?:[\s\u00a0.,]\d+)*\s*(?:ft|huf|eur|forint|ezer|%)",
+    re.I)
 _SENT = re.compile(r"(?<=[.!?])\s+")
 
 

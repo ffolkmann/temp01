@@ -488,15 +488,19 @@ async def search_answer(
     if not sa.needs_answer(q, _int(data.get("total")), force):
         return JSONResponse({"skip": 1})
 
-    key = (cid, sa.norm_q(q))
-    hit = ai_cache_get(key)
-    if hit is not None:
-        return JSONResponse(dict(hit, cached=1))
-
     items = data.get("candidates")
     cands = sa.clean_candidates(items[:AI_MAX_INPUT] if isinstance(items, list) else None)
     if not cands:
         return JSONResponse({})
+
+    # m121: a cache-kulcsban a jeloltek is benne vannak - ha a kereso (pl. relevancia-
+    # javitas vagy keszletvaltozas miatt) mas termekeket kuld, nem a regi valasz jon.
+    import hashlib
+    sig = hashlib.sha1(",".join(sorted(c["i"] for c in cands)).encode("utf-8")).hexdigest()[:12]
+    key = (cid, sa.norm_q(q) + "|" + sig)
+    hit = ai_cache_get(key)
+    if hit is not None:
+        return JSONResponse(dict(hit, cached=1))
 
     if not ai_take(cid, ai_cap(cfg)):
         logger.warning("search/answer: napi plafon elerve (%s)", cid)
