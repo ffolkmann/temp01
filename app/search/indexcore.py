@@ -29,6 +29,7 @@ Vedelem a pilotbol orokolve: atomikus iras, min_ratio zsugorodas-guard,
 hibanal a regi index marad es a manifest error-t kap.
 """
 import hashlib
+import html
 import json
 import os
 import time
@@ -41,13 +42,19 @@ def strip_prefix(value, prefix):
     return value[len(prefix):] if isinstance(value, str) and prefix and value.startswith(prefix) else value
 
 
+def _txt(v):
+    """m122: HTML-entitasok dekodolasa a megjelenitett szovegekben (a Shoprenter a
+    nevekben '3.5&quot;'-ot ad - a widget escape-eli, igy szo szerint latszott)."""
+    return html.unescape(str(v or "")).strip()
+
+
 def compact(p, url_prefix, img_prefix):
     row = {
         "i": str(p.get("id", "")),
         "k": (p.get("sku") or "").strip(),
-        "n": (p.get("name") or "").strip(),
-        "b": (p.get("brand") or "").strip(),
-        "c": (p.get("category") or "").strip(),
+        "n": _txt(p.get("name")),          # m122
+        "b": _txt(p.get("brand")),
+        "c": _txt(p.get("category")),
         "p": p.get("price_gross"),
         "a": 1 if p.get("available") else 0,
         "u": strip_prefix(p.get("url") or "", url_prefix),

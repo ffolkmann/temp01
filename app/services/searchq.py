@@ -30,6 +30,7 @@ import json
 import logging
 import math
 import os
+import re
 import time
 from datetime import date
 
@@ -70,6 +71,14 @@ FUZZY_D2_LEN = 8
 FUZZY_MIN_DF = 10
 FUZZY_MAX_ALTS = 2
 FUZZY_CACHE_MAX = 4096
+# m122 (2026-10-16, copygo/Hungarotoner panasz: 'Western Digital Purple SC QD101 256GB' ->
+# 2003 talalat OR-modban, a QD101 nincs a boltban): (1) az OR-lepcso legalabb a tokenek
+# felet keri (n//2, 3 tokennel valtozatlan 1); (2) laza modban (near/or) a <=2 betus token
+# egyedul nem hoz talalatot - ha van hosszabb token, abbol legalabb egynek illeszkednie kell;
+# (3) a tipusszam-szeru, a szotarban prefixkent sem letezo token a valaszban: 'missing'.
+SHORT_TOKEN_LEN = 2
+CODE_MIN_LEN = 4
+_UNIT_RE = re.compile(r"\d+[a-z]{1,4}")   # 256gb, 5400rpm, 4tb: szam+mertekegyseg, NEM tipusszam
 PRICE_BUCKETS = [("0", 0, 20000), ("1", 20000, 50000), ("2", 50000, 100000),
                  ("3", 100000, 200000), ("4", 200000, 300000), ("5", 300000, 500000),
                  ("6", 500000, None)]
@@ -356,8 +365,15 @@ def text_conditions(groups):
     return conds
 
 
+def _short(alts):
+    """m122: rovid (<= SHORT_TOKEN_LEN), csupa betus logikai token (pl. 'sc', 'hp')."""
+    return all(len(a) <= SHORT_TOKEN_LEN and a.isalpha() for a in alts)
+
+
 def build_filter(base, groups, mode):
-    """mode: and | near (n-1) | or  ->  Qdrant filter."""
+    """mode: and | near (n-1) | or (m122: legalabb n//2)  ->  Qdrant filter.
+    m122: laza modban a rovid tokenek egyedul nem hoznak talalatot - ha van hosszabb
+    token is, abbol legalabb egynek illeszkednie kell (beagyazott min_should a must-ban)."""
     conds = text_conditions(groups)
     f = {"must": list(base)}
     if not conds:
@@ -365,9 +381,31 @@ def build_filter(base, groups, mode):
     if mode == "and":
         f["must"].extend(conds)
     else:
-        k = max(1, len(conds) - 1) if mode == "near" else 1
+        n = len(conds)
+        k = max(1, n - 1) if mode == "near" else max(1, n // 2)
         f["min_should"] = {"conditions": conds, "min_count": k}
+        strong = [c for c, alts in zip(conds, groups) if not _short(alts)]
+        if strong and len(strong) < n:
+            f["must"].append({"min_should": {"conditions": strong, "min_count": 1}})
     return f
+
+
+def is_code(tok):
+    """m122: tipusszam-szeru token - betu ES szam, legalabb CODE_MIN_LEN hosszu, de nem
+    szam+mertekegyseg (256gb, 5400rpm)."""
+    t = str(tok or "")
+    return (len(t) >= CODE_MIN_LEN and any(c.isdigit() for c in t)
+            and any(c.isalpha() for c in t) and not _UNIT_RE.fullmatch(t))
+
+
+def missing_codes(toks, tix, fz=None):
+    """m122: a lekerdezes tipusszam-szeru tokenjei, amikkel EGYETLEN szotar-szo sem kezdodik
+    -> ilyen termek biztosan nincs a boltban. A widget kiirja ('Nincs QD101 tipusszamu termek')."""
+    out = []
+    for t in toks:
+        if is_code(t) and t not in (fz or {}) and not tix.has_prefix(t) and t not in out:
+            out.append(t)
+    return out
 
 
 def price_bucket_condition(bid):
@@ -649,6 +687,7 @@ async def search(client, cfg, cid, q, limit=8, offset=0, sort="rel", want_facets
     syn, ow = synonyms(cfg), oneway(cfg)
     groups = logical_groups(toks, syn, ow)
     groups, fz = apply_fuzzy(groups, tix)  # m109
+    missing = missing_codes(toks, tix, fz)  # m122
     if fz:
         logger.info("m109 fuzzy %s tenant=%s", fz, cid)
     base = base_conditions(fb, fc, fpr, fpx, avail)
@@ -700,6 +739,8 @@ async def search(client, cfg, cid, q, limit=8, offset=0, sort="rel", want_facets
            "v": tix.manifest.get("v") or "", "count": tix.manifest.get("count") or 0}
     if fz:
         out["fuzzy"] = fz  # m109: {eredeti token: [javitasok]} (a widget kiirhatja: 'erre kerestunk')
+    if missing:
+        out["missing"] = missing  # m122: a boltban nem letezo tipusszam(ok) (a widget kiirja)
     if want_facets:
         text_f = {"must": [c for c in flt.get("must", []) if c not in conds_except(base)]}
         if flt.get("min_should"):
