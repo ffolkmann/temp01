@@ -5,6 +5,7 @@ latencyt nem növeli). Ugyanez fut a konfigurátor-leadnél is (source="configur
 """
 
 import logging
+from datetime import datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,8 +30,17 @@ async def store_lead(session: AsyncSession, req: ChatRequest) -> None:
         source=req.source,
         history=[h.model_dump() for h in req.history] if req.history else None,
     )
+    # m123: session-es leadnel a levelet a leadnotify hatter-ciklus kuldi (5 perc csend utan,
+    #       beszelgetesenkent EGYBEN). Session nelkul nincs mihez fuzni -> azonnal (regi ut).
+    _now123 = not bool(req.session_id)
+    if _now123:
+        lead.notified_at = datetime.now(timezone.utc)
     session.add(lead)
     await session.commit()
+    if not _now123:
+        logger.info("m123 lead rogzitve, level a csendes idoszak utan client=%s source=%s",
+                    req.client_id, req.source)
+        return
 
     # értesítő e-mail a partnernek (Mailgun, háttérben)
     tenant = (

@@ -31,6 +31,16 @@ app.include_router(search_router)
 app.include_router(konf_router)
 
 
+@app.on_event("startup")
+async def _m123_lead_notify_start() -> None:
+    # m123: lead-ertesito hatter-ciklus (beszelgetesenkent egy level, 5 perc csend utan)
+    try:
+        from app.services.leadnotify import start_loop
+        start_loop()
+    except Exception:  # noqa: BLE001
+        logging.getLogger("cx.leadnotify").exception("m123 lead-notify inditas hiba")
+
+
 @app.get("/health")
 async def health() -> dict:
     qdrant_ok = await get_qdrant().health()

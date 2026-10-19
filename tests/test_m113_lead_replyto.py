@@ -108,7 +108,8 @@ class _Session:
 
 
 def _req(email, source="chat"):
-    return types.SimpleNamespace(client_id="nagyonallatshop", session_id="s1", name="Teszt Elek",
+    # m123: session-es leadnel a level kesleltetve megy (leadnotify) -> az azonnali ut session nelkul
+    return types.SimpleNamespace(client_id="nagyonallatshop", session_id=None, name="Teszt Elek",
                                  email=email, phone="", message="kerdes", source=source, history=None)
 
 

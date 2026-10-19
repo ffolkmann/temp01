@@ -127,6 +127,8 @@ class Lead(Base):
     source: Mapped[str | None] = mapped_column(String)
     history: Mapped[dict | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # m123: mikor ment ki a lead-ertesito (NULL = fuggo; a leadnotify hatter-ciklus kuldi)
+    notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class Unanswered(Base):

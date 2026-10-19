@@ -290,6 +290,23 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
             search_fb_allowed = await _plan_search_fallback(session, tenant.plan)
         except Exception:  # noqa: BLE001 — a flag-olvasás hibája ne törje a chatet
             search_fb_allowed = False
+    # m123: a latogato ebben a sessionben mar megadta az elerhetoseget (urlap vagy chat) ->
+    #       rendszer-teny a promptba + nincs ujabb lead-urlap (nagyonallatshop 10-19: 3 urlap,
+    #       3 level). A m67 commit elott olvassuk. Fail-safe: hiba -> regi viselkedes.
+    _lead123 = False
+    if req.session_id:
+        try:
+            from sqlalchemy import text as _t123
+            _lead123 = bool((await session.execute(_t123(
+                "SELECT 1 FROM leads WHERE client_id = :c AND session_id = :s AND "
+                "(coalesce(email, '') <> '' OR coalesce(phone, '') <> '') LIMIT 1"),
+                {"c": req.client_id, "s": req.session_id})).first())
+        except Exception:  # noqa: BLE001
+            _lead123 = False
+            try:
+                await session.rollback()
+            except Exception:  # noqa: BLE001
+                pass
     coupons = await active_coupons(session, req.client_id)
     await session.commit()  # m67: kapcsolat vissza a poolba a lassú szakaszra
 
@@ -383,6 +400,14 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
             logger.info("m119 handoff-teny client=%s", req.client_id)
     except Exception:  # noqa: BLE001
         logger.exception("m119 handoff-teny hiba")
+    # m123: elerhetoseg mar megvan -> ne kerje ujra (dinamikus resz, a cache-elt statikus erintetlen)
+    if _lead123 and isinstance(system_prompt, tuple) and len(system_prompt) == 2:
+        try:
+            from app.services.leadnotify import NOTE as _M123_NOTE
+            system_prompt = (system_prompt[0], system_prompt[1] + _M123_NOTE)
+            logger.info("m123 elerhetoseg-teny client=%s", req.client_id)
+        except Exception:  # noqa: BLE001
+            logger.exception("m123 elerhetoseg-teny hiba")
 
     try:
         raw = await generate_reply(system_prompt, req.history, message, model=getattr(tenant, "chat_model", None))
@@ -1027,6 +1052,14 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
     except Exception:  # noqa: BLE001 - a lead-elokeszites sose torje a valaszt
         logger.exception("m100 chat lead: elokeszites hiba client=%s", req.client_id)
         _lead100 = None
+    # m123: mar van elerhetoseg a sessionben -> nincs ujabb lead-urlap a widgetben
+    if _lead123 and getattr(parsed, "action", None) == "collect_lead":
+        try:
+            parsed.action = None
+        except Exception:  # noqa: BLE001 - frozen dataclass eseten
+            from dataclasses import replace as _dc_replace123
+            parsed = _dc_replace123(parsed, action=None)
+        logger.info("m123 collect_lead elnyomva (mar van elerhetoseg) client=%s", req.client_id)
     # megválaszolatlan-naplózás (Eval Unanswered): low_score / collect_lead / order_form
     await log_unanswered(session, req.client_id, req.session_id, message, top_score, parsed.action)
     # beszélgetés-napló (m22): a stat.html visszanéző + e-mail átiratok forrása

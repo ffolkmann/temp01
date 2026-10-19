@@ -47,13 +47,18 @@ def md_to_html(s: str) -> str:
 
 
 def build_lead_email(*, client_id, name, email, phone, message, source,
-                     reply_to, turns, bot_name):
+                     reply_to, turns, bot_name, supplement=False):
     """turns: [(kerdes, valasz), ...] idorendben. Vissza: (subject, text, html)."""
     bot = str(bot_name or "Bot")
     subject = f"Új érdeklődő – {client_id} chatbot"
+    intro = "Új érdeklődő érkezett a chatbotból."
+    if supplement:  # m123: mar ertesitett beszelgetes uj adattal / uzenettel
+        subject = f"Új érdeklődő – {client_id} chatbot (kiegészítés)"
+        intro = ("Kiegészítés: az érdeklődő a korábbi értesítő után további adatot vagy "
+                 "üzenetet írt a chatbotba. Lent a teljes, frissített beszélgetés.")
 
     fields = [("Név", name), ("E-mail", email), ("Telefon", phone), ("Üzenet", message)]
-    t = ["Új érdeklődő érkezett a chatbotból.", ""]
+    t = [intro, ""]
     t += [f"{k}: {v or '–'}" for k, v in fields]
     if source == "chat":
         t.append("Forrás: a látogató a chatbe írta be az elérhetőségét (nem a lead-űrlapon).")
@@ -102,7 +107,11 @@ def build_lead_email(*, client_id, name, email, phone, message, source,
     html_body = (
         '<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5;'
         'max-width:640px;color:#111827">'
-        '<h2 style="margin:0 0 12px;font-size:18px">Új érdeklődő érkezett a chatbotból</h2>'
+        '<h2 style="margin:0 0 12px;font-size:18px">'
+        + ("Kiegészítés – új érdeklődő" if supplement else "Új érdeklődő érkezett a chatbotból")
+        + "</h2>"
+        + ('<p style="margin:0 0 12px">' + _html.escape(intro, quote=False) + "</p>"
+           if supplement else "") +
         f'<table style="border-collapse:collapse">{rows}</table>{notes}{convo}</div>'
     )
     return subject, text, html_body
