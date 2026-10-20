@@ -87,8 +87,12 @@ async def run_tenant(tenant, tcfg, out_root):
         indexcore.write_error_manifest(out_dir, client_id, "0 forras termek — index nem frissult")
         return {"client_id": client_id, "platform": platform, "error": "0 forras termek"}
     labels = meta.get("labels") if isinstance(meta.get("labels"), dict) else None
+    # kfp0: hide_params - belso (pl. uzleti) parameterek, amik a KERESO kimeneteibe
+    # (fo index + Qdrant) NEM kerulnek, igy facetkent sem latszanak. A konfigurator-
+    # kimenetek (konf, konf_extra) a teljes parameter-listat kapjak.
+    pub = hide_params(products, tcfg.get("hide_params"))
     res = indexcore.build_index(
-        client_id, products, out_dir, url_prefix, img_prefix,
+        client_id, pub, out_dir, url_prefix, img_prefix,
         only_available=bool(tcfg.get("only_available", True)),
         min_ratio=float(tcfg.get("min_ratio", 0.5)), labels=labels,
     )
@@ -99,17 +103,15 @@ async def run_tenant(tenant, tcfg, out_root):
     kcfg = tcfg.get("konf")
     if isinstance(kcfg, dict) and kcfg.get("enabled"):
         suffix = str(kcfg.get("suffix") or "-konf").strip() or "-konf"
-        kdir = os.path.join(out_root, client_id + suffix)
-        try:
-            res["konf"] = indexcore.build_index(
-                client_id, products, kdir, url_prefix, img_prefix,
-                only_available=bool(kcfg.get("only_available", True)),
-                min_ratio=float(kcfg.get("min_ratio", 0.5)),
-                scope=kcfg.get("scope") or None, labels=labels,
-            )
-        except Exception as e:  # noqa: BLE001 - a konf-index hibaja NEM viheti el a fo indexet
-            indexcore.write_error_manifest(kdir, client_id, f"konf-index: {e}")
-            res["konf"] = {"error": f"konf-index: {e}"}
+        res["konf"] = _konf_out(client_id, products, out_root, suffix, kcfg,
+                                url_prefix, img_prefix, labels)
+    # kfp0: tovabbi konf-kimenetek (pl. elonezeti termekkor: -konfpv), ugyanabbol a
+    # lekert adatbol. Ervenytelen/foglalt suffix csendben kimarad.
+    extra = [x for x in konf_extra_blocks(tcfg)]
+    if extra:
+        res["konf_extra"] = [
+            _konf_out(client_id, products, out_root, sfx, xc, url_prefix, img_prefix, labels)
+            for sfx, xc in extra]
 
     # ssq/1: OPCIONALIS harmadik kimenet - Qdrant-kollekcio a szerver-oldali keresonek
     # (GET /search/q). Ugyanabbol a `products` listabol, plusz API-hivas nelkul; alapbol
@@ -119,7 +121,7 @@ async def run_tenant(tenant, tcfg, out_root):
         qdir = os.path.join(out_root, client_id + qdrantout.SUFFIX)
         try:
             res["server"] = qdrantout.build(
-                client_id, products, out_root, url_prefix, img_prefix,
+                client_id, pub, out_root, url_prefix, img_prefix,
                 only_available=bool(scfg.get("only_available", False)),
                 min_ratio=float(scfg.get("min_ratio", 0.5)),
                 scope=scfg.get("scope") or None,
@@ -129,6 +131,63 @@ async def run_tenant(tenant, tcfg, out_root):
             indexcore.write_error_manifest(qdir, client_id, f"qdrant-index: {e}")
             res["server"] = {"error": f"qdrant-index: {e}"}
     return res
+
+
+def hide_params(products, names):
+    """kfp0: a `names` parameter-nevek kiszurese a rekordokbol (sekely masolat).
+    Ures/hibas lista -> az eredeti lista valtozatlanul (nincs masolas)."""
+    hide = {str(x).strip() for x in (names or []) if str(x).strip()} if isinstance(names, list) else set()
+    if not hide:
+        return products
+    out = []
+    for p in products:
+        ps = p.get("parameters")
+        if isinstance(ps, list):
+            p = dict(p)
+            p["parameters"] = [it for it in ps
+                               if not (isinstance(it, dict) and str(it.get("name") or "").strip() in hide)]
+        out.append(p)
+    return out
+
+
+_SFX_OK = set("abcdefghijklmnopqrstuvwxyz0123456789")
+_SFX_RESERVED = {"-konf", "-q"}
+
+
+def konf_extra_blocks(tcfg):
+    """kfp0: search_config.konf_extra -> [(suffix, blokk)] az ervenyes, bekapcsolt
+    elemekre. Suffix: '-' + 2-12 kisbetu/szam, nem foglalt, nem ismetlodo."""
+    out, seen = [], set()
+    lst = tcfg.get("konf_extra") if isinstance(tcfg, dict) else None
+    if not isinstance(lst, list):
+        return out
+    for xc in lst[:4]:
+        if not isinstance(xc, dict) or not xc.get("enabled"):
+            continue
+        sfx = str(xc.get("suffix") or "").strip().lower()
+        body = sfx[1:]
+        if (not sfx.startswith("-") or not (2 <= len(body) <= 12)
+                or any(ch not in _SFX_OK for ch in body)
+                or sfx in _SFX_RESERVED or sfx in seen):
+            continue
+        seen.add(sfx)
+        out.append((sfx, xc))
+    return out
+
+
+def _konf_out(client_id, products, out_root, suffix, kcfg, url_prefix, img_prefix, labels):
+    """Egy konf-kimenet (scope-olt index). Hibaja NEM viheti el a fo indexet."""
+    kdir = os.path.join(out_root, client_id + suffix)
+    try:
+        return indexcore.build_index(
+            client_id, products, kdir, url_prefix, img_prefix,
+            only_available=bool(kcfg.get("only_available", True)),
+            min_ratio=float(kcfg.get("min_ratio", 0.5)),
+            scope=kcfg.get("scope") or None, labels=labels,
+        )
+    except Exception as e:  # noqa: BLE001
+        indexcore.write_error_manifest(kdir, client_id, f"konf-index: {e}")
+        return {"error": f"konf-index: {e}", "suffix": suffix}
 
 
 def effective_config(tenant, filecfg):

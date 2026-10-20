@@ -131,17 +131,34 @@ async def get_config(session: Any, client_id: str) -> dict[str, Any]:
     return cfg if cfg else _konfcfg().load_file_config(client_id)
 
 
+def draft_overlay(cfg: dict[str, Any]) -> dict[str, Any] | None:
+    """kfp0: a konf_config.draft (tervezet) raepitve az elo configra, sekelyen.
+    Nincs tervezet -> None. A tervezetet CSAK az elonezet kéri (?draft=1)."""
+    d = cfg.get("draft") if isinstance(cfg, dict) else None
+    if not isinstance(d, dict) or not d:
+        return None
+    out = {k: v for k, v in cfg.items() if k != "draft"}
+    out.update({k: v for k, v in d.items() if k != "draft"})
+    return out
+
+
 @router.get("/konf/settings")
 async def konf_settings(
     client_id: str = Query("", max_length=64),
+    draft: int = Query(0, ge=0, le=1),
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """A widget rulesetje. Ismeretlen/kikapcsolt tenantnal enabled:false valasz."""
+    """A widget rulesetje. Ismeretlen/kikapcsolt tenantnal enabled:false valasz.
+    kfp0: ?draft=1 -> a tervezet-config (elonezet), cache nelkul."""
     cid = (client_id or "").strip().lower()
-    body = _konfcfg().normalize_ruleset(await get_config(session, cid))
+    raw = await get_config(session, cid)
+    eff = draft_overlay(raw) if draft else None
+    body = _konfcfg().normalize_ruleset(eff if eff is not None else raw)
     body["tenant"] = cid
+    body["draft"] = eff is not None
     body["popular"] = await popular_skus(session, cid) if body.get("enabled") else []
-    return JSONResponse(body, headers={"Cache-Control": f"public, max-age={CACHE_SECONDS}"})
+    cc = "no-store" if draft else f"public, max-age={CACHE_SECONDS}"
+    return JSONResponse(body, headers={"Cache-Control": cc})
 
 
 def _meta_int(v: Any, lo: int = 0, hi: int = 10**9) -> int:

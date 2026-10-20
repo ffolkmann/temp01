@@ -92,8 +92,11 @@ def _int(v, lo, hi, default):
     return int(max(lo, min(hi, n)))
 
 
-def norm_cond(c, with_w=False):
-    """Egy feltetel tisztitasa; ervenytelen -> None."""
+def norm_cond(c, with_w=False, _nested=False):
+    """Egy feltetel tisztitasa; ervenytelen -> None.
+    kfp0: boost-feltetelnel (with_w) opcionalis `fallback` lista - ha a termeknek
+    NINCS adata a feltetel parameterere/mezojere, a widget ezeket ertekeli helyette
+    ('ha nincs adat, akkor...'). Egy szint mely, tovabbi fallback nem lehet."""
     if not isinstance(c, dict):
         return None
     if "param" in c:
@@ -133,6 +136,14 @@ def norm_cond(c, with_w=False):
         out["value"] = s
     if with_w:
         out["w"] = _int(c.get("w"), 0, 1000, 0)
+        if not _nested and isinstance(c.get("fallback"), list):
+            fb = []
+            for x in c.get("fallback")[:MAX_CONDS]:
+                n = norm_cond(x, with_w=True, _nested=True)
+                if n is not None:
+                    fb.append(n)
+            if fb:
+                out["fallback"] = fb
     return out
 
 
@@ -162,6 +173,39 @@ def _norm_option(o):
     b = _norm_conds(o.get("boost"), with_w=True)
     if b:
         out["boost"] = b
+    if o.get("exclusive"):           # kfp0: masik valasszal nem kombinalhato ("Nincs...")
+        out["exclusive"] = True
+    g = _goto(o.get("goto"))         # kfp0: ajanlas helyett tovabbvezetes
+    if g:
+        out["goto"] = g
+    return out
+
+
+def _goto(g):
+    """kfp0: opcio-szintu tovabbvezetes {url, label, title, text, lead}. Ervenytelen -> None."""
+    if not isinstance(g, dict):
+        return None
+    out = {"url": _http_url(g.get("url")), "label": _s(g.get("label"), 80),
+           "title": _s(g.get("title"), 160), "text": _s(g.get("text"), 400),
+           "lead": bool(g.get("lead"))}
+    if not out["url"] and not out["lead"]:
+        return None
+    return out
+
+
+def _show_if(v):
+    """kfp0: feltetel-kerdes. [{"q": kerdes-id, "any": [opcio-id,...]}] - a kerdes
+    akkor latszik, ha BARMELYIK elem teljesul (VAGY)."""
+    out = []
+    if isinstance(v, list):
+        for e in v[:6]:
+            if not isinstance(e, dict):
+                continue
+            qid = _s(e.get("q"), 40)
+            anys = e.get("any") if isinstance(e.get("any"), list) else [e.get("any")]
+            anys = [_s(x, 40) for x in anys if _s(x, 40)][:MAX_OPTIONS]
+            if qid and anys:
+                out.append({"q": qid, "any": anys})
     return out
 
 
@@ -223,6 +267,13 @@ def _norm_question(q):
     help_txt = _s(q.get("help"), MAX_HELP)
     if help_txt:
         out["help"] = help_txt
+    si = _show_if(q.get("show_if"))     # kfp0
+    if si:
+        out["show_if"] = si
+    if out["type"] == "multi":          # kfp0: legfeljebb ennyi valasz (0 = korlatlan)
+        mx = _int(q.get("max"), 0, MAX_OPTIONS, 0)
+        if mx:
+            out["max"] = mx
     return out
 
 
@@ -299,6 +350,9 @@ def normalize_ruleset(cfg):
             "boost": _sku_list(prior_in.get("boost")),
             "stock_w": _int(prior_in.get("stock_w"), 0, 1000, 25),
             "sale_w": _int(prior_in.get("sale_w"), 0, 1000, 8),
+            # kfp0: preferalt (uzleti) gepek feltetele + kuszob a tiered rangsorhoz
+            "preferred": _norm_conds(prior_in.get("preferred")),
+            "preferred_ratio": max(0.0, min(1.0, _num(prior_in.get("preferred_ratio")) or 0.95)),
         },
         "result": {
             "top_n": _int(res_in.get("top_n"), 1, 12, 4),
@@ -308,6 +362,10 @@ def normalize_ruleset(cfg):
             "sorts": _sorts(res_in.get("sorts")),
             "sort_default": _sort_key(res_in.get("sort_default")) or "ajanlott",
             "pin_label": _s(res_in.get("pin_label"), 30) or "Kiemelt",
+            # kfp0: "tiered" = kizaras -> alkalmassag (kerdes-boostok) -> uzleti
+            # (keszlet/akcio/pin/sku-boost csak holtversenyben) + preferalt-csere.
+            # Ures = a regi (k2-11) rangsor, bitre ugyanugy.
+            "rank": "tiered" if _s(res_in.get("rank"), 12).lower() == "tiered" else "",
         },
         "stock": {
             "only_available": bool(stock_in.get("only_available")),
