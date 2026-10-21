@@ -39,6 +39,11 @@ async def _m123_lead_notify_start() -> None:
         start_loop()
     except Exception:  # noqa: BLE001
         logging.getLogger("cx.leadnotify").exception("m123 lead-notify inditas hiba")
+    try:  # m127: lexmatch katalogus-bemelegites (restart utan az elso kerdeseknel is eljen a m103)
+        from app.services.lexmatch import start_warmup
+        start_warmup()
+    except Exception:  # noqa: BLE001
+        logging.getLogger("cx.lexmatch").exception("m127 lexmatch bemelegites inditas hiba")
 
 
 @app.get("/health")

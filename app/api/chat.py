@@ -367,6 +367,18 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
             logger.info("m104 sku jeloles: %d client=%s", _n104, req.client_id)
     except Exception:  # noqa: BLE001 - a jeloles hibaja ne torje a chatet
         logger.exception("m104 sku jeloles hiba")
+    # m127/c: kiegeszito-kerdes a megnyitott termekhez ("hol talalok hozza tonert", "milyen tolto
+    # kell ehhez") - az embed_input (termeknev + uzenet) a termek sajat testvereit hozza, a
+    # kiegeszito kimarad -> masodik dense kereses a termeknev NELKUL (marka + uzenet), max 3
+    # termek a pool vegere. Fail-safe.
+    try:
+        if ctx.page_is_product and ctx.page_product_name:
+            from app.services.accessoryq import accessory_hits as _acc127
+            _n127, hits = await _acc127(hits, message, req.client_id, current, hide_oos=_hide_oos)
+            if _n127:
+                logger.info("m127 kiegeszito-kereses: %d client=%s", _n127, req.client_id)
+    except Exception:  # noqa: BLE001 - a kiegeszito-kereses hibaja ne torje a chatet
+        logger.exception("m127 kiegeszito-kereses hiba")
     # élő ár/készlet a megnyitott termékre (plan.live_api-gated, csak termékoldalon);
     # FAIL-SAFE: hiba/None -> a synced adatlap marad
     live = None

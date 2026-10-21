@@ -37,6 +37,8 @@ _MAX_QTOK = 8
 # client_id -> (epites ideje, [(id, name_fold, sku_norm, available), ...])
 _cache: dict = {}
 _building: set = set()
+_tasks: dict = {}       # m127: a hatter-epites taskjai (referencia, hogy ne gyujtse be a GC)
+_COLD_WAIT_S = 2.5      # m127: hideg katalogusnal ennyit varunk az elso epitesre
 
 STOP = set("""a az es egy van vannak keresek keresnek kerestem keresem keresnem kellene kell kene szeretnek
 szeretnem szeretne szeretnenk milyen olyan olyat hozza ehhez ahhoz nektek nalatok nalad nalunk is meg ami amit
@@ -86,26 +88,76 @@ def query_tokens(message):
         elif len(t) < 3:
             continue
         out.append(t)
-    return out[:_MAX_QTOK]
+    return (join_tokens(message) + out)[:_MAX_QTOK]  # m127: a kod-jeloltek elol
+
+
+# m127 (K2, d21c): a latogato a kodot gyakran SZOKOZZEL irja ("RAC 351", "YT 82992", "KS 846"),
+# a katalogusban viszont egybe / kotojellel all ("RAC351", "YT-82992"). A "351" onmagaban 3 jegyu,
+# kiesett; a nev-agban a "351" csak onallo tokenkent illeszkedett. Szomszedos betus (2-5) +
+# szammal kezdodo tokenpar -> EGY kod-jelolt a sku-agban (pontos/vegzodes) es a nev-agban.
+_JOIN_A = re.compile(r"^[A-Za-z]{2,5}$")
+_JOIN_B = re.compile(r"^[0-9][A-Za-z0-9./-]{1,11}$")
+_JOIN_GAP = re.compile(r"^[ \t-]{1,2}$")
+
+
+def _sku_candidates(message):
+    """[(normalizalt, ahogy a latogato irta), ...]: egyedi kodszeru tokenek + m127 osszefuzott parok."""
+    out, seen = [], set()
+    msg = str(message or "")
+    mts = list(_SKU_RAW.finditer(msg))
+
+    def _ok(n, start, end):
+        digits = sum(c.isdigit() for c in n)
+        if len(n) < 5 or digits < 3:
+            return False
+        if n.isdigit() and len(n) >= 9:  # telefonszam / rendelesszam-gyanu
+            return False
+        if n.isdigit() and (_MONEY.match(msg, end) or msg[max(0, start - 1):start] == "#"):
+            return False  # m104: osszeg ("20000 ft-om") vagy rendelesszam ("#30781")
+        return True
+
+    for i, mt in enumerate(mts):
+        raw = mt.group(0)
+        n = norm_sku(raw)
+        if _ok(n, mt.start(), mt.end()) and n not in seen:
+            seen.add(n)
+            out.append((n, raw.strip()))
+        if i + 1 < len(mts):  # m127: osszefuzott par ("RAC 351")
+            nx = mts[i + 1]
+            if (_JOIN_A.match(raw) and _JOIN_B.match(nx.group(0))
+                    and _JOIN_GAP.match(msg[mt.end():nx.start()])
+                    and fold(raw) not in STOP and not _MONEY.match(msg, nx.end())):
+                j = norm_sku(raw + nx.group(0))
+                if _ok(j, mt.start(), nx.end()) and j not in seen:
+                    seen.add(j)
+                    out.append((j, msg[mt.start():nx.end()].strip()))
+    return out
 
 
 def sku_tokens(message):
-    """Kodszeru tokenek normalizalva: >=3 szamjegy, >=5 alnum karakter, nem telefonszam-szeru."""
+    """Kodszeru tokenek normalizalva: >=3 szamjegy, >=5 alnum karakter, nem telefonszam-szeru.
+    m127: az osszefuzott par ("RAC 351" -> rac351) is kod-jelolt."""
+    return [n for n, _ in _sku_candidates(message)][:4]
+
+
+def join_tokens(message):
+    """m127: szomszedos betus (2-5) + szammal kezdodo token 'a~b' alakban ("RAC 351" -> "rac~351").
+    A nev-agban EGY kodkent illesztjuk (a nevben "RAC351", "RAC-351" vagy "RAC 351"), es csak
+    akkor szamit, ha a katalogusban elofordul (pick(): df > 0) - akkor a ket reszet kivaltja."""
+    toks = list(_TOK.finditer(fold(message)))
     out = []
-    msg = str(message or "")
-    for mt in _SKU_RAW.finditer(msg):
-        raw = mt.group(0)
-        n = norm_sku(raw)
-        digits = sum(c.isdigit() for c in n)
-        if len(n) < 5 or digits < 3:
+    for a, b in zip(toks, toks[1:]):
+        ta, tb = a.group(0), b.group(0)
+        if not (2 <= len(ta) <= 5 and ta.isalpha() and tb[0].isdigit()) or ta in STOP:
             continue
-        if n.isdigit() and len(n) >= 9:  # telefonszam / rendelesszam-gyanu
+        if not _JOIN_GAP.match(a.string[a.end():b.start()]) or _MONEY.match(a.string, b.end()):
             continue
-        if n.isdigit() and (_MONEY.match(msg, mt.end()) or msg[max(0, mt.start() - 1):mt.start()] == "#"):
-            continue  # m104: osszeg ("20000 ft-om") vagy rendelesszam ("#30781")
-        if n not in out:
-            out.append(n)
-    return out[:3]
+        if len(ta) + len(tb) < 5 or sum(c.isdigit() for c in tb) < 3:
+            continue
+        t = ta + "~" + tb
+        if t not in out:
+            out.append(t)
+    return out
 
 
 def _stem(t):
@@ -117,7 +169,12 @@ def _stem(t):
 def _matcher(t):
     """A kerdes-token illesztoje egy foldolt nevre.
     Szamos token: onallo tokenkent (80a, 2kg, 3f); rovid (<=4): szokezdet;
-    hosszabb: a to (toldalek nelkul) resz-szokent is (osszetett szo: horgaszfotel)."""
+    hosszabb: a to (toldalek nelkul) resz-szokent is (osszetett szo: horgaszfotel).
+    m127: 'a~b' osszefuzott kod -> a nevben egybe, kotojellel/ponttal vagy szokozzel."""
+    if "~" in t:
+        a, b = t.split("~", 1)
+        rx = re.compile(r"(?<![a-z0-9])" + re.escape(a) + r"[ ./-]?" + re.escape(b) + r"(?![a-z0-9])")
+        return lambda nf: a in nf and rx.search(nf) is not None
     st = _stem(t)
     if not _has_digit(t) and len(st) >= 6:
         return lambda nf: st in nf
@@ -166,6 +223,9 @@ def pick(entries, message, pool_names, hide_oos=False, exclude_ids=(), sku_oos=F
     idx = {t: [i for i, e in enumerate(entries) if matchers[t](e[1])] for t in qt}
     df = {t: len(v) for t, v in idx.items()}
     known = [t for t in qt if df[t] > 0]
+    for t in [t for t in known if "~" in t]:  # m127: az illeszkedo osszefuzott kod kivaltja a reszeit
+        a, b = t.split("~", 1)
+        known = [k for k in known if k not in (a, b)]
     info["qt"] = qt
     info["df"] = df
     if not known:
@@ -248,10 +308,57 @@ def _catalog_nowait(client_id):
     if not hit or (time.monotonic() - hit[0]) >= _TTL:
         if client_id not in _building:
             try:
-                asyncio.get_running_loop().create_task(_build_guarded(client_id))
+                _tasks[client_id] = asyncio.get_running_loop().create_task(_build_guarded(client_id))
             except RuntimeError:
                 pass
     return hit[1] if hit else None
+
+
+async def _wait_cold(client_id):
+    """m127: hideg (meg sosem epult, restart utani) katalogusnal legfeljebb _COLD_WAIT_S-ot varunk
+    a mar futo hatter-epitesre; ha nem keszul el, None (a pool valtozatlan, az epites tovabb fut).
+    Lelet (d21c): 30 nap alatt 26 "nincs" valasz mogott ma nevben/skuban egyezo termek van."""
+    deadline = time.monotonic() + _COLD_WAIT_S
+    while time.monotonic() < deadline:
+        hit = _cache.get(client_id)
+        if hit:
+            return hit[1]
+        if client_id not in _building and _tasks.get(client_id) is None:
+            return None
+        await asyncio.sleep(0.1)
+    hit = _cache.get(client_id)
+    return hit[1] if hit else None
+
+
+async def _warmup_from_db():
+    await asyncio.sleep(5)
+    try:
+        from sqlalchemy import text
+        from app.core.db import SessionLocal
+        async with SessionLocal() as s:
+            rows = (await s.execute(text(
+                "SELECT client_id FROM tenants WHERE active ORDER BY client_id"))).scalars().all()
+            await s.commit()
+    except Exception:  # noqa: BLE001
+        logger.exception("m127 lexmatch: bemelegites tenant-lista hiba")
+        return
+    n = 0
+    for cid in [str(r) for r in rows]:
+        try:
+            await _build_guarded(cid)
+            n += 1
+        except Exception:  # noqa: BLE001
+            pass
+    logger.info("m127 lexmatch: bemelegites kesz n=%d", n)
+
+
+def start_warmup():
+    """App startupjabol (futo event loop kell): minden aktiv tenant katalogusa a hatterben, hogy a
+    m103/m104/m117/m126 agak az ELSO kerdeseknel is eljenek (deploy/restart utan eddig None volt)."""
+    try:
+        return asyncio.get_running_loop().create_task(_warmup_from_db())
+    except RuntimeError:
+        return None
 
 
 async def _fetch_points(ids):
@@ -296,6 +403,8 @@ async def augment(hits, message, client_id, hide_oos=False, wait=False, stats=No
             stats["skip"] = why
         return hits
     ents = await ensure_catalog(client_id) if wait else _catalog_nowait(client_id)
+    if ents is None and not wait:  # m127: hideg katalogus -> rovid varakozas az epitesre
+        ents = await _wait_cold(client_id)
     if not ents:
         return hits
     pool_names, have = [], set()
@@ -342,15 +451,10 @@ async def augment(hits, message, client_id, hide_oos=False, wait=False, stats=No
 # kodjat mutatjuk: a belso, szallito-elotagos sku (pl. "tolnagro-143167") nem kerul ki.
 
 def _codes(message):
-    """[(normalizalt, ahogy a latogato irta), ...] a sku_tokens() feltetelei szerint."""
-    want = sku_tokens(message)
-    out, seen = [], set()
-    for raw in _SKU_RAW.findall(str(message or "")):
-        n = norm_sku(raw)
-        if n in want and n not in seen:
-            seen.add(n)
-            out.append((n, raw.strip()))
-    return out
+    """[(normalizalt, ahogy a latogato irta), ...] a sku_tokens() feltetelei szerint
+    (m127: az osszefuzott par raw alakja a latogato teljes szava, pl. "RAC 351")."""
+    want = set(sku_tokens(message))
+    return [(n, raw) for n, raw in _sku_candidates(message) if n in want]
 
 
 def sku_match(sku_raw, message):
