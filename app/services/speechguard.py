@@ -8,7 +8,7 @@ alapjan" (2), "a kapott/megadott (termek)adatok kozott" (3). A vevo ezt ugy olva
 stilus-hibara determinisztikus utofeldolgozas kell, a prompt nem eleg.
 
 Szabaly (PURE, stdlib-only, fail-safe):
-- a fordulat ("a mostani/jelenlegi/fenti talalataim kozott", "a rendelkezesemre allo
+- a fordulat ("a mostani/jelenlegi/fenti talalataim/ajanlataim kozott", "a rendelkezesemre allo
   X kozott/alapjan", "a keresesem alapjan/soran", "a kapott/megadott (termek)adatok
   kozott/alapjan", "az adataim kozott") kikerul a mondatbol;
 - ha a mondat enelkul mar nem mondja ki, HOL nincs a termek (nincs benne webaruhaz /
@@ -33,6 +33,7 @@ _ADJ = r"(?:(?:mostani|jelenlegi|fenti|eddigi|aktu[aá]lis)\s+)?"
 _CORE = (
     r"(?:"
     r"tal[aá]lat(?:aim|aink)"
+    r"|aj[aá]nlat(?:aim|aink)"
     r"|keres[eé]s(?:em|[eü]nk)"
     r"|rendelkez[eé]s(?:em|[uü]nk)re\s+[aá]ll[oó]\s+(?:term[eé]k-?)?(?:adatok|inform[aá]ci[oó]k|term[eé]kek|tal[aá]latok|lista|adatb[aá]zis)"
     r"|(?:kapott|megadott|be[eé]rkezett|(?:most\s+)?el[eé]rhet[oő])\s+(?:term[eé]k-?)?(?:adatok|inform[aá]ci[oó]k|lista|tal[aá]latok)"
@@ -97,7 +98,7 @@ def rewrite(reply: str) -> tuple[str, int]:
             rest = (out[s0:m.start()] + " " + out[m.end():s1])
             ends_with_place = m.group(0).strip().lower().endswith(("alapján", "alapjan", "során", "soran", "szerint"))
             core = _fold(m.group(0))
-            product_like = bool(re.search(r"talalat|termekek|adataim|adataink", core))
+            product_like = bool(re.search(r"talalat|ajanlat|termekek|adataim|adataink", core))
             if not ends_with_place and product_like and not _PLACE.search(_fold(rest)) and m.re is _PHRASE:
                 repl = "a kínálatban"
             else:

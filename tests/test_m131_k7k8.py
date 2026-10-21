@@ -151,6 +151,13 @@ def test_k8_behuzott_lista_erintetlen():
     assert n == 1 and "\n  - alpont  (két szóköz)\n" in out and out.endswith("Nem látom a kínálatban.")
 
 
+def test_k8_ajanlataim_kozott_m131b():
+    # elo E2E lelet (d21h, fishingoutlet): "nem latok a webaruhazban az ajanlataim kozott"
+    r = "Szia! 🎣 Kis szákot most nem látok a webáruházban az ajánlataim között, de ez nem jelenti azt, hogy nincs."
+    out, n = sg.rewrite(r)
+    assert n == 1 and "ajánlataim" not in out and "nem látok a webáruházban, de" in out
+
+
 def test_k8_fail_safe():
     assert sg.rewrite(None) == ("", 0)
     assert sg.rewrite("") == ("", 0)
