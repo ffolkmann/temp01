@@ -166,15 +166,53 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
                             {"order_id": order.order_id})
             return ChatResponse(reply=ORDER_LOOKUP_BLOCKED_REPLY, action=None)
 
+        # m128 (K4): rendelesszam-ALAK orseg (d21d: 90 nap, 57 nem matched lekeresbol ~60% mar
+        # alakra sem rendelesszam - 4 jegy, GLS-csomagszam, csonka '21196', telefon-darab, irsz -,
+        # es mind a "ha tartozik hozza, elkuldtuk" sablont kapta; volt, aki 3 sessionen at). A tenant
+        # matched rendelesszamaibol tanult alak (events, fail-open): rossz alak -> NINCS API-hivas,
+        # format-tipp; kotojel nelkuli Unas-szam -> kotojeles; 2. sikertelen proba -> lead-ajanlat.
+        _of128 = None
+        try:
+            from app.services import orderformat as _of128
+            _shapes128 = await _of128.shapes_for(session, req.client_id)
+            _v128, _oid128 = _of128.check(order.order_id, _shapes128,
+                                          platform=str(getattr(tenant, "platform", "") or ""))
+            if _v128 == "fix":
+                logger.info("m128 orderformat: alak-javitas %s -> %s client=%s",
+                            order.order_id, _oid128, req.client_id)
+                order.order_id = _oid128
+            elif _v128 == "mismatch":
+                _n128 = await rl_register_failure(rl_key, ORDER_LOOKUP_WINDOW)
+                _reply128 = _of128.mismatch_reply(order.order_id, _shapes128)
+                _act128 = None
+                if _n128 >= 2:
+                    _reply128 += _of128.LEAD_OFFER
+                    _act128 = "collect_lead"
+                logger.info("m128 orderformat: rossz alak id=%s n=%d client=%s",
+                            order.order_id, _n128, req.client_id)
+                await log_turn(session, req.client_id, req.session_id, message, _reply128, _act128)
+                await log_event(session, req.client_id, req.session_id, "order_lookup_mismatch",
+                                {"order_id": order.order_id, "n": _n128})
+                return ChatResponse(reply=_reply128, action=_act128)
+        except Exception:  # noqa: BLE001 - az orseg hibaja ne torje a rendeles-agat
+            logger.exception("m128 orderformat hiba")
         reply, matched = await handle_order_status_ex(tenant, order)
+        _act128b = None
         if matched:
             await rl_clear(rl_key)          # a johiszemu vevot ne buntessuk
         else:
-            await rl_register_failure(rl_key, ORDER_LOOKUP_WINDOW)
-        await log_turn(session, req.client_id, req.session_id, message, reply)
+            _n128b = await rl_register_failure(rl_key, ORDER_LOOKUP_WINDOW)
+            try:  # m128: a 2. sikertelen probalkozas utan lead-ajanlat (audit K4)
+                if _of128 is not None and int(_n128b or 0) >= 2:
+                    reply = reply + _of128.LEAD_OFFER
+                    _act128b = "collect_lead"
+                    logger.info("m128 orderformat: lead-ajanlat n=%d client=%s", _n128b, req.client_id)
+            except Exception:  # noqa: BLE001
+                _act128b = None
+        await log_turn(session, req.client_id, req.session_id, message, reply, _act128b)
         await log_event(session, req.client_id, req.session_id, "order_lookup",
                         {"order_id": order.order_id, "matched": matched})
-        return ChatResponse(reply=reply, action=None)
+        return ChatResponse(reply=reply, action=_act128b)
 
     # 2) configurator (csak configurator_shop tenantnál)
     cfg = detect_configurator(message, tenant)

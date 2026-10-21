@@ -31,6 +31,9 @@ _INTENT_WORDS = re.compile(
     r"(rendel|csomag|szállít|hol tart|hol van|státus|status|track|"
     r"nyomkövet|mikor érkez|feldolgoz)"
 )
+# m128 (K4): a "2018-2024" / "2026-7317" alaku evszam-tartomany / datum nem rendelesszam
+# (d21d: copygo termekleiras-bemasolasbol lett "rendeles-lekeres")
+_YEAR_RANGE = re.compile(r"^(19|20)\d{2}-\d{1,4}$")
 
 
 @dataclass
@@ -123,7 +126,7 @@ def detect_order_intent(message: str, tenant: Tenant, live_api: bool) -> OrderIn
         order_id = m.group(1)
     if not order_id:
         m = re.search(r"\b(\d{3,6}-\d{4,9})\b", omsg)
-        if m:
+        if m and not _YEAR_RANGE.match(m.group(1)):  # m128
             order_id = m.group(1)
     if not order_id:
         m = re.search(r"(?:rendel\w*|order|azonos\w*)\D{0,12}(\d{1,7})", olow)
