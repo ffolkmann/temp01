@@ -329,6 +329,20 @@ async def _save_config(session: AsyncSession, row_in: dict[str, Any]) -> dict[st
         else:
             hk = [str(x).strip()[:120] for x in hk if str(x).strip()][:100] or None
         row["handoff_keywords"] = hk
+    # m124: handoff_replies - JSON-szoveg vagy lista; ures -> NULL; hibas/ismeretlen tipus -> nem modositjuk
+    if "handoff_replies" in row:
+        hr = row["handoff_replies"]
+        if isinstance(hr, str):
+            try:
+                hr = json.loads(hr) if hr.strip() else None
+            except Exception:  # noqa: BLE001
+                hr = False
+        if hr is None or (isinstance(hr, list) and not hr):
+            row["handoff_replies"] = None
+        elif isinstance(hr, list):
+            row["handoff_replies"] = hr
+        else:
+            row.pop("handoff_replies", None)
     # m52: quick_questions - soronkenti szoveg vagy JSON-tomb -> jsonb lista; ures -> NULL
     if "quick_questions" in row:
         row["quick_questions"] = _parse_quick_questions(row["quick_questions"])

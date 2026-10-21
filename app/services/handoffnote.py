@@ -66,3 +66,45 @@ def asks_human(message) -> bool:
 def reply_for(message, default: str) -> str:
     """m120: az e-mailes atadas kanned valasza - ember/robot-kerdesnel az oszinte valtozat."""
     return HONEST_REPLY if asks_human(message) else default
+
+
+# --- m124: tenantonkenti atadas-valasz (tenants.handoff_replies) ---
+import unicodedata as _ud  # noqa: E402
+
+
+def _fold124(s) -> str:
+    s = str(s or "").lower()
+    s = _ud.normalize("NFD", s)
+    return "".join(c for c in s if not _ud.combining(c))
+
+
+def tenant_reply(message, rules, default: str) -> str:
+    """m124: a tenant sajat atadas-valasza (tenants.handoff_replies, jsonb lista).
+
+    Elem: {"match": "<reszlet>", "reply": "<szoveg>"}; match "*" = minden atadasra.
+    A konkret match (ekezet-strip + kisbetu reszlet-egyezes, min. 3 karakter) elobb nyer, mint a "*".
+    Orseg: a valasz 20..800 karakter es tartalmazza a HANDOFF_MARK-ot (kulonben az m119
+    rendszer-teny nem kapcsolna be) - kulonben a default marad.
+    Kivalto: notebookstore 'Céges érdeklődés' gomb (Laci, 10-21) - atadaskor kerdezzen ra a termekre/darabszamra.
+    """
+    if not isinstance(rules, list) or not rules:
+        return default
+    a = _fold124(message)
+    star = None
+    for r in rules:
+        if not isinstance(r, dict):
+            continue
+        rep = r.get("reply")
+        m = str(r.get("match") or "").strip()
+        if not isinstance(rep, str) or not (20 <= len(rep.strip()) <= 800):
+            continue
+        if HANDOFF_MARK not in rep.lower():
+            continue
+        if m == "*":
+            if star is None:
+                star = rep.strip()
+            continue
+        k = _fold124(m)
+        if len(k) >= 3 and k in a:
+            return rep.strip()
+    return star or default

@@ -241,11 +241,21 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
 
         # e-mailes handoff (eredeti viselkedés / fallback)
         # m120: ember/robot-kerdesnel oszinte valasz-eleje (Feco 10-15); fail-safe -> HANDOFF_REPLY
-        _ho_reply = HANDOFF_REPLY
+        # m124: tenantonkenti atadas-valasz (tenants.handoff_replies); az m120 oszinte valtozat elsobbseget kap
+        _ho_base = HANDOFF_REPLY
+        try:
+            from app.services.handoffnote import tenant_reply as _m124_tenant_reply
+            _ho_base = _m124_tenant_reply(message, getattr(tenant, "handoff_replies", None), HANDOFF_REPLY)
+            if _ho_base != HANDOFF_REPLY:
+                logger.info("m124 tenant atadas-valasz client=%s", req.client_id)
+        except Exception:  # noqa: BLE001
+            _ho_base = HANDOFF_REPLY
+            logger.exception("m124 atadas-valasz hiba")
+        _ho_reply = _ho_base
         try:
             from app.services.handoffnote import reply_for as _m120_reply_for
-            _ho_reply = _m120_reply_for(message, HANDOFF_REPLY)
-            if _ho_reply != HANDOFF_REPLY:
+            _ho_reply = _m120_reply_for(message, _ho_base)
+            if _ho_reply != _ho_base:
                 logger.info("m120 oszinte atadas-valasz client=%s", req.client_id)
         except Exception:  # noqa: BLE001
             logger.exception("m120 atadas-valasz hiba")
