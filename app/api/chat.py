@@ -659,6 +659,38 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
                            len(str(raw or "")), str(raw or "")[-300:], req.client_id)
     except Exception:  # noqa: BLE001 - a naplozas sose torje a valaszt
         pass
+    # m129 (K5): (a) ures reply az envelope-ban (a tartalek "Hagyd meg az e-mail-cimed" valasz,
+    # 30 nap: 9 valodi vasarloi kerdesre) -> EGY ujraproba ugyanazzal a prompttal, mint a m101n1
+    # az ures text-blokknal; (b) a parse_reply m129-mentesei a logba; (c) max_tokens-nel
+    # elvagott zaro markdown-link levagasa (30 nap: ~10). Fail-safe: hiba -> valtozatlan.
+    try:
+        from app.services.parse_reply import _FALLBACK as _prfb129
+        from app.services.parse_reply import trim_dangling_link as _tdl129
+        if parsed.reply == _prfb129:
+            logger.warning("m129 ures reply -> ujraproba client=%s", req.client_id)
+            _raw129 = await generate_reply(system_prompt, req.history, message,
+                                           model=getattr(tenant, "chat_model", None))
+            _p129 = parse_reply(_raw129)
+            if _p129.reply != _prfb129:
+                logger.warning("m129 ujraproba sikeres (len=%d) client=%s", len(_p129.reply), req.client_id)
+                parsed = _p129
+            else:
+                logger.warning("m129 ujraproba is ures: raw_len=%d tail=%r client=%s",
+                               len(str(_raw129 or "")), str(_raw129 or "")[-200:], req.client_id)
+        if getattr(parsed, "note", None) in ("m129q", "m129t", "m129e"):
+            logger.warning("m129 parse-mentes %s: raw_len=%d client=%s",
+                           parsed.note, len(str(raw or "")), req.client_id)
+        _new129, _cut129 = _tdl129(parsed.reply)
+        if _cut129:
+            logger.warning("m129 csonka link levagva: %d -> %d kar client=%s",
+                           len(parsed.reply), len(_new129), req.client_id)
+            try:
+                parsed.reply = _new129
+            except Exception:  # noqa: BLE001 - frozen dataclass eseten
+                from dataclasses import replace as _dc_replace129
+                parsed = _dc_replace129(parsed, reply=_new129)
+    except Exception:  # noqa: BLE001 - az or hibaja sose torje a valaszt
+        logger.exception("m129 or hiba client=%s", req.client_id)
     # m116: URLAP-IGERET OSSZHANG. A prompt kiiratja a modellel, hogy "a megjeleno urlapon
     # add meg ...", es kozben order_form/collect_lead flaget ker; a modell neha csak a
     # mondatot irja meg -> a latogato nem letezo urlapot keres. Merve (d13b, 30 nap, 3821
