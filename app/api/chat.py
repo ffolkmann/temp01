@@ -390,13 +390,13 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
     _rnote = STOCK_NOTES.get(_rmode, "")
     # m77: ismetelt ar-kerdesnel a modell a sajat korabbi (elavult) valaszat masolta a
     # friss kontextus elleneben — history jelenleteben explicit feluliras a jegyzetben.
-    if req.history and _rnote:
-        _rnote += (
-            " FIGYELEM: ha a beszelgetes korabbi valaszaiban mas termeket neveztel a"
-            " legolcsobbnak/legjobbnak, az a valasz ELAVULT. Kizarolag a MOSTANI"
-            " # TUDASBAZIS talalataibol valassz, akkor is, ha ez ellentmond a korabbi"
-            " valaszodnak, es roviden jelezd, hogy pontositod a korabbi informaciot."
-        )
+    # m125: a m77 mondat csak az ar-szuperlativusz modokban (oos_guard-ban nem) - ott a
+    #       "pontositod a korabbi informaciot" minden follow-upon visszavonasra biztatott (K1)
+    try:
+        from app.services.retractguard import retrieval_note as _rn125
+        _rnote = _rn125(_rmode, _rnote, bool(req.history))
+    except Exception:  # noqa: BLE001
+        logger.exception("m125 retrieval_note hiba")
     system_prompt = build_system_prompt_parts(
         tenant, hits, current, coupons, ctx, live=live, shop_search=shop_hits,
         operator_online=op_online, retrieval_note=_rnote,
@@ -418,6 +418,21 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
             logger.info("m123 elerhetoseg-teny client=%s", req.client_id)
         except Exception:  # noqa: BLE001
             logger.exception("m123 elerhetoseg-teny hiba")
+    # m125 (K1): az elozo kor adat-blokkjai (Redis, session) + rendszer-teny a korabbi valaszokrol
+    #       a dinamikus reszbe -> a modell nem vonja vissza azt, amit a mostani szeletben nem lat.
+    _m125 = None
+    try:
+        from app.services import retractguard as _m125
+        if isinstance(system_prompt, tuple) and len(system_prompt) == 2:
+            _cur125 = _m125.extract_data(system_prompt[1])
+            _prev125 = await _m125.load_prev(get_redis(), req.client_id, req.session_id)
+            await _m125.save(get_redis(), req.client_id, req.session_id, _cur125, _prev125)
+            if _m125.has_assistant(req.history):
+                system_prompt = (system_prompt[0],
+                                 system_prompt[1] + _m125.prev_block(_prev125) + _m125.NOTE)
+                logger.info("m125 elozo-kor client=%s prev=%d", req.client_id, len(_prev125))
+    except Exception:  # noqa: BLE001
+        logger.exception("m125 elozo-kor hiba")
 
     try:
         raw = await generate_reply(system_prompt, req.history, message, model=getattr(tenant, "chat_model", None))
@@ -554,6 +569,26 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
                     raw = _sf87(_raw87 or raw, _allow87)
         except Exception:  # noqa: BLE001 — az orseg hibaja ne torje a valaszt
             pass
+
+        # m125 (K1): VISSZAVONAS-ORSEG - ha a kimenet megis visszavonja / 'pontositja' a korabbi
+        # valaszt, es a latogato nem jelezte, hogy valami nem stimmel -> egyszeri regen hinttel.
+        try:
+            if (_m125 is not None and _m125.has_assistant(req.history)
+                    and _m125.is_retraction(raw) and not _m125.user_disputes(message)):
+                logger.warning("m125 retract guard: visszavonas -> regen (client=%s)", req.client_id)
+                if isinstance(system_prompt, (tuple, list)) and len(system_prompt) == 2:
+                    _sp125 = (system_prompt[0], (system_prompt[1] or "") + _m125.HINT)
+                else:
+                    _sp125 = str(system_prompt) + _m125.HINT
+                _raw125 = await generate_reply(
+                    _sp125, req.history, message, model=getattr(tenant, "chat_model", None))
+                if _raw125 and str(_raw125).strip():
+                    logger.info("m125 retract guard: regen %s (client=%s)",
+                                "megis visszavon" if _m125.is_retraction(_raw125) else "tiszta",
+                                req.client_id)
+                    raw = _raw125
+        except Exception:  # noqa: BLE001 — az orseg hibaja ne torje a valaszt
+            logger.exception("m125 retract guard hiba")
     except Exception as _llm_err:  # noqa: BLE001 — a widget mindig kapjon választ
         logger.exception("LLM hívás hiba")
         _fb = _FALLBACK_BUSY if getattr(_llm_err, "status_code", None) == 529 else _FALLBACK
