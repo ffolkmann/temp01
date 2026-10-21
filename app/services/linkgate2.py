@@ -193,7 +193,9 @@ def keep_or_rebuild(term, message, dfx, shop=False):
     if toks and not any(is_stop(t) for t in toks) and any(catalog_word(t, df) for t in toks) \
             and not all(_ratio(t, dfx) > GENERIC_RATIO for t in toks):
         return term
-    return filter_term(term, dfx) if shop else topic_term(message, dfx)
+    if shop:  # a bolti kereso-kulcsszo csonkolt to is lehet ("pell") -> a kerdes termeknev-szavai a tartalek
+        return filter_term(term, dfx) or topic_term(message, dfx)
+    return topic_term(message, dfx)
 
 
 def gate_term(message, prev_user, term, dfx, topic=False, shop=False):

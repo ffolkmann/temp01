@@ -75,6 +75,9 @@ def test_shop_branch_filters_phrase():
                              "szia nemsokára érkezünk hozzatok federes bot", DFX, shop=True)
     assert not blk and t == "bot"
     assert lg.gate_term("Nem tudom át váltani", "", "nem tudom váltani", DFX, shop=True)[1]
+    # m126b: a bolti kereso csonkolt tovel dolgozik ("pell") -> a kerdes szava a tartalek
+    t, blk, _ = lg.gate_term("Pellet", "", "pell", DFX, shop=True)
+    assert not blk and t == "Pellet"
 
 
 def test_fail_open_without_catalog():
