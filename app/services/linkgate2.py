@@ -96,17 +96,17 @@ def is_stop(tok):
     return False
 
 
-def catalog_word(tok, df):
+def catalog_word(tok, df, min_df=MIN_DF):
     """A (foldolt) token termeknev-szo-e: pontos egyezes vagy rag-levalasztas utan (1 betu: to >= 4,
     2-3 betu: to >= 5, 4-5 betu: to >= 7), es legalabb MIN_DF termeknevben szerepel."""
     if len(tok) < 3 or tok.isdigit() or is_stop(tok):
         return False
-    if df.get(tok, 0) >= MIN_DF:
+    if df.get(tok, 0) >= min_df:
         return True
     for k in (1, 2, 3, 4, 5):
         st = tok[:-k]
         need = 4 if k == 1 else (5 if k <= 3 else 7)
-        if len(st) >= need and st not in STOP and df.get(st, 0) >= MIN_DF:
+        if len(st) >= need and st not in STOP and df.get(st, 0) >= min_df:
             return True
     return False
 
@@ -116,14 +116,14 @@ def _ratio(tok, dfx):
     return (df.get(tok, 0) / n) if n else 0.0
 
 
-def product_tokens(message, df):
-    return [t for t in _TOK.findall(fold(message)) if catalog_word(t, df)]
+def product_tokens(message, df, min_df=MIN_DF):
+    return [t for t in _TOK.findall(fold(message)) if catalog_word(t, df, min_df)]
 
 
-def productish(message, df):
+def productish(message, df, min_df=MIN_DF):
     """Termek-jellegu-e a kerdes: van benne termeknev-szo, tipuskod vagy mertekegyseges meret."""
     f = fold(message)
-    if product_tokens(message, df):
+    if product_tokens(message, df, min_df):
         return True
     return bool(_ALNUM.search(f) or _NUMUNIT.search(f) or _DIM.search(f))
 
@@ -152,7 +152,7 @@ def name_term_ok(term, dfx):
     return bool(toks) and not all(_ratio(t, dfx) > GENERIC_RATIO for t in toks)
 
 
-def topic_term(message, dfx):
+def topic_term(message, dfx, min_df=MIN_DF):
     """Kerdes-alapu kulcsszo CSAK termeknev-szavakbol (max 2) es tipuskodbol, a nevek
     >50%-aban szereplo szavak nelkul."""
     df = dfx[0]
@@ -164,7 +164,7 @@ def topic_term(message, dfx):
             out.append(raw)
         else:
             f = f.replace("-", "")
-            if len(f) < 3 or any(ch.isdigit() for ch in f) or not catalog_word(f, df) \
+            if len(f) < 3 or any(ch.isdigit() for ch in f) or not catalog_word(f, df, min_df) \
                     or _ratio(f, dfx) > GENERIC_RATIO:
                 continue
             out.append(raw)
@@ -173,29 +173,29 @@ def topic_term(message, dfx):
     return " ".join(out)
 
 
-def filter_term(term, dfx):
+def filter_term(term, dfx, min_df=MIN_DF):
     """Meglevo (bolti kereso-) kulcsszo szurese: csak a termeknev-szavak maradnak, sorrendben."""
     df = dfx[0]
     out = []
     for raw in re.findall(r"\w+", str(term or "")):
         f = fold(raw)
-        if catalog_word(f, df) and (any(ch.isdigit() for ch in f) or _ratio(f, dfx) <= GENERIC_RATIO):
+        if catalog_word(f, df, min_df) and (any(ch.isdigit() for ch in f) or _ratio(f, dfx) <= GENERIC_RATIO):
             out.append(raw)
     return " ".join(out[:3])
 
 
-def keep_or_rebuild(term, message, dfx, shop=False):
+def keep_or_rebuild(term, message, dfx, shop=False, min_df=MIN_DF):
     """A meglevo kulcsszo marad, ha egyik szava sem toltelek es legalabb egy termeknev-szo; kulonben
     ujraepites a termeknev-szavakbol (ures -> nincs zaro-link)."""
     df = dfx[0]
     toks = [fold(t) for t in re.findall(r"\w+", str(term or ""))]
     toks = [t for t in toks if len(t) >= 3 and not t.isdigit()]
-    if toks and not any(is_stop(t) for t in toks) and any(catalog_word(t, df) for t in toks) \
+    if toks and not any(is_stop(t) for t in toks) and any(catalog_word(t, df, min_df) for t in toks) \
             and not all(_ratio(t, dfx) > GENERIC_RATIO for t in toks):
         return term
     if shop:  # a bolti kereso-kulcsszo csonkolt to is lehet ("pell") -> a kerdes termeknev-szavai a tartalek
-        return filter_term(term, dfx) or topic_term(message, dfx)
-    return topic_term(message, dfx)
+        return filter_term(term, dfx, min_df) or topic_term(message, dfx, min_df)
+    return topic_term(message, dfx, min_df)
 
 
 def gate_term(message, prev_user, term, dfx, topic=False, shop=False):
@@ -211,9 +211,11 @@ def gate_term(message, prev_user, term, dfx, topic=False, shop=False):
             return "", True, "nem termek-jellegu"
         return term, False, "ures term"
     if topic or shop:
-        if not productish(message, df):
+        # bolti kereso-ag: a bolt sajat keresoje mar talalt termeket -> 1 termeknev is eleg
+        md = 1 if shop else MIN_DF
+        if not productish(message, df, md):
             return "", True, "nem termek-jellegu"
-        nt = keep_or_rebuild(term, message, dfx, shop=shop)
+        nt = keep_or_rebuild(term, message, dfx, shop=shop, min_df=md)
         if not nt:
             return "", True, "nincs termeknev-szo"
         return nt, False, "ok" if nt == term else "term ujraepitve"

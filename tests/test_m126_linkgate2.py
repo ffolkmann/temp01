@@ -78,6 +78,10 @@ def test_shop_branch_filters_phrase():
     # m126b: a bolti kereso csonkolt tovel dolgozik ("pell") -> a kerdes szava a tartalek
     t, blk, _ = lg.gate_term("Pellet", "", "pell", DFX, shop=True)
     assert not blk and t == "Pellet"
+    # a bolti agon 1 termeknev is eleg (a bolt keresoje mar talalt termeket)
+    t, blk, _ = lg.gate_term("Hőlégbefúvót keresek", "", "hőlégbefúvó", ({"holegbefuvo": 1}, 9000), shop=True)
+    assert not blk and t == "hőlégbefúvó"
+    assert lg.gate_term("Hőlégbefúvót keresek", "", "Hőlégbefúvót", ({"holegbefuvo": 1}, 9000), topic=True)[1]
 
 
 def test_fail_open_without_catalog():
