@@ -702,6 +702,15 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
             from app.services.formpromise import promised_form as _pf116
             _k116 = _pf116(parsed.reply)
             _act116 = None
+            # m130 (K6): szovegben kert elerhetoseg urlap nelkul -> lead-urlap (30 nap: 100 eset)
+            if _k116 is None:
+                try:
+                    from app.services.formpromise import requested_contact as _rc130
+                    if _rc130(parsed.reply):
+                        _k116 = "lead"
+                        logger.info("m130 elerhetoseg-keres -> lead-urlap client=%s", req.client_id)
+                except Exception:  # noqa: BLE001 - az or hibaja sose torje a valaszt
+                    logger.exception("m130 or hiba client=%s", req.client_id)
             if _k116 == "order":
                 _seen116 = False
                 if req.session_id:
