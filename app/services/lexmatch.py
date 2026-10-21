@@ -254,7 +254,11 @@ def pick(entries, message, pool_names, hide_oos=False, exclude_ids=(), sku_oos=F
     info["best"] = round(best, 3)
     info["tier"] = len(tier)
     full = best >= 0.999  # teljes fedes (pl. a poolban csak a testver-variant: 100A vs 80A)
-    if best >= _MIN_COVER and (best >= pool_best + _MARGIN or full) and len(tier) <= _TIER_MAX:
+    # m127b: ritka kodszeru token (df <= 10, pl. 'rac~351') egyezese a szint minden termekeben +
+    # legalabb a fel fedes -> a kod onmagaban azonosit ("RAC 351 potkesre... Eredetire!" 0.655)
+    code_ok = best >= 0.5 and any(
+        _codelike(t) and df[t] <= 10 and all(matchers[t](e[1]) for e in tier) for t in known)
+    if (best >= _MIN_COVER or code_ok) and (best >= pool_best + _MARGIN or full) and len(tier) <= _TIER_MAX:
         # d10d FP-sweep: egyetlen illeszkedo koznyelvi szo (cseveges: "kaptam", "szep",
         # "mindkettot") nem eleg - legalabb 2 kerdes-token, vagy egy ritka kodszeru token
         def strong(e):

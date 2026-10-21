@@ -95,6 +95,14 @@ def test_pick_rac351_nev_agon_megtalalja():
     assert "rac" not in info["qt"][1:] or True  # a reszek a known-bol kiesnek, a qt-ban maradhatnak
 
 
+def test_pick_rac351_ritka_kod_fel_fedessel_is():
+    # m127b: E2E lelet - az 'eredetire' szo lehuzta a fedest 0.655-re; a ritka kod + 'potkes' eleg
+    s, n, info = lx.pick(E, "RAC 351 pótkésre van szükségem. Eredetire nem valami bóvli utángyártott!", [])
+    assert n == [1], (s, n, info)
+    # de a kod onmagaban, masik szo nelkul NEM (strong(): legalabb 2 to vagy ritka kod - itt a
+    # kod ritka, igy a sku-szeru azonositas megengedett; a FD4000 eset tovabbra is kizart)
+
+
 def test_pick_fd4000_masik_marka_nem_jon():
     # "Ryobi Zauber FD 4000" -> a Trabucco FD4000 csak a kodban egyezik, a tobbi szoban nem
     s, n, info = lx.pick(E, "Ryobi zauber fd 4000 potdob van e elerheto raktaron?", [])
