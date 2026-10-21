@@ -55,12 +55,43 @@ def has_prior_bot_turn(history) -> bool:
     return False
 
 
-def strip_regreet(reply, message, history) -> str:
+# ---- m131 (K7) kiegeszites ----------------------------------------------------------
+# Lelet (d21h, 2026-10-21, 30 napos korpusz): a m102/1 utan is 26 nem-elso kor kezdodott
+# koszonessel ugy, hogy a latogato nem koszont (1,3%; fishingoutlet 16). A DB masodperces
+# idosora szerint MIND 0-10 mp-cel az elozo kor utan jott: a latogato mar irt (vagy duplan
+# kuldte), mielott az elozo valasz megerkezett, igy a widget history-jaban meg nem volt
+# bot-valasz, a `has_prior_bot_turn(history)` kapu nem nyilt, a modell pedig elolrol kezdte
+# (ujra bemutatkozott, nem tudta, melyik termekrol volt szo). A chat.py ezert egy Redis-jellel
+# (cx:m131:seen:<client>:<session>, 2 ora, a keres ELEJEN leteve) nezi, volt-e mar korabbi
+# keres a sessionben, es azt `prior_db=True`-kent adja at.
+# Ugyanitt: a koszones utan allo BEMUTATKOZO mondat ("Ponty Peti vagyok, a Fishingoutlet.hu
+# asszisztense, de orulok, hogy irtal!") is lekerul, ha a latogato nem kerdezett ra
+# (nem kerdezte, ki/mi a bot, nem koszont) - 30 napban 2-3 ilyen, mind a history-vesztes
+# esetekbol.
+
+_INTRO = re.compile(
+    u"^\\s*(?:\\*\\*)?(?:Én\\s+)?(?:[\" „”]?)"            # (En) (idezojel)
+    u"(?:[A-ZÁÉÍÓÖŐÚÜŰ][\\w.-]*(?:\\s+[A-ZÁÉÍÓÖŐÚÜŰ][\\w.-]*){0,3}\\s+vagyok"   # Ponty Peti vagyok
+    u"|(?:a|az)\\s+[\\w.-]+(?:\\s+[\\w.-]+){0,4}\\s+(?:asszisztense|segítője|chatbotja|chat-asszisztense|tanácsadója)\\s+vagyok)"  # a X asszisztense vagyok
+    u"(?:[^.!?\\n]|[.!?](?=\\S))*[.!?]+(?=\\s|$)\\s*",
+    re.U)
+_ASKED_WHO = re.compile(
+    r"\b(ki vagy|mi vagy|kivel beszelek|ki beszel|robot|bot vagy|ember(rel)?|emberi|elo (ugyfel|ugyint)|"
+    r"hogy hivnak|mi a neved|bemutatkoz|kicsoda)\b")
+
+
+def user_asked_identity(message) -> bool:
+    return bool(_ASKED_WHO.search(_fold(message)))
+
+
+def strip_regreet(reply, message, history, prior_db: bool = False) -> str:
     """A valasz koszonessel kezdodo elejet levagja, ha a beszelgetes mar folyik es a
-    latogato nem koszont. Barmi hiba / bizonytalansag -> a valasz valtozatlan."""
+    latogato nem koszont; m131: a `prior_db` (Redis-jelbol tudott korabbi keres) is nyitja a
+    kaput, es a koszones utan allo bemutatkozo mondat is lekerul, ha nem kerdeztek ra.
+    Barmi hiba / bizonytalansag -> a valasz valtozatlan."""
     r = str(reply or "")
     try:
-        if not r or not has_prior_bot_turn(history) or user_greeted(message):
+        if not r or not (has_prior_bot_turn(history) or prior_db) or user_greeted(message):
             return r
         out = r
         for _ in range(2):
@@ -68,6 +99,13 @@ def strip_regreet(reply, message, history) -> str:
             if not m:
                 break
             out = out[m.end():]
+        # m131: bemutatkozo mondat a koszones utan (vagy a valasz elejen)
+        if not user_asked_identity(message):
+            # az emoji / szokoz a koszones utan
+            _o2 = re.sub(u"^[\\s\\U0001F300-\\U0001FAFF\\u2600-\\u27BF\\uFE0F]+", "", out)
+            mi = _INTRO.match(_o2)
+            if mi:
+                out = _o2[mi.end():]
         if out == r:
             return r
         rest = out.lstrip()

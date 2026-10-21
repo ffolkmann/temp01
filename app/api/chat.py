@@ -119,6 +119,21 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
     message = (req.message or "").strip()
     if not message:
         return ChatResponse(reply=tenant.welcome_message or _FALLBACK)
+    # m131 (K7): volt-e mar KORABBI keres ebben a sessionben (Redis-jel, 2 ora). A d21h lelet:
+    #       az ujrakoszonesek (26/30 nap) mind 1-10 mp-cel az elozo kor UTAN jottek - a latogato
+    #       mar irt, mielott az elozo valasz megerkezett (vagy duplan kuldte), igy a widget
+    #       history-jaban (es a DB-naploban) meg nem volt bot-valasz, a m102/1 kapu nem nyilt.
+    #       A jelet a keres ELEJEN tesszuk le, ezert a parhuzamos masodik keres is latja. Fail-safe.
+    _prior131 = False
+    if req.session_id:
+        try:
+            from app.core.redis import get_redis as _gr131
+            _k131 = "cx:m131:seen:%s:%s" % (req.client_id, str(req.session_id)[:120])
+            _r131 = _gr131()
+            _prior131 = bool(await _r131.get(_k131))
+            await _r131.set(_k131, "1", ex=7200)
+        except Exception:  # noqa: BLE001 - a Redis hibaja ne torje a chatet
+            _prior131 = False
 
     # --- Élő operátor-átvétel (m28): ha a session már requested/operator, a bot
     #     elnémul (handoff_bot_silent), a látogató üzenete a chat_messages-be kerül,
@@ -745,14 +760,31 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
     # Csak ha van korabbi bot-valasz a history-ban. Fail-safe: hiba -> valtozatlan.
     try:
         from app.services.greetguard import strip_regreet as _srg102
-        _new102g = _srg102(parsed.reply, message, req.history)
+        _new102g = _srg102(parsed.reply, message, req.history, prior_db=_prior131)
         if _new102g != parsed.reply:
-            logger.info("m102/1 regreet: koszones levagva client=%s", req.client_id)
+            logger.info("m102/1 regreet: koszones levagva client=%s prior_db=%s", req.client_id, _prior131)
             try:
                 parsed.reply = _new102g
             except Exception:  # noqa: BLE001 - frozen dataclass eseten
                 from dataclasses import replace as _dc_replace102g
                 parsed = _dc_replace102g(parsed, reply=_new102g)
+    except Exception:  # noqa: BLE001 - az or hibaja sose torje a valaszt
+        pass
+    # m131 (K8): BESZEDMOD-ORSEG. A m102/2 prompt-szabaly utan is ~32 valasz / 30 nap emlegette
+    # a sajat mukodest ('a talalataim kozott', 'a rendelkezesemre allo adatok alapjan', 'a
+    # keresesem alapjan', 'a kapott termekadatok kozott') - a vevo szemeben 'az elado nem tudja,
+    # mi van a boltban'. Determinisztikus mondat-javitas (torles / 'a kinalatban'), link-szoveg
+    # es URL erintetlen. A zaro-link kapuk ELOTT fut, hogy azok mar a vegleges szoveget lassak.
+    try:
+        from app.services.speechguard import rewrite as _sg131
+        _new131, _n131 = _sg131(parsed.reply)
+        if _n131 and _new131 != parsed.reply:
+            logger.info("m131 beszedmod: %d fordulat kiveve client=%s", _n131, req.client_id)
+            try:
+                parsed.reply = _new131
+            except Exception:  # noqa: BLE001 - frozen dataclass eseten
+                from dataclasses import replace as _dc_replace131
+                parsed = _dc_replace131(parsed, reply=_new131)
     except Exception:  # noqa: BLE001 - az or hibaja sose torje a valaszt
         pass
     # m89: ZARO-LINK KAPU - a "Tovabbi talalatok" kereso-link CSAK akkor, ha a
