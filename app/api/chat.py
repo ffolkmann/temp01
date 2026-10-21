@@ -768,6 +768,24 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
             except Exception:  # noqa: BLE001 — a kapu hibaja sose torje a valaszt
                 _uctx95 = message
             _q2 = link_search_term(message, _hn, _hb, context=_uctx95)
+            # m126 (K3): zaro-link kapu 2 - rendeles-/atveteli-/panasz-kor es nem termek-jellegu kerdes
+            #       -> nincs link (fasetta-link sem); a kerdes-alapu kulcsszo csak termeknev-szavakbol.
+            #       Merve 326 kezzel cimkezett valaszon: 132 ertelmetlenbol 89 levagva, 146 jobol 3 veszett el.
+            _m126_block = False
+            try:
+                from app.services import linkgate2 as _lg126
+                from app.services.linkterm import _topic_term as _tt126
+                _q2_126, _m126_block, _why126 = _lg126.gate_term(
+                    message, _lg126.prev_user(req.history), _q2, _lg126.name_df(req.client_id),
+                    topic=bool(_q2) and _q2 == _tt126(message))
+                if _m126_block:
+                    logger.info("m126 link gate: nincs zaro-link (%s) client=%s", _why126, req.client_id)
+                elif _q2_126 != _q2:
+                    logger.info("m126 link term: ujraepitve (%s) client=%s", _why126, req.client_id)
+                _q2 = _q2_126
+            except Exception:  # noqa: BLE001 - a kapu hibaja sose torje a valaszt
+                _m126_block = False
+                logger.exception("m126 link gate hiba")
             try:  # m117: a keresoszo legalabb egy szava legyen meg a bolt termekneveiben
                 if _q2:
                     from app.services.lexmatch import term_in_catalog as _tic117
@@ -845,6 +863,12 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
                 logger.info(
                     "m95 link gate: nincs a latogato szavaibol levezetheto "
                     "keresoszo -> nincs zaro-link client=%s", req.client_id)
+            if _m126_block:  # m126: fasetta-/kategoria-link sem, es az LLM-irta zaro-link is lekerul (m102)
+                _more_url = None
+                _link_ok = False
+            elif _more_url and _su2 and _su2 in parsed.reply:  # m126: a valaszban mar van kereso-link
+                logger.info("m126 link gate: a valaszban mar van kereso-link client=%s", req.client_id)
+                _more_url = None
             if _more_url and _more_url not in parsed.reply:  # m82e/2
                 _newreply2 = (
                     parsed.reply.rstrip()
@@ -870,8 +894,21 @@ async def _handle_message(req: ChatRequest, session: AsyncSession) -> ChatRespon
                             "-> nincs kereso-link client=%s", req.client_id)
         except Exception:  # noqa: BLE001
             _ok117 = True
-        if _ok117 and _su and _su not in parsed.reply and "További találatok a webáruházban" not in parsed.reply:
-            _q = quote_plus((build_queries(message) or [message[:60]])[0])
+        _q126s = (build_queries(message) or [message[:60]])[0]
+        try:  # m126 (K3): ugyanaz a kapu a bolti kereso-agon (itt a kerdes-frazis volt a kulcsszo)
+            from app.services import linkgate2 as _lg126s
+            _q126s, _blk126s, _why126s = _lg126s.gate_term(
+                message, _lg126s.prev_user(req.history), _q126s, _lg126s.name_df(req.client_id), shop=True)
+            if _blk126s:
+                logger.info("m126 link gate (bolti kereses): nincs zaro-link (%s) client=%s",
+                            _why126s, req.client_id)
+                _ok117 = False
+                _link_ok_shop = False
+        except Exception:  # noqa: BLE001 - a kapu hibaja sose torje a valaszt
+            _q126s = (build_queries(message) or [message[:60]])[0]
+            logger.exception("m126 link gate hiba (bolti)")
+        if _ok117 and _q126s and _su and _su not in parsed.reply and "További találatok a webáruházban" not in parsed.reply:
+            _q = quote_plus(_q126s)
             _newreply = parsed.reply.rstrip() + "\n\n[További találatok a webáruházban](" + _su + _q + ")"
             try:
                 parsed.reply = _newreply
