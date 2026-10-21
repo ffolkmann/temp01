@@ -154,6 +154,16 @@ def test_intent_evszam_nem_rendeles():
     assert o.is_order_status and o.order_id == "57035"
 
 
+def test_intent_hash_hosszu_szam_nem_csonkul():  # m128b
+    o = it.detect_order_intent("rendelésszám #21196123172, e-mail: abc@freemail.hu", _tenant("unas"), True)
+    assert o.is_order_status and o.order_id == "21196123172"
+    sh = of.learn_shapes(UNAS)
+    assert of.check(o.order_id, sh) == ("fix", "21196-123172")
+    o = it.detect_order_intent("rendelésszám #3420015380, e-mail: abc@freemail.hu", _tenant(), True)
+    assert o.order_id == "3420015380"
+    assert of.check(o.order_id, of.learn_shapes(SR))[0] == "mismatch"
+
+
 # --- bekotes a chat.py-ban ---------------------------------------------------
 
 def test_chat_hook():

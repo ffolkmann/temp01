@@ -121,7 +121,9 @@ def detect_order_intent(message: str, tenant: Tenant, live_api: bool) -> OrderIn
     omsg = _strip_contacts(msg)
     olow = omsg.lower()
     order_id = ""
-    m = re.search(r"#\s*(\d{3,6}-\d{4,9}|\d{1,7})", omsg)
+    # m128b: a '#'-os szam 12 jegyig (a '#21196123172' eddig '2119612'-re csonkult, es a kotojel-
+    # potlas sosem kapta meg a teljes szamot); a jeloletlen csupasz szam marad 3-7 jegy
+    m = re.search(r"#\s*(\d{3,6}-\d{4,9}|\d{1,12})", omsg)
     if m:
         order_id = m.group(1)
     if not order_id:
